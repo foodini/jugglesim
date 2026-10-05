@@ -1,0 +1,20 @@
+# Build output
+bin/
+build/
+x64/
+Claude outputs/
+*.obj
+*.pdb
+*.ilk
+*.exe
+
+# Visual Studio user state
+.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+
+# build.bat logs
+build.log
+build_issues.log
