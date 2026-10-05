@@ -1,0 +1,84 @@
+# JuggleSim
+
+3D animation of juggling patterns, specified with siteswap notation and (eventually) an
+interactive ladder diagram. C++17, OpenGL, Dear ImGui, Win32. Visual Studio 2026 (toolset v145).
+
+## This is an experiment in AI software production.
+
+I'm a software engineer and have been waiting to write this project until I finished out some
+other personal projects in my backlog. (If you're an SWE or other creative geek, you know
+EXACTLY what I mean.) Having been exposed to Claude Code recently, I have been rather impressed.
+I decided to try building this project entirely with Claude, though using tech with which I am
+VERY familiar. I'm all-too-frequently surprised at how similar Claude's methods mirror my own,
+though it has had time to look at quite of bit of stuff I've written in the past, both on 
+github and not. I am left to wonder if Claude is imitating my style, or if my style has become
+so generic and bland over the years that I just code like everyone else in my field.
+
+I know there's a lot of hatred of "AI Slop" out there. You're welcome to ignore this project.
+I've never worked with AI and I feel like having it do something that I wanted to do anyway
+is a valid learning experience for me as an engineer at the end of my career. Objections are
+noted, but I'm going to actively resist injecting any of my own changes into this codebase.
+It is not an easy commitment to make. In other contexts, when using Claude, I frequently find
+myself thinking, "I want to do this," either because I think I can do it faster than Claude,
+or because I find the task of writing that code to be interesting enough to keep me engaged.
+It was very hard to not override Claude's right-hand coordinate system, for example. This 
+should be interesting.
+
+## First-time setup
+
+The only external dependency is [Dear ImGui](https://github.com/ocornut/imgui), included as a
+git submodule. From the repository root (`D:\ronb\projects\jugglesim`):
+
+```
+git init
+git submodule add https://github.com/ocornut/imgui.git third_party/imgui
+```
+
+Optionally pin ImGui to a release tag so upgrades are deliberate:
+
+```
+cd third_party/imgui
+git checkout v1.92.0      (or whatever the latest release tag is)
+cd ../..
+git add third_party/imgui
+```
+
+Anyone cloning the repo later uses `git clone --recurse-submodules`, or runs
+`git submodule update --init` after a plain clone.
+
+Then open `jugglesim.sln` and build `Debug|x64` or `Release|x64`, or build from the command line:
+
+```
+build.bat [Debug|Release] [Build|Rebuild|Clean]      (defaults: Debug Build)
+```
+
+`build.bat` finds MSBuild with `vswhere`, writes the full output to `build.log` and only the
+errors and warnings to `build_issues.log`. Output goes to
+`bin\x64\<Configuration>\jugglesim.exe`. Debug builds use the console subsystem so `printf`
+output is visible; Release builds are a plain windowed app.
+
+## Layout
+
+```
+jugglesim.sln / jugglesim.vcxproj
+build.bat             command-line build (see above)
+src/
+  main.cpp            Win32 window, WGL context, ImGui setup, pane layout, main loop
+  gl_funcs.h/.cpp     tiny loader for the OpenGL 3.3 functions we use (no GLAD/GLEW)
+  math3d.h            Vec3 / Mat4 (no GLM)
+  mesh.h/.cpp         procedural primitives: sphere, cylinder, torso frustum, cube
+  renderer.h/.cpp     one lit solid-color shader
+  juggler_figure.*    stick-figure pose and drawing
+  siteswap.h/.cpp     siteswap parsing/validation (vanilla only, for now)
+  ladder_view.h/.cpp  ladder diagram drawn with ImGui's draw list
+third_party/imgui/    git submodule
+```
+
+Adding a new OpenGL 2.0+ function: add one line to `JS_GL_FUNCTIONS` in `gl_funcs.h`, then call
+it as `gl::FunctionName(...)`.
+
+## Conventions
+
+- World units are meters, +Y is up.
+- A juggler faces +Z in their local space, so the juggler's own right hand is at -X.
+- Ladder diagram: top rail = right hand, bottom rail = left hand, beat 1 thrown by the right.
