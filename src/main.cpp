@@ -17,6 +17,7 @@
 #include "ladder_view.h"
 #include "math3d.h"
 #include "mesh.h"
+#include "pattern.h"
 #include "renderer.h"
 #include "settings.h"
 #include "siteswap.h"
@@ -27,6 +28,7 @@
 
 #include <cfloat>
 #include <cmath>
+#include <cstdio>
 #include <string>
 
 // Declared (commented out) in imgui_impl_win32.h; must be forward-declared by the app.
@@ -187,8 +189,14 @@ int main() {
 
     AppSettings settings = loadSettings();
 
+    // The pattern (throw events) is the source of truth for juggling. The siteswap text box
+    // generates it when the user types, and is rewritten from it when the pattern changes some
+    // other way (e.g. the toolbar's period control). While the text is invalid, the last valid
+    // pattern is kept but not shown.
     char siteswapText[256] = "531";
-    Siteswap siteswap = parseSiteswap(siteswapText);
+    Siteswap parsed = parseSiteswap(siteswapText);
+    Pattern pattern = patternFromSiteswap(parsed);
+    bool patternValid = parsed.valid;
     bool showImGuiDemo = false;
     bool showColorPreview = false;
 
@@ -255,7 +263,18 @@ int main() {
         // Ladder diagram (top of left half).
         ImGui::SetNextWindowPos(ImVec2(0.0f, top));
         ImGui::SetNextWindowSize(ImVec2(leftWidth, H - top - entryHeight));
-        if (ImGui::Begin("Ladder", nullptr, paneFlags)) drawLadderDiagram(siteswap, settings.colorVision);
+        if (ImGui::Begin("Ladder", nullptr, paneFlags)) {
+            const LadderToolbarRequest request = drawLadderToolbar(pattern, patternValid);
+            if (request.newPeriodBeats > 0) {
+                pattern = withPeriod(pattern, request.newPeriodBeats);
+                std::string text;
+                if (patternToSiteswap(pattern, &text)) {
+                    std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
+                    parsed = parseSiteswap(siteswapText);
+                }
+            }
+            drawLadderDiagram(pattern, patternValid, settings.colorVision);
+        }
         ImGui::End();
 
         // Siteswap entry (bottom of left half).
@@ -266,13 +285,17 @@ int main() {
             ImGui::TextUnformatted("Siteswap");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(-FLT_MIN);
-            if (ImGui::InputText("##siteswap", siteswapText, sizeof(siteswapText)))
-                siteswap = parseSiteswap(siteswapText);
-            if (siteswap.valid)
-                ImGui::TextDisabled("%d objects, period %d", siteswap.ballCount, siteswap.period());
-            else if (!siteswap.error.empty())
+            if (ImGui::InputText("##siteswap", siteswapText, sizeof(siteswapText))) {
+                parsed = parseSiteswap(siteswapText);
+                patternValid = parsed.valid;
+                if (parsed.valid) pattern = patternFromSiteswap(parsed);
+            }
+            if (patternValid)
+                ImGui::TextDisabled("%d objects, period %d", ballCount(pattern),
+                                    loopPeriodBeats(pattern));
+            else if (!parsed.error.empty())
                 ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(errorTextColor(settings.colorVision)),
-                                   "%s", siteswap.error.c_str());
+                                   "%s", parsed.error.c_str());
             else
                 ImGui::TextUnformatted("");
         }

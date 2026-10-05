@@ -23,7 +23,7 @@ struct BallStyle {
 };
 
 // Background of the ladder and other diagram canvases (the palettes are validated against it).
-constexpr ImU32 kCanvasBackground = IM_COL32(24, 26, 32, 255);
+constexpr ImU32 kCanvasBackground = IM_COL32(14, 15, 19, 255);
 
 // Human-readable name for menus, e.g. "Deutan (green-weak)".
 const char* colorVisionModeName(ColorVisionMode mode);

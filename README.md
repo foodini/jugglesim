@@ -69,8 +69,14 @@ src/
   mesh.h/.cpp         procedural primitives: sphere, cylinder, torso frustum, cube
   renderer.h/.cpp     one lit solid-color shader
   juggler_figure.*    stick-figure pose and drawing
+  timing.h            ticks (5040 per beat, int64) and the TempoMap (beats <-> seconds)
+  pattern.h/.cpp      throw events + sections: the source of truth for juggling
   siteswap.h/.cpp     siteswap parsing/validation (vanilla only, for now)
-  ladder_view.h/.cpp  ladder diagram drawn with ImGui's draw list
+  ladder_view.h/.cpp  ladder diagram + its toolbar, drawn with ImGui's draw list
+  color_vision.*      color-vision modes; per-ball color + marker shape + dash pattern
+  draw_helpers.*      markers, dashed curves, arrowheads for ImGui draw lists
+  settings.*          user preferences in %APPDATA%\JuggleSim\settings.ini
+docs/                 user documentation (start with ladder.md)
 third_party/imgui/    git submodule
 ```
 

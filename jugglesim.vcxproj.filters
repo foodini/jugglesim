@@ -33,6 +33,9 @@
     <ClCompile Include="src\mesh.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\pattern.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
     <ClCompile Include="src\renderer.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -86,6 +89,9 @@
     <ClInclude Include="src\mesh.h">
       <Filter>src</Filter>
     </ClInclude>
+    <ClInclude Include="src\pattern.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClInclude Include="src\renderer.h">
       <Filter>src</Filter>
     </ClInclude>
@@ -93,6 +99,9 @@
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\siteswap.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\timing.h">
       <Filter>src</Filter>
     </ClInclude>
   </ItemGroup>
