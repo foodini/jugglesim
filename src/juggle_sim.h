@@ -9,9 +9,13 @@
 //     that catch: the user's dwell D, but at most half the throw (min(D, v/2)), so short throws
 //     like 1s still get some flight. The ball is then held until it's thrown again on b + v.
 //   - A 2 is a hold: the ball stays in the hand for the two beats.
-//   - Each hand throws every other beat (right hand on even beats) and follows a fixed loop:
-//     from its throw point (inside) out to its catch point (outside) while empty, then a
-//     scooping carry back to the throw point while holding a ball.
+//   - Each hand throws every other beat (right hand on even beats) and follows a loop: from
+//     its throw point (inside) out to its catch point (outside) while empty, then a scooping
+//     carry back to the throw point while holding a ball. Higher throws are made and caught a
+//     little wider.
+//   - The body helps with high throws: a hand can only drive a throw so far with the arm, so
+//     the rest comes from the knees and back (the hips sink during the scoop and rise through
+//     the release), and the torso sways toward the hand that's driving. See BodyMotion.
 //
 // Juggler-local coordinates: meters, +Y up, the juggler faces +Z, their right hand is at -X.
 #pragma once
@@ -42,8 +46,35 @@ struct Trail {
     std::vector<float> fade;
 };
 
+// The juggler's body at a moment. The upper body (waist and everything above it) is the
+// neutral pose moved by pelvisOffset and then tilted about the waist: `lean` forward (radians,
+// the top toward +Z) and `roll` sideways (radians, the top toward +X, the juggler's left). The
+// feet stay planted, so the legs bend to follow the pelvis.
+struct BodyMotion {
+    Vec3 pelvisOffset;        // from the neutral waist; y < 0 when crouching
+    float lean = 0.0f;
+    float roll = 0.0f;
+    Vec3 lookAt{0.0f, 1.2f, 0.5f};  // what the head is looking at (mostly the highest balls)
+    float intensity = 0.0f;   // 0..1: how fervent the juggling looks (see patternIntensity)
+};
+
+const Vec3 kNeutralWaist(0.0f, 0.98f, 0.0f);  // must match makeNeutralPose()
+
+// Rotates a direction by the upper body's lean and roll.
+inline Vec3 bodyDirection(const BodyMotion& m, Vec3 d) {
+    const float cl = std::cos(m.lean), sl = std::sin(m.lean);
+    const Vec3 leaned(d.x, d.y * cl - d.z * sl, d.y * sl + d.z * cl);
+    const float cr = std::cos(m.roll), sr = std::sin(m.roll);
+    return Vec3(leaned.x * cr + leaned.y * sr, -leaned.x * sr + leaned.y * cr, leaned.z);
+}
+// Where a point of the neutral upper body (shoulder, neck, ...) is with the body moved.
+inline Vec3 bodyPoint(const BodyMotion& m, Vec3 neutral) {
+    return kNeutralWaist + m.pelvisOffset + bodyDirection(m, neutral - kNeutralWaist);
+}
+
 struct JugglerScene {
     Vec3 palmRight, palmLeft;  // where each hand's palm is (the ball sits just above it)
+    BodyMotion body;
     std::vector<BallState> balls;
     std::vector<Trail> trails;
 };
@@ -56,6 +87,10 @@ struct SceneExtents {
     float halfWidth = 0.0f;      // largest |x| of hands or balls
 };
 SceneExtents computeSceneExtents(const std::vector<int>& loop, const JuggleParams& params);
+
+// How fervent the pattern looks, 0..1: grows with how high the throws are (relative to the
+// highest a person can really drive a throw, about 3.7 m) and how much the heights vary.
+float patternIntensity(const std::vector<int>& loop, const JuggleParams& params);
 
 // Evaluates the scene at `beat` (fractional; beat 0 is the right hand's first throw) for the
 // repeating loop `loop` (Pattern-mode loop values). orbits must be computeBallOrbits(loop).

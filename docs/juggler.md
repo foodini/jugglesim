@@ -74,10 +74,28 @@ faster tempo means lower throws.
     plausibly do), so catches look absorbed rather than abrupt.
   - **Scoop:** between catch and throw the hand dips to build up speed for the next throw. The
     dip is as deep as that throw needs (higher throws scoop deeper), curving in toward the body
-    when it gets low. For now the arms do all the work; knees, back and body sway for high throws
-    are planned.
+    when it gets low.
   - The arms follow the hands, elbows pointing down and out, and the wrists bend to keep the
     palms level under the ball.
+- **The body** helps with high throws, the way a real juggler's does:
+  - **Knees and back.** An arm can only drive a throw so far. For higher throws the hips sink
+    during the scoop (the knees bend, the feet stay planted, and the back leans forward a
+    little) and rise again through the release. The body has weight, so it can't follow every
+    throw exactly (the hips can't drop faster than gravity): a fast run of high throws settles
+    into a steady crouch with a small bob, and a single high throw in a pattern gets a bigger
+    dip that starts a little ahead of it.
+  - **Wider throws.** The higher the throw, the further apart the hands throw and catch.
+  - **Sway.** The torso shimmies toward whichever hand is driving a throw, more for higher
+    throws.
+  - **Fervor.** The higher the pattern, and the more its throw heights vary, the more fervent
+    the juggler looks: lower stance, more bob and sway, elbows further out. A `3` looks
+    relaxed; `97531` looks like work.
+  - **The human limit.** A hand can accelerate a ball at about 60 m/s² over at most about
+    60 cm (arms, knees and back together), which tops out at throws about 3.7 m above the
+    hands. Beyond that the body language stays at its maximum, but the balls still fly as high
+    as the tempo demands.
+  - **The head** follows the balls, mostly the highest ones; the eyes show where the juggler is
+    looking.
 - **Balls** have the same colors as on the ladder.
 - **Trails** glow behind each ball in flight, fading out over about half the flight. Each trail
   uses the same dash pattern as that ball's lines on the ladder, so balls can be told apart even

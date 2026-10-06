@@ -218,7 +218,8 @@ void renderJugglerView(Renderer& renderer, const Primitives& prims, const Juggle
                       {0.30f, 0.32f, 0.36f});
 
     JugglerPose pose = makeNeutralPose();
-    poseArmsForPalms(pose, scene.palmRight, scene.palmLeft);
+    poseBody(pose, scene.body);
+    poseArmsForPalms(pose, scene.palmRight, scene.palmLeft, scene.body.intensity);
     drawJuggler(renderer, prims, pose, Mat4::identity(), JugglerStyle{});
 
     // Balls, in the same colors as the ladder.

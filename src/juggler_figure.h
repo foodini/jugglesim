@@ -6,11 +6,13 @@
 
 #include "math3d.h"
 #include "mesh.h"
+#include "juggle_sim.h"
 #include "renderer.h"
 
 struct JugglerPose {
     Vec3 head;
     float headRadius = 0.11f;
+    Vec3 headForward{0.0f, 0.0f, 1.0f};  // where the face points (the eyes are drawn there)
     Vec3 neckBase, waist;
 
     // "R"/"L" are the juggler's own right and left.
@@ -30,14 +32,21 @@ struct JugglerPose {
 // Standing, forearms horizontal and forward, palms up: the neutral juggling stance.
 JugglerPose makeNeutralPose();
 
+// Moves the body of a neutral pose: the upper body by the motion's pelvis offset, lean and
+// roll; the legs bend (two-bone IK, knees forward) to keep the feet planted; the head turns
+// to look at motion.lookAt, within what a neck can do.
+void poseBody(JugglerPose& pose, const BodyMotion& motion);
+
 // Moves the arms so each palm is at the given point (palms facing up), solving each arm as a
 // two-bone chain (upper arm + forearm, lengths taken from the pose) with the elbow pointing
-// down and out. Targets out of reach are clamped to full extension.
-void poseArmsForPalms(JugglerPose& pose, Vec3 palmRight, Vec3 palmLeft);
+// down and out; elbowFlare (0..1) swings the elbows further out to the sides. Targets out of
+// reach are clamped to full extension. Call after poseBody, which moves the shoulders.
+void poseArmsForPalms(JugglerPose& pose, Vec3 palmRight, Vec3 palmLeft, float elbowFlare = 0.0f);
 
 struct JugglerStyle {
     Vec3 bodyColor{0.78f, 0.80f, 0.86f};
     Vec3 handColor{0.95f, 0.78f, 0.62f};
+    Vec3 eyeColor{0.10f, 0.11f, 0.14f};
     float limbRadius = 0.028f;
     bool drawLegs = true;
 };

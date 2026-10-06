@@ -82,7 +82,43 @@ Vec3 solveElbow(Vec3 root, Vec3 target, float a, float b, Vec3 pole) {
 
 }  // namespace
 
-void poseArmsForPalms(JugglerPose& p, Vec3 palmRight, Vec3 palmLeft) {
+void poseBody(JugglerPose& p, const BodyMotion& m) {
+    const JugglerPose neutral = makeNeutralPose();
+    // Upper body: moved and tilted about the waist. Elbows and wrists come along (the arms are
+    // re-solved afterwards anyway, but this keeps their bone lengths).
+    p.waist = kNeutralWaist + m.pelvisOffset;
+    p.neckBase = bodyPoint(m, neutral.neckBase);
+    p.shoulderR = bodyPoint(m, neutral.shoulderR);
+    p.shoulderL = bodyPoint(m, neutral.shoulderL);
+    p.elbowR = bodyPoint(m, neutral.elbowR);
+    p.elbowL = bodyPoint(m, neutral.elbowL);
+    p.wristR = bodyPoint(m, neutral.wristR);
+    p.wristL = bodyPoint(m, neutral.wristL);
+
+    // Head: the face turns toward the target, limited to what a neck does comfortably, and the
+    // head tips back (or forward) with about half of that, pivoting at the top of the neck.
+    const Vec3 neckTop = bodyPoint(m, neutral.head - Vec3(0.0f, neutral.headRadius, 0.0f));
+    const Vec3 toTarget = m.lookAt - (neckTop + Vec3(0.0f, neutral.headRadius, 0.0f));
+    const float flat = std::sqrt(toTarget.x * toTarget.x + toTarget.z * toTarget.z);
+    const float yaw = std::clamp(std::atan2(toTarget.x, std::max(toTarget.z, 0.05f)), -0.7f, 0.7f);
+    const float pitch = std::clamp(std::atan2(toTarget.y, std::max(flat, 0.05f)), -0.6f, 1.2f);
+    p.headForward = Vec3(std::sin(yaw) * std::cos(pitch), std::sin(pitch), std::cos(yaw) * std::cos(pitch));
+    const float tip = 0.5f * pitch;  // up is back (-Z)
+    p.head = neckTop + Vec3(0.0f, std::cos(tip), -std::sin(tip)) * neutral.headRadius;
+
+    // Legs: hips move with the pelvis, the ankles stay put, the knees bend forward (and a
+    // little out) to make up the difference.
+    p.hipR = neutral.hipR + m.pelvisOffset;
+    p.hipL = neutral.hipL + m.pelvisOffset;
+    p.ankleR = neutral.ankleR;
+    p.ankleL = neutral.ankleL;
+    const float thigh = length(neutral.kneeR - neutral.hipR);
+    const float shin = length(neutral.ankleR - neutral.kneeR);
+    p.kneeR = solveElbow(p.hipR, p.ankleR, thigh, shin, Vec3(-0.15f, 0.0f, 1.0f));
+    p.kneeL = solveElbow(p.hipL, p.ankleL, thigh, shin, Vec3(0.15f, 0.0f, 1.0f));
+}
+
+void poseArmsForPalms(JugglerPose& p, Vec3 palmRight, Vec3 palmLeft, float elbowFlare) {
     // Palms face up; the fingers point the way the arm is reaching, seen from above (out from
     // the shoulder toward the palm), and the wrist sits half a hand-length back from the palm
     // center along that. The wrist bends as needed, so the palm stays level under the ball.
@@ -95,8 +131,10 @@ void poseArmsForPalms(JugglerPose& p, Vec3 palmRight, Vec3 palmLeft) {
     const float halfHand = 0.05f;
     const float upperR = length(p.elbowR - p.shoulderR), foreR = length(p.wristR - p.elbowR);
     const float upperL = length(p.elbowL - p.shoulderL), foreL = length(p.wristL - p.elbowL);
-    // Elbows point down, a little out to the side and back (right arm is at -X).
-    const Vec3 poleR(-0.5f, -1.0f, -0.3f), poleL(0.5f, -1.0f, -0.3f);
+    // Elbows point down, a little out to the side and back (right arm is at -X); further out
+    // with more flare.
+    const float out = 0.5f + 0.9f * std::clamp(elbowFlare, 0.0f, 1.0f);
+    const Vec3 poleR(-out, -1.0f, -0.3f), poleL(out, -1.0f, -0.3f);
 
     p.wristR = palmRight - p.handForwardR * halfHand;
     p.elbowR = solveElbow(p.shoulderR, p.wristR, upperR, foreR, poleR);
@@ -116,6 +154,17 @@ void drawJuggler(Renderer& r, const Primitives& prims, const JugglerPose& p, con
     drawJoint(r, prims, placement, p.head, p.headRadius, body);
     Vec3 headBottom = p.head - Vec3(0.0f, p.headRadius * 0.8f, 0.0f);
     drawLimbSegment(r, prims, placement, p.neckBase - Vec3(0, 0.02f, 0), headBottom, lr * 1.1f, body);
+    // Eyes, so you can see where the juggler is looking.
+    {
+        const Vec3 f = normalize(p.headForward);
+        Vec3 side = cross(Vec3(0.0f, 1.0f, 0.0f), f);
+        side = length(side) > 1e-3f ? normalize(side) : Vec3(1.0f, 0.0f, 0.0f);
+        const Vec3 up = cross(f, side);
+        for (int i = -1; i <= 1; i += 2) {
+            const Vec3 eye = p.head + f * (p.headRadius * 0.88f) + side * (0.038f * i) + up * 0.02f;
+            drawJoint(r, prims, placement, eye, 0.017f, style.eyeColor);
+        }
+    }
 
     // Torso: inverted frustum from waist (narrow) to shoulder line (wide), flattened front-to-back.
     const float shoulderHalfWidth = 0.20f, torsoDepth = 0.10f;
