@@ -39,6 +39,9 @@
     <ClCompile Include="src\mesh.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\prop_figure.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
     <ClCompile Include="src\pattern.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -102,6 +105,9 @@
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\pattern.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\prop_figure.h">
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\renderer.h">

@@ -4,6 +4,13 @@
   some completely ridiculous prop.) 
   * Birthday cake, salmon, dry ice, open 2L bottle of soda?
 * The current state of the 3D animation should be highlighted on the ladder.
+* With short periods, the read head looks pretty twitchy. It should track all the way
+  across the ladder. Actually, there's a bug if it doesn't. With the pattern "3", having
+  the read head reset every beat causes the ladder to not match the position of the balls.
+  The read head is constantly showing the first ball (currently blue) coming out of the
+  right hand, but that's clearly not a valid juggle.
+* Ballistic trails overlap with any pattern that repeats the same throws consecutively.
+  Shorten the trails when this happens.
 
 * The period extend/contract can operate several ways;
   * - can do what it currently does - which I don't understand.
@@ -15,3 +22,7 @@
 Distant future, after juggling animation has been implemented:
 * Have the animation update to show where the mouse is hovering on the ladder. This will be
   ... difficult .... in 3D
+* Give the juggler some character. For high patterns, he should throw a bit wider and have
+  to shimmy to make catches. Give him a worried look, based upon how hard the pattern is.
+  Have him looking up at the peak of his juggle. When juggling massive patterns, give him
+  increasingly large biseps. 

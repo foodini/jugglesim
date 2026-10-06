@@ -5,9 +5,11 @@
 #pragma once
 
 #include "color_vision.h"
+#include "juggle_sim.h"
 
 struct AppSettings {
     ColorVisionMode colorVision = ColorVisionMode::Normal;
+    PropType prop = PropType::Ball;
 };
 
 // Returns defaults for anything missing or unreadable.

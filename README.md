@@ -66,10 +66,11 @@ src/
   main.cpp            Win32 window, WGL context, ImGui setup, pane layout, main loop
   gl_funcs.h/.cpp     tiny loader for the OpenGL 3.3 functions we use (no GLAD/GLEW)
   math3d.h            Vec3 / Mat4 (no GLM)
-  mesh.h/.cpp         procedural primitives: sphere, cylinder, torso frustum, cube
+  mesh.h/.cpp         procedural meshes: sphere, cylinder, frustum, cube, lathe, ring sectors
   renderer.h/.cpp     lit solid-color shader, plus additive "glow" ribbons for trails
-  juggler_figure.*    stick-figure pose, arm IK, and drawing
-  juggle_sim.h/.cpp   where hands and balls are at any moment (closed-form physics)
+  juggler_figure.*    stick-figure pose, arm and leg IK, and drawing
+  prop_figure.*       ball, club and ring meshes and drawing
+  juggle_sim.h/.cpp   where hands, body and props are at any moment (closed-form physics)
   timing.h            ticks (5040 per beat, int64) and the TempoMap (beats <-> seconds)
   pattern.h/.cpp      throw events + sections: the source of truth for juggling
   siteswap.h/.cpp     siteswap parsing/validation (vanilla only, for now)

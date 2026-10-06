@@ -25,16 +25,42 @@
 
 #include <vector>
 
+// What's being juggled. (Per pattern for now; BallState carries it per prop, so mixed props
+// can come later.)
+enum class PropType { Ball, Club, Ring, Count };
+
+const char* propTypeName(PropType prop);  // "Balls", "Clubs", "Rings" (menu text)
+const char* propTypeKey(PropType prop);   // "balls", ... (settings file)
+bool propTypeFromKey(const char* key, PropType* prop);
+
 struct JuggleParams {
     double bpm = 150.0;
     double dwellBeats = 1.4;  // 0 < dwell < 2
+    PropType prop = PropType::Ball;
 };
 
 constexpr float kBallRadius = 0.034f;  // a typical 68 mm juggling ball
 
+// Club dimensions (a 515 mm club, 220 g), measured from the top (the big end) along its axis.
+constexpr float kClubLength = 0.515f;
+constexpr float kClubCenterOfMass = 0.215f;  // from the top
+constexpr float kClubGrip = 0.387f;          // from the top: midway between collar and knob
+// Ring dimensions: a typical stage ring.
+constexpr float kRingOuterRadius = 0.16f;
+constexpr float kRingInnerRadius = 0.125f;
+constexpr float kRingHalfThickness = 0.003f;
+
+// One prop at a moment. `center` is the center of mass (what flies on the parabola and what
+// the trails follow). Clubs and rings also have an orientation:
+//   - axis: for a club, along the club from the handle toward the top; for a ring, from the
+//     point on the rim the hand holds toward the center (it turns as the ring spins).
+//   - spinAxis: what it spins around (perpendicular to axis). For a ring, the ring's normal.
 struct BallState {
     int ball = 0;   // ball id (BallOrbits numbering, same as the ladder)
+    PropType prop = PropType::Ball;
     Vec3 center;
+    Vec3 axis{0.0f, 1.0f, 0.0f};
+    Vec3 spinAxis{1.0f, 0.0f, 0.0f};
     bool inFlight = false;
 };
 
@@ -73,14 +99,17 @@ inline Vec3 bodyPoint(const BodyMotion& m, Vec3 neutral) {
 }
 
 struct JugglerScene {
-    Vec3 palmRight, palmLeft;  // where each hand's palm is (the ball sits just above it)
+    Vec3 palmRight, palmLeft;  // where each hand's palm is (a ball sits just above it; a club
+                               // handle or ring rim passes through it)
+    PropType prop = PropType::Ball;
     BodyMotion body;
     std::vector<BallState> balls;
     std::vector<Trail> trails;
 };
 
 // How much space the pattern uses (juggler-local), for framing the camera: the lowest point
-// the hands reach, the highest point any ball reaches, and how far out to the side things go.
+// the hands (or what they hold) reach, the highest point any prop reaches, and how far out to
+// the side things go.
 struct SceneExtents {
     float lowestHandY = 0.0f;    // bottom of the hands at the lowest point of their scoop
     float highestPropY = 0.0f;   // top of the highest ball at the top of its flight

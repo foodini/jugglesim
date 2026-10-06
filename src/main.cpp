@@ -15,6 +15,7 @@
 #include "gl_funcs.h"
 #include "juggle_sim.h"
 #include "juggler_figure.h"
+#include "prop_figure.h"
 #include "ladder_view.h"
 #include "math3d.h"
 #include "mesh.h"
@@ -193,8 +194,9 @@ Vec3 colorToVec3(ImU32 c) {
     return Vec3(f.x, f.y, f.z);
 }
 
-void renderJugglerView(Renderer& renderer, const Primitives& prims, const JugglerScene& scene,
-                       const CameraView& camera, ColorVisionMode colorVision, const GLRect& rect) {
+void renderJugglerView(Renderer& renderer, const Primitives& prims, const PropMeshes& propMeshes,
+                       const JugglerScene& scene, const CameraView& camera,
+                       ColorVisionMode colorVision, const GLRect& rect) {
     if (rect.w <= 0 || rect.h <= 0) return;
 
     glViewport(rect.x, rect.y, rect.w, rect.h);
@@ -219,16 +221,14 @@ void renderJugglerView(Renderer& renderer, const Primitives& prims, const Juggle
 
     JugglerPose pose = makeNeutralPose();
     poseBody(pose, scene.body);
-    poseArmsForPalms(pose, scene.palmRight, scene.palmLeft, scene.body.intensity);
+    poseArmsForPalms(pose, scene.palmRight, scene.palmLeft, scene.body.intensity,
+                     scene.prop != PropType::Ball);
     drawJuggler(renderer, prims, pose, Mat4::identity(), JugglerStyle{});
 
-    // Balls, in the same colors as the ladder.
+    // Props, in the same colors (and, on rings, dash patterns) as the ladder.
     for (const BallState& b : scene.balls) {
-        const Vec3 color = colorToVec3(ballStyle(colorVision, b.ball).color);
-        renderer.drawMesh(prims.sphere,
-                          Mat4::translation(b.center) *
-                              Mat4::scaling({kBallRadius, kBallRadius, kBallRadius}),
-                          color);
+        const BallStyle style = ballStyle(colorVision, b.ball);
+        drawProp(renderer, propMeshes, prims.sphere, b, colorToVec3(style.color), style.dash);
     }
     renderer.endScene();
 
@@ -342,6 +342,8 @@ int main() {
     }
     Primitives prims;
     prims.create();
+    PropMeshes propMeshes;
+    propMeshes.create();
 
     AppSettings settings = loadSettings();
 
@@ -388,6 +390,7 @@ int main() {
     bool showColorPreview = false;
     Playback playback;
     JuggleParams juggleParams;
+    juggleParams.prop = settings.prop;
     CameraControl camera;
     // Pattern extents depend only on the loop and timing, so they're cached.
     std::vector<int> extentsLoop;
@@ -465,6 +468,18 @@ int main() {
                                       "Each hand throws every other beat, so this is out of 2;\n"
                                       "real cascades are often around 1.3-1.6. Short throws (like 1s)\n"
                                       "automatically get a shorter dwell so they still have some flight.");
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Props")) {
+                for (int i = 0; i < static_cast<int>(PropType::Count); ++i) {
+                    const PropType prop = static_cast<PropType>(i);
+                    if (ImGui::MenuItem(propTypeName(prop), nullptr, settings.prop == prop) &&
+                        settings.prop != prop) {
+                        settings.prop = prop;
+                        juggleParams.prop = prop;
+                        saveSettings(settings);
+                    }
+                }
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("View")) {
@@ -644,7 +659,8 @@ int main() {
             const std::vector<int> loop = loopThrowValues(pattern);
             scene = evaluateScene(loop, computeBallOrbits(loop), juggleParams, playback.beat);
             if (loop != extentsLoop || juggleParams.bpm != extentsParams.bpm ||
-                juggleParams.dwellBeats != extentsParams.dwellBeats) {
+                juggleParams.dwellBeats != extentsParams.dwellBeats ||
+                juggleParams.prop != extentsParams.prop) {
                 extents = computeSceneExtents(loop, juggleParams);
                 extentsLoop = loop;
                 extentsParams = juggleParams;
@@ -653,12 +669,13 @@ int main() {
         const float jugglerAspect =
             jugglerRect.h > 0 ? static_cast<float>(jugglerRect.w) / static_cast<float>(jugglerRect.h) : 1.0f;
         const CameraView cameraView = updateCamera(camera, extents, jugglerAspect, io.DeltaTime);
-        renderJugglerView(renderer, prims, scene, cameraView, settings.colorVision, jugglerRect);
+        renderJugglerView(renderer, prims, propMeshes, scene, cameraView, settings.colorVision, jugglerRect);
 
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         ::SwapBuffers(g_hdc);
     }
 
+    propMeshes.destroy();
     prims.destroy();
     renderer.shutdown();
     ImGui_ImplOpenGL3_Shutdown();

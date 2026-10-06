@@ -43,6 +43,9 @@ AppSettings loadSettings() {
         if (key == "color_vision") {
             ColorVisionMode mode;
             if (colorVisionModeFromKey(value.c_str(), &mode)) settings.colorVision = mode;
+        } else if (key == "props") {
+            PropType prop;
+            if (propTypeFromKey(value.c_str(), &prop)) settings.prop = prop;
         }
     }
     return settings;
@@ -57,5 +60,6 @@ bool saveSettings(const AppSettings& settings) {
     if (!out) return false;
     out << "# JuggleSim user settings\n";
     out << "color_vision = " << colorVisionModeKey(settings.colorVision) << "\n";
+    out << "props = " << propTypeKey(settings.prop) << "\n";
     return static_cast<bool>(out);
 }

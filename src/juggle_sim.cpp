@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 
 namespace {
 
@@ -80,6 +81,75 @@ Vec3 hermite(Vec3 p0, Vec3 v0, Vec3 p1, Vec3 v1, float T, float tau) {
     const float h00 = 2 * u3 - 3 * u2 + 1, h10 = u3 - 2 * u2 + u;
     const float h01 = -2 * u3 + 3 * u2, h11 = u3 - u2;
     return p0 * h00 + v0 * (h10 * T) + p1 * h01 + v1 * (h11 * T);
+}
+
+// ---- Props. A ball sits on the palm. A club is held at its grip (between the collar and the
+// knob), so its center of mass is out along the club from the hand; a ring is held at its
+// rim, so its center is a ring-radius away. Clubs and rings spin as they fly.
+constexpr float kClubGripToCenter = kClubGrip - kClubCenterOfMass;                // 0.172 m
+constexpr float kRingGripToCenter = 0.5f * (kRingOuterRadius + kRingInnerRadius);  // band middle
+// How far a prop reaches from its center of mass in any direction (for framing the camera).
+float propReach(PropType prop) {
+    switch (prop) {
+        case PropType::Club: return std::max(kClubCenterOfMass, kClubLength - kClubCenterOfMass);
+        case PropType::Ring: return kRingOuterRadius;
+        default: return kBallRadius;
+    }
+}
+// Only used to pick a whole number of spins for each throw (single, double, ...); the actual
+// spin rate is that number of turns divided by the throw's own flight time, so the prop
+// always arrives at the catching hand the right way round.
+constexpr float kNaturalSpinRate = 1.7f;  // turns per second
+// Clubs and rings spin about the line through the shoulders, the top turning back toward the
+// juggler as they leave the hand (clockwise, seen from the juggler's left). The axis is turned
+// about 7 degrees (counterclockwise seen from above for the right hand, clockwise for the
+// left), so a prop leaves the hand pointing a little toward the other side.
+constexpr float kClubAxisBias = 7.0f * kPi / 180.0f;
+
+// The plane a prop spins in: at angle theta (radians) its axis points
+// up * cos(theta) + dir * sin(theta). Theta 0 is upright; positive tips it toward `dir`, which
+// points back toward the juggler, and props spin toward positive theta.
+struct SpinFrame {
+    Vec3 up{0.0f, 1.0f, 0.0f};
+    Vec3 dir{0.0f, 0.0f, 1.0f};
+    Vec3 at(float theta) const { return up * std::cos(theta) + dir * std::sin(theta); }
+    Vec3 rate(float theta) const { return dir * std::cos(theta) - up * std::sin(theta); }  // d/dtheta
+    Vec3 spinAxis() const { return cross(up, dir); }
+};
+
+// Where in its turn a prop is at the moments that matter (theta, radians):
+//   release: as it leaves the hand;
+//   caught: as it arrives in the next hand (after its whole number of spins);
+//   cocked: the bottom of the scoop, ready to be flicked into the next throw.
+// A club is caught with its top pointing forward and up (about 33 degrees above horizontal),
+// hangs down from the wrist at the bottom of the scoop (top about 62 degrees below horizontal,
+// forward), and is flicked up so it leaves the hand pointing forward, about 15 degrees above
+// horizontal, already spinning (from slow-motion video of real club throws). A ring does the
+// same, more gently.
+struct PropAngles {
+    float release = 0.0f, caught = 0.0f, cocked = 0.0f;
+};
+PropAngles propAngles(PropType prop) {
+    switch (prop) {
+        case PropType::Club: return {-1.31f, -1.00f, -2.65f};
+        case PropType::Ring: return {0.10f, -0.35f, -0.50f};
+        default: return {};
+    }
+}
+
+// A carry shorter than this (seconds) winds the prop up less.
+constexpr float kFullWindUpSeconds = 0.3f;
+// Average turning speed of the flick from the cocked angle to the release (radians/second).
+constexpr float kMaxFlickRate = 20.0f;
+// The flick gets at least this share of the carry.
+constexpr float kFlickShare = 0.4f;
+
+// Scalar cubic Hermite (see hermite()).
+float hermite1(float p0, float v0, float p1, float v1, float T, float tau) {
+    const float u = T > 1e-6f ? std::clamp(tau / T, 0.0f, 1.0f) : 1.0f;
+    const float u2 = u * u, u3 = u2 * u;
+    return p0 * (2 * u3 - 3 * u2 + 1) + v0 * T * (u3 - 2 * u2 + u) + p1 * (-2 * u3 + 3 * u2) +
+           v1 * T * (u3 - u2);
 }
 
 // One throw's drive: how far the hand travels accelerating it, and for how long.
@@ -162,10 +232,54 @@ public:
         return catchPoint(isRightHandBeat(beat), incomingHeightFraction(beat));
     }
 
-    // ---- Flights. Endpoints are the throw and catch points (the hand passes through them
-    // exactly at release and at the catch), so flights don't depend on the hand path.
-    Vec3 launchPoint(int b) const { return throwPointAt(b) + kBallOnPalm; }
-    Vec3 landingPoint(int b, int v) const { return catchPointAt(b + v) + kBallOnPalm; }
+    // ---- Props: how each throw's prop is turned and how fast it spins.
+    PropType prop() const { return params_.prop; }
+    float gripToCenter() const {
+        return prop() == PropType::Club ? kClubGripToCenter
+                                        : (prop() == PropType::Ring ? kRingGripToCenter : 0.0f);
+    }
+    // The plane the throw made on beat b spins in: clubs and rings both spin end over end,
+    // in the plane running front to back through the juggler (turned by kClubAxisBias), the
+    // top turning back toward the juggler.
+    SpinFrame frameFor(int b) const {
+        const bool right = isRightHandBeat(b);
+        SpinFrame f;
+        if (prop() != PropType::Ball) {
+            const float side = std::sin(kClubAxisBias);
+            f.dir = Vec3(right ? -side : side, 0.0f, -std::cos(kClubAxisBias));
+        }
+        return f;
+    }
+    // Center of the prop relative to the hand (palm) holding it.
+    Vec3 propOffset(const SpinFrame& f, float theta) const {
+        if (prop() == PropType::Ball) return kBallOnPalm;
+        return f.at(theta) * gripToCenter();
+    }
+    // Whole turns the throw on beat b (value v) makes in the air: about kNaturalSpinRate turns
+    // a second of flight, at least one. 1s go across flat (no turn); 2s are held.
+    int spins(int b, int v) const {
+        if (prop() == PropType::Ball || v <= 2) return 0;
+        const float turns = flightSeconds(b, v) * kNaturalSpinRate;
+        return std::max(1, static_cast<int>(std::lround(turns)));
+    }
+    // Spin rate in the air (radians/second): the spins plus getting from the release angle to
+    // the catch angle, over exactly the flight time.
+    float spinRate(int b, int v) const {
+        if (prop() == PropType::Ball || v <= 0 || v == 2) return 0.0f;
+        const PropAngles a = propAngles(prop());
+        const float turn = 2.0f * kPi * static_cast<float>(spins(b, v)) + a.caught - a.release;
+        return turn / flightSeconds(b, v);
+    }
+
+    // ---- Flights. The prop's center of mass flies on the parabola. Its endpoints are where
+    // the center is when the hand is at the throw point (release) and at the catch point
+    // (catch), so flights don't depend on the hand path.
+    Vec3 launchPoint(int b) const {
+        return throwPointAt(b) + propOffset(frameFor(b), propAngles(prop()).release);
+    }
+    Vec3 landingPoint(int b, int v) const {
+        return catchPointAt(b + v) + propOffset(frameFor(b), propAngles(prop()).caught);
+    }
     float flightSeconds(int b, int v) const {
         return static_cast<float>((catchTimeFor(b + v) - b) * secondsPerBeat());
     }
@@ -176,37 +290,57 @@ public:
         const Vec3 accel(0.0f, -kGravity, 0.0f);
         return (landingPoint(b, v) - launchPoint(b)) * (1.0f / T) - accel * (0.5f * T);
     }
-    // Position of a ball in flight: thrown on beat b (value v), at time t (b <= t <= catch).
+    // Position of a prop's center in flight: thrown on beat b (value v), at time t.
     Vec3 flightPosition(int b, int v, double t) const {
         const float tau = static_cast<float>((t - b) * secondsPerBeat());
         const Vec3 accel(0.0f, -kGravity, 0.0f);
         return launchPoint(b) + launchVelocity(b, v) * tau + accel * (0.5f * tau * tau);
     }
+    // The whole prop in flight: center, and the turn it has made since the release.
+    void flightProp(int b, int v, double t, BallState* out) const {
+        out->prop = prop();
+        out->center = flightPosition(b, v, t);
+        const SpinFrame f = frameFor(b);
+        const float tau = static_cast<float>((t - b) * secondsPerBeat());
+        const float theta = propAngles(prop()).release + spinRate(b, v) * tau;
+        out->axis = f.at(theta);
+        out->spinAxis = f.spinAxis();
+    }
 
-    // Velocity the hand has when it releases on `beat`: the ball's launch velocity, or rest
-    // for a 2 (held) or an empty beat.
+    // Velocity the hand has when it releases on `beat`: whatever makes the prop's center leave
+    // at its launch velocity. For a ball that's the launch velocity itself; a club or ring is
+    // also turning about the hand, which carries its center along, so the hand moves that much
+    // less. Rest for a 2 (held) or an empty beat.
     Vec3 releaseVelocity(int beat) const {
         const int v = valueAt(beat);
         if (v <= 0 || v == 2) return Vec3(0.0f, 0.0f, 0.0f);
-        return launchVelocity(beat, v);
+        const float turning = spinRate(beat, v) * gripToCenter();
+        return launchVelocity(beat, v) -
+               frameFor(beat).rate(propAngles(prop()).release) * turning;
     }
     // Velocity the hand has at the catch before throwing on `beat`: a fraction of the incoming
-    // ball's velocity, so the hand "gives" with the catch (an inelastic hand-ball collision).
+    // prop's velocity, so the hand "gives" with the catch (an inelastic collision).
     Vec3 catchVelocity(int beat) const {
         const int vIn = incomingAt(beat);
         if (vIn <= 0 || vIn == 2) return Vec3(0.0f, 0.0f, 0.0f);
         const int from = beat - vIn;
         const Vec3 accel(0.0f, -kGravity, 0.0f);
-        const Vec3 ballVelocity = launchVelocity(from, vIn) + accel * flightSeconds(from, vIn);
-        return ballVelocity * kCatchSoftness;
+        const Vec3 centerVelocity = launchVelocity(from, vIn) + accel * flightSeconds(from, vIn);
+        const float turning = spinRate(from, vIn) * gripToCenter();
+        const Vec3 gripVelocity =
+            centerVelocity - frameFor(from).rate(propAngles(prop()).caught) * turning;
+        return gripVelocity * kCatchSoftness;
     }
 
     // The drive for the release on `beat`: v^2 / 2a at the hand's top acceleration, up to the
     // longest drive arms and body can make together. Past that (throws above the human limit)
     // the hand still reaches the release speed, just with more than human acceleration.
+    // The speed is the prop's launch speed: for a club or ring the wrist's flick adds some of
+    // that at the release, but the arm still drives the prop's whole mass up to speed.
     Drive driveFor(int beat) const {
         Drive d;
-        const float speed = length(releaseVelocity(beat));
+        const int v = valueAt(beat);
+        const float speed = (v > 0 && v != 2) ? length(launchVelocity(beat, v)) : 0.0f;
         d.carrySeconds = static_cast<float>(catchDwell(beat) * secondsPerBeat());
         d.distance = std::clamp(speed * speed / (2.0f * kHandDriveAccel), kMinScoop, kMaxDrive);
         d.seconds = speed > 0.05f ? 2.0f * d.distance / speed : 0.5f * d.carrySeconds;
@@ -400,7 +534,62 @@ public:
         return hermite(lowPoint, zero, tp, vIn, driveSeconds, tau - scoopSeconds);
     }
 
-    Vec3 ballInHand(bool right, double t) const { return palm(right, t) + kBallOnPalm; }
+    // The prop a hand holds at time t (if it holds one): from the catch, the prop's turn
+    // carries on a little (the hand gives with it), swings back to the cocked angle by the
+    // bottom of the scoop, and is flicked forward through the drive so it leaves the hand at
+    // the release angle with exactly the next throw's spin. Between releases, only a held 2
+    // is still in the hand, resting at the release angle. The plane it turns in moves over
+    // from the throwing hand's to this hand's during the carry.
+    void heldProp(bool right, double t, BallState* out) const {
+        out->prop = prop();
+        const Vec3 p = palm(right, t);
+        int prev = static_cast<int>(std::floor(t));
+        if (isRightHandBeat(prev) != right) --prev;
+        const int next = prev + 2;
+        const PropAngles a = propAngles(prop());
+        SpinFrame frame;
+        float theta = a.release;
+        const double catchTime = catchTimeFor(next);
+        if (t < catchTime) {
+            frame = frameFor(prev);
+        } else {
+            const int vIn = incomingAt(next);
+            SpinFrame from = frameFor(next);
+            float startAngle = a.release, startRate = 0.0f;
+            if (vIn == 2) {
+                from = frameFor(next - 2);
+            } else if (vIn > 0) {
+                from = frameFor(next - vIn);
+                startAngle = a.caught;
+                startRate = kCatchSoftness * spinRate(next - vIn, vIn);
+            }
+            const SpinFrame to = frameFor(next);
+            const Drive drive = driveFor(next);
+            // The flick (cocked to release) takes the end of the carry: the hand's drive, or
+            // more if the drive is short (the wrist starts turning the prop up before the hand
+            // starts driving).
+            const float flickSeconds =
+                std::min(std::max(drive.seconds, kFlickShare * drive.carrySeconds), 0.8f * drive.carrySeconds);
+            const float dropSeconds = drive.carrySeconds - flickSeconds;
+            const float tau = static_cast<float>((t - catchTime) * secondsPerBeat());
+            const int v = valueAt(next);
+            const float endRate = (v > 0 && v != 2) ? spinRate(next, v) : 0.0f;
+            // The wind-up is as big as there's time for: a quick carry only cocks a little.
+            const float fullWindUp = std::fabs(a.cocked - a.release);
+            const float windUp = std::min(std::clamp(drive.carrySeconds / kFullWindUpSeconds, 0.2f, 1.0f),
+                                          kMaxFlickRate * flickSeconds / std::max(fullWindUp, 1e-3f));
+            const float cocked = a.release + (a.cocked - a.release) * windUp;
+            theta = tau < dropSeconds
+                        ? hermite1(startAngle, startRate, cocked, 0.0f, dropSeconds, tau)
+                        : hermite1(cocked, 0.0f, a.release, endRate, flickSeconds, tau - dropSeconds);
+            const float u = std::clamp(tau / std::max(drive.carrySeconds, 1e-4f), 0.0f, 1.0f);
+            const float w = u * u * (3.0f - 2.0f * u);  // smoothstep: no kink at either end
+            frame.dir = normalize(from.dir * (1.0f - w) + to.dir * w);
+        }
+        out->center = p + propOffset(frame, theta);
+        out->axis = frame.at(theta);
+        out->spinAxis = frame.spinAxis();
+    }
 
 private:
     const std::vector<int>& loop_;
@@ -436,29 +625,40 @@ SceneExtents computeSceneExtents(const std::vector<int>& loop, const JuggleParam
     const float handThickness = 0.025f;
     e.lowestHandY = 1e9f;
     e.highestPropY = -1e9f;
-    // Hands: sample their paths over one full repeat.
+    const float reach = propReach(params.prop);
+    // Hands, and what they hold: sample their paths over one full repeat. (A hand that's empty
+    // at the moment still gets a "held" prop here; that only makes the framing a bit roomier.)
     for (int i = 0; i <= span * 100; ++i) {
         const double t = i / 100.0;
         for (int right = 0; right < 2; ++right) {
             const Vec3 p = ev.palm(right != 0, t);
             e.lowestHandY = std::min(e.lowestHandY, p.y - handThickness);
             e.halfWidth = std::max(e.halfWidth, std::fabs(p.x) + 0.06f);
+            if (params.prop != PropType::Ball) {
+                BallState held;
+                ev.heldProp(right != 0, t, &held);
+                // The near end of a club (the knob) or the bottom of a ring.
+                const float low = params.prop == PropType::Club
+                                      ? (held.center - held.axis * (kClubLength - kClubCenterOfMass)).y
+                                      : held.center.y - kRingOuterRadius;
+                e.lowestHandY = std::min(e.lowestHandY, low);
+                e.highestPropY = std::max(e.highestPropY, held.center.y + reach);
+                e.halfWidth = std::max(e.halfWidth, std::fabs(held.center.x) + reach);
+            } else {
+                e.highestPropY = std::max(e.highestPropY, p.y + 0.0125f + 2.0f * kBallRadius);
+            }
         }
     }
-    // Balls: the top of each flight is at the vertex of its parabola (or an endpoint).
+    // Flights: the top of each is at the vertex of its parabola (or an endpoint).
     for (int b = 0; b < span; ++b) {
         const int v = ev.valueAt(b);
-        if (v <= 0) continue;
-        if (v == 2) {  // held: just rides the hand
-            e.highestPropY = std::max(e.highestPropY, ev.ballInHand(isRightHandBeat(b), b).y + kBallRadius);
-            continue;
-        }
+        if (v <= 0 || v == 2) continue;  // empty, or held (covered by the hands above)
         const double catchTime = b + v - ev.catchDwell(b + v);
         const int kSamples = 64;
         for (int i = 0; i <= kSamples; ++i) {
             const Vec3 p = ev.flightPosition(b, v, b + (catchTime - b) * i / kSamples);
-            e.highestPropY = std::max(e.highestPropY, p.y + kBallRadius);
-            e.halfWidth = std::max(e.halfWidth, std::fabs(p.x) + kBallRadius);
+            e.highestPropY = std::max(e.highestPropY, p.y + reach);
+            e.halfWidth = std::max(e.halfWidth, std::fabs(p.x) + reach);
         }
     }
     if (e.highestPropY < e.lowestHandY) e.highestPropY = e.lowestHandY + 0.2f;
@@ -470,6 +670,7 @@ JugglerScene evaluateScene(const std::vector<int>& loop, const BallOrbits& orbit
     JugglerScene scene;
     if (loop.empty()) return scene;
     const Evaluator ev(loop, params, patternIntensity(loop, params));
+    scene.prop = params.prop;
     scene.palmRight = ev.palm(true, t);
     scene.palmLeft = ev.palm(false, t);
     scene.body = ev.bodyAt(t);
@@ -488,18 +689,34 @@ JugglerScene evaluateScene(const std::vector<int>& loop, const BallOrbits& orbit
         const int vIn = ev.incomingAt(b);
         if (vIn != 2) {
             const double holdStart = b - ev.catchDwell(b);
-            if (t >= holdStart && t < b) scene.balls.push_back({ball, ev.ballInHand(right, t), false});
+            if (t >= holdStart && t < b) {
+                BallState held;
+                held.ball = ball;
+                ev.heldProp(right, t, &held);
+                scene.balls.push_back(held);
+            }
         }
 
         if (v == 2) {
             // A 2 stays in the hand until it's thrown again two beats later.
-            if (t >= b && t < b + 2) scene.balls.push_back({ball, ev.ballInHand(right, t), false});
+            if (t >= b && t < b + 2) {
+                BallState held;
+                held.ball = ball;
+                ev.heldProp(right, t, &held);
+                scene.balls.push_back(held);
+            }
             continue;
         }
 
         // In flight, and the trail it leaves (half the flight long, fading with age).
         const double catchTime = b + v - ev.catchDwell(b + v);
-        if (t >= b && t < catchTime) scene.balls.push_back({ball, ev.flightPosition(b, v, t), true});
+        if (t >= b && t < catchTime) {
+            BallState flying;
+            flying.ball = ball;
+            flying.inFlight = true;
+            ev.flightProp(b, v, t, &flying);
+            scene.balls.push_back(flying);
+        }
         const double trailLength = 0.5 * (catchTime - b);
         const double from = std::max(static_cast<double>(b), t - trailLength);
         const double to = std::min(t, catchTime);
@@ -540,4 +757,31 @@ float patternIntensity(const std::vector<int>& loop, const JuggleParams& params)
     const float mean = sum / n;
     const float spread = std::sqrt(std::max(0.0f, sumSq / n - mean * mean));
     return std::clamp(0.6f * maxFraction + 0.8f * spread, 0.0f, 1.0f);
+}
+
+const char* propTypeName(PropType prop) {
+    switch (prop) {
+        case PropType::Club: return "Clubs";
+        case PropType::Ring: return "Rings";
+        default: return "Balls";
+    }
+}
+
+const char* propTypeKey(PropType prop) {
+    switch (prop) {
+        case PropType::Club: return "clubs";
+        case PropType::Ring: return "rings";
+        default: return "balls";
+    }
+}
+
+bool propTypeFromKey(const char* key, PropType* prop) {
+    for (int i = 0; i < static_cast<int>(PropType::Count); ++i) {
+        const PropType p = static_cast<PropType>(i);
+        if (std::string(key) == propTypeKey(p)) {
+            *prop = p;
+            return true;
+        }
+    }
+    return false;
 }

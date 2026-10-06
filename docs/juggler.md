@@ -64,6 +64,31 @@ half a beat. A **2** is a hold: the ball simply stays in the hand.
 Throw heights follow from the tempo: every throw is timed to land exactly when it's due, so a
 faster tempo means lower throws.
 
+## Props
+
+The **Props** menu chooses what's juggled: **Balls**, **Clubs** or **Rings**. Your choice is
+remembered the next time you start JuggleSim. Every prop has the same color as its ball on the
+ladder, and every flight leaves the same dashed trail.
+
+- **Clubs** are modeled on a real 515 mm club: the hand holds the handle between the collar
+  and the knob, and the club's center of mass (about 17 cm up from the hand) is what flies on
+  the parabola. Clubs spin end over end, the top turning back toward the juggler as the club
+  leaves the hand (clockwise, seen from the juggler's left), with the spin axis turned about
+  7 degrees so each club leaves the hand pointing a little toward the other side. In the hand,
+  a club is caught pointing forward and up, hangs from the wrist pointing down and forward
+  (about 60 degrees below horizontal) at the bottom of the scoop, and is flicked up so it
+  leaves the hand pointing forward, about 15 degrees above horizontal, already spinning. The
+  top, collar and knob are a darker shade of the club's color.
+- **Rings** are 32 cm across and held at the rim. They spin just like clubs, end over end
+  about the same axis, so from the front you see them nearly edge-on. Each ring is banded in
+  its ball's dash pattern (dark where the ladder line has gaps), so you can see it spin and
+  tell rings apart without color. A ring whose ladder line is solid gets two narrow dark
+  bands.
+- **Spins.** Each throw of a club or ring makes a whole number of turns: about as many as
+  a juggler would naturally give it for its flight time (at the default tempo, a single on a 3
+  and a double on a 5; higher throws get more). The prop then turns at exactly the rate that
+  brings it round in time for the catch. 1s go across flat, without turning; 2s are held.
+
 ## What you see
 
 - **The juggler** faces you, so their right hand is on your left. Hands catch on the outside and
@@ -96,7 +121,7 @@ faster tempo means lower throws.
     as the tempo demands.
   - **The head** follows the balls, mostly the highest ones; the eyes show where the juggler is
     looking.
-- **Balls** have the same colors as on the ladder.
-- **Trails** glow behind each ball in flight, fading out over about half the flight. Each trail
+- **Props** have the same colors as their balls on the ladder (see *Props* above).
+- **Trails** glow behind each prop in flight, fading out over about half the flight. Each trail
   uses the same dash pattern as that ball's lines on the ladder, so balls can be told apart even
   without color (see *View > Color Vision*).

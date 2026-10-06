@@ -85,6 +85,7 @@
     <ClCompile Include="src\ladder_view.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\mesh.cpp" />
+    <ClCompile Include="src\prop_figure.cpp" />
     <ClCompile Include="src\pattern.cpp" />
     <ClCompile Include="src\renderer.cpp" />
     <ClCompile Include="src\settings.cpp" />
@@ -108,6 +109,7 @@
     <ClInclude Include="src\math3d.h" />
     <ClInclude Include="src\mesh.h" />
     <ClInclude Include="src\pattern.h" />
+    <ClInclude Include="src\prop_figure.h" />
     <ClInclude Include="src\renderer.h" />
     <ClInclude Include="src\settings.h" />
     <ClInclude Include="src\siteswap.h" />

@@ -40,8 +40,11 @@ void poseBody(JugglerPose& pose, const BodyMotion& motion);
 // Moves the arms so each palm is at the given point (palms facing up), solving each arm as a
 // two-bone chain (upper arm + forearm, lengths taken from the pose) with the elbow pointing
 // down and out; elbowFlare (0..1) swings the elbows further out to the sides. Targets out of
-// reach are clamped to full extension. Call after poseBody, which moves the shoulders.
-void poseArmsForPalms(JugglerPose& pose, Vec3 palmRight, Vec3 palmLeft, float elbowFlare = 0.0f);
+// reach are clamped to full extension. Palms face up (for balls), or with `grip`, inward
+// toward each other with the thumbs up, as when holding a club handle or a ring's rim. Call
+// after poseBody, which moves the shoulders.
+void poseArmsForPalms(JugglerPose& pose, Vec3 palmRight, Vec3 palmLeft, float elbowFlare = 0.0f,
+                      bool grip = false);
 
 struct JugglerStyle {
     Vec3 bodyColor{0.78f, 0.80f, 0.86f};

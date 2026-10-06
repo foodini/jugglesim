@@ -118,7 +118,8 @@ void poseBody(JugglerPose& p, const BodyMotion& m) {
     p.kneeL = solveElbow(p.hipL, p.ankleL, thigh, shin, Vec3(0.15f, 0.0f, 1.0f));
 }
 
-void poseArmsForPalms(JugglerPose& p, Vec3 palmRight, Vec3 palmLeft, float elbowFlare) {
+void poseArmsForPalms(JugglerPose& p, Vec3 palmRight, Vec3 palmLeft, float elbowFlare,
+                      bool grip) {
     // Palms face up; the fingers point the way the arm is reaching, seen from above (out from
     // the shoulder toward the palm), and the wrist sits half a hand-length back from the palm
     // center along that. The wrist bends as needed, so the palm stays level under the ball.
@@ -142,7 +143,13 @@ void poseArmsForPalms(JugglerPose& p, Vec3 palmRight, Vec3 palmLeft, float elbow
     p.wristL = palmLeft - p.handForwardL * halfHand;
     p.elbowL = solveElbow(p.shoulderL, p.wristL, upperL, foreL, poleL);
     p.wristL = p.elbowL + normalize(p.wristL - p.elbowL) * foreL;
-    p.palmNormalR = p.palmNormalL = Vec3(0.0f, 1.0f, 0.0f);
+    if (grip) {
+        // Palms face each other (the right hand is at -X, so its palm faces +X).
+        p.palmNormalR = Vec3(1.0f, 0.0f, 0.0f);
+        p.palmNormalL = Vec3(-1.0f, 0.0f, 0.0f);
+    } else {
+        p.palmNormalR = p.palmNormalL = Vec3(0.0f, 1.0f, 0.0f);
+    }
 }
 
 void drawJuggler(Renderer& r, const Primitives& prims, const JugglerPose& p, const Mat4& placement,

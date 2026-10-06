@@ -20,6 +20,17 @@ Mesh makeFrustumMesh(float bottomRadius, float topRadius, int slices);
 // Unit cube centered at the origin (extends from -0.5 to 0.5 on each axis).
 Mesh makeCubeMesh();
 
+// Surface of revolution around +Y: profile point i is at height ys[i] with radius radii[i]
+// (heights increasing). Normals are smooth along the profile; the ends are closed with flat
+// caps wherever the radius there is above zero.
+Mesh makeLatheMesh(const float* ys, const float* radii, int count, int slices);
+
+// Pieces of a flat ring (an annulus in the XZ plane, centered at the origin, normal +Y,
+// thickness 2 * halfThickness): one sector for each [startAngles[i], endAngles[i]] (radians,
+// measured from +X toward +Z), all in one mesh.
+Mesh makeRingSectorsMesh(float innerRadius, float outerRadius, float halfThickness,
+                         const float* startAngles, const float* endAngles, int count);
+
 void destroyMesh(Mesh& mesh);
 
 // The fixed set of primitives everything in the scene is built from.
