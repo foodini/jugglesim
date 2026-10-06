@@ -30,6 +30,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 // Declared (commented out) in imgui_impl_win32.h; must be forward-declared by the app.
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam,
@@ -99,6 +100,24 @@ void destroyGLContext(HWND hwnd) {
     g_hglrc = nullptr;
     g_hdc = nullptr;
 }
+
+// Undo/redo history of the pattern, kept as siteswap text (which also records the loop
+// period: 531 and 531531 are different entries). One step per closed edit chain, period
+// change, or siteswap committed in the text box.
+struct PatternHistory {
+    std::vector<std::string> undo;
+    std::vector<std::string> redo;
+    std::string current;  // text of the pattern being shown
+
+    // Call when the pattern has changed to `next` by a user action.
+    void record(const std::string& next) {
+        if (next == current) return;
+        undo.push_back(current);
+        if (undo.size() > 1000) undo.erase(undo.begin());
+        redo.clear();
+        current = next;
+    }
+};
 
 // Pixel rectangle in GL convention (origin at the bottom-left of the window).
 struct GLRect {
@@ -197,6 +216,37 @@ int main() {
     Siteswap parsed = parseSiteswap(siteswapText);
     Pattern pattern = patternFromSiteswap(parsed);
     bool patternValid = parsed.valid;
+    LadderEditState ladderEdit;  // drag-editing and pan/zoom state for the ladder
+    PatternHistory history;
+    history.current = siteswapText;
+
+    // Replaces the pattern with the one written in `text` (used by undo/redo).
+    auto showPatternText = [&](const std::string& text) {
+        cancelLadderEdit(ladderEdit);
+        std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
+        parsed = parseSiteswap(siteswapText);
+        patternValid = parsed.valid;
+        if (parsed.valid) pattern = patternFromSiteswap(parsed);
+    };
+    auto undo = [&]() {
+        if (ladderEdit.chain.active) {  // an open chain is just cancelled, like Esc
+            cancelLadderEdit(ladderEdit);
+            return;
+        }
+        if (history.undo.empty()) return;
+        history.redo.push_back(history.current);
+        history.current = history.undo.back();
+        history.undo.pop_back();
+        showPatternText(history.current);
+    };
+    auto redo = [&]() {
+        if (history.redo.empty()) return;
+        cancelLadderEdit(ladderEdit);
+        history.undo.push_back(history.current);
+        history.current = history.redo.back();
+        history.redo.pop_back();
+        showPatternText(history.current);
+    };
     bool showImGuiDemo = false;
     bool showColorPreview = false;
 
@@ -218,6 +268,12 @@ int main() {
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
+        // --- Keyboard shortcuts (not while typing: the text box has its own undo) ---
+        if (!io.WantTextInput && io.KeyCtrl) {
+            if (ImGui::IsKeyPressed(ImGuiKey_Z) && !io.KeyShift) undo();
+            else if (ImGui::IsKeyPressed(ImGuiKey_Y) || (ImGui::IsKeyPressed(ImGuiKey_Z) && io.KeyShift)) redo();
+        }
+
         // --- Main menu bar ---
         float menuHeight = 0.0f;
         if (ImGui::BeginMainMenuBar()) {
@@ -225,7 +281,17 @@ int main() {
                 if (ImGui::MenuItem("Exit")) done = true;
                 ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("Edit")) {
+                if (ImGui::MenuItem("Undo", "Ctrl+Z", false,
+                                    !history.undo.empty() || ladderEdit.chain.active))
+                    undo();
+                if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !history.redo.empty())) redo();
+                ImGui::EndMenu();
+            }
             if (ImGui::BeginMenu("View")) {
+                if (ImGui::MenuItem("Reset Ladder View", "Home", false, !ladderViewIsDefault(ladderEdit)))
+                    resetLadderView(ladderEdit);
+                ImGui::Separator();
                 if (ImGui::BeginMenu("Color Vision")) {
                     for (int i = 0; i < static_cast<int>(ColorVisionMode::Count); ++i) {
                         const ColorVisionMode mode = static_cast<ColorVisionMode>(i);
@@ -263,17 +329,34 @@ int main() {
         // Ladder diagram (top of left half).
         ImGui::SetNextWindowPos(ImVec2(0.0f, top));
         ImGui::SetNextWindowSize(ImVec2(leftWidth, H - top - entryHeight));
-        if (ImGui::Begin("Ladder", nullptr, paneFlags)) {
-            const LadderToolbarRequest request = drawLadderToolbar(pattern, patternValid);
+        // The ladder handles the mouse wheel itself (pan/zoom), so the pane mustn't scroll.
+        if (ImGui::Begin("Ladder", nullptr, paneFlags | ImGuiWindowFlags_NoScrollWithMouse)) {
+            const LadderToolbarRequest request = drawLadderToolbar(pattern, patternValid, ladderEdit);
+            if (request.resetView) resetLadderView(ladderEdit);
             if (request.newPeriodBeats > 0) {
+                cancelLadderEdit(ladderEdit);
                 pattern = withPeriod(pattern, request.newPeriodBeats);
                 std::string text;
                 if (patternToSiteswap(pattern, &text)) {
                     std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
                     parsed = parseSiteswap(siteswapText);
+                    history.record(text);
                 }
             }
-            drawLadderDiagram(pattern, patternValid, settings.colorVision);
+            const LadderEditResult edited =
+                drawLadderDiagram(pattern, patternValid, settings.colorVision, ladderEdit);
+            if (edited.committed) {
+                // A closed edit chain is always a valid siteswap; double-check before using it.
+                Pattern editedPattern = patternFromLoopValues(edited.loop);
+                editedPattern = withPeriod(editedPattern, shortestPeriodBeats(editedPattern));
+                std::string text;
+                if (patternToSiteswap(editedPattern, &text) && parseSiteswap(text).valid) {
+                    pattern = editedPattern;
+                    std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
+                    parsed = parseSiteswap(siteswapText);
+                    history.record(text);
+                }
+            }
         }
         ImGui::End();
 
@@ -286,10 +369,14 @@ int main() {
             ImGui::SameLine();
             ImGui::SetNextItemWidth(-FLT_MIN);
             if (ImGui::InputText("##siteswap", siteswapText, sizeof(siteswapText))) {
+                cancelLadderEdit(ladderEdit);
                 parsed = parseSiteswap(siteswapText);
                 patternValid = parsed.valid;
                 if (parsed.valid) pattern = patternFromSiteswap(parsed);
             }
+            // Typing is one undo step, recorded when you press Enter or leave the box (so
+            // undoing "531" doesn't step back through "53" and "5").
+            if (ImGui::IsItemDeactivatedAfterEdit() && parsed.valid) history.record(siteswapText);
             if (patternValid)
                 ImGui::TextDisabled("%d objects, period %d", ballCount(pattern),
                                     loopPeriodBeats(pattern));

@@ -72,7 +72,8 @@ src/
   timing.h            ticks (5040 per beat, int64) and the TempoMap (beats <-> seconds)
   pattern.h/.cpp      throw events + sections: the source of truth for juggling
   siteswap.h/.cpp     siteswap parsing/validation (vanilla only, for now)
-  ladder_view.h/.cpp  ladder diagram + its toolbar, drawn with ImGui's draw list
+  ladder_view.h/.cpp  ladder diagram + its toolbar + drag editing, drawn with ImGui
+  ladder_edit.h/.cpp  the edit chain behind ladder editing (pure logic, no drawing)
   color_vision.*      color-vision modes; per-ball color + marker shape + dash pattern
   draw_helpers.*      markers, dashed curves, arrowheads for ImGui draw lists
   settings.*          user preferences in %APPDATA%\JuggleSim\settings.ini

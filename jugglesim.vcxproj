@@ -80,6 +80,7 @@
     <ClCompile Include="src\draw_helpers.cpp" />
     <ClCompile Include="src\gl_funcs.cpp" />
     <ClCompile Include="src\juggler_figure.cpp" />
+    <ClCompile Include="src\ladder_edit.cpp" />
     <ClCompile Include="src\ladder_view.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\mesh.cpp" />
@@ -100,6 +101,7 @@
     <ClInclude Include="src\draw_helpers.h" />
     <ClInclude Include="src\gl_funcs.h" />
     <ClInclude Include="src\juggler_figure.h" />
+    <ClInclude Include="src\ladder_edit.h" />
     <ClInclude Include="src\ladder_view.h" />
     <ClInclude Include="src\math3d.h" />
     <ClInclude Include="src\mesh.h" />

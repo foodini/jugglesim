@@ -58,6 +58,10 @@ int defaultSpinCount(int value);
 
 // --- Pattern mode (one section, repeating forever, one juggler, async) ---
 
+// Builds a pattern-mode pattern from loop values (one throw value per beat, 0 = empty beat).
+// The values must form a valid vanilla siteswap.
+Pattern patternFromLoopValues(const std::vector<int>& values);
+
 // Builds a pattern-mode pattern from a valid vanilla siteswap. Beat 0 is thrown by the right
 // hand. 0s become empty beats (no event).
 Pattern patternFromSiteswap(const Siteswap& siteswap);

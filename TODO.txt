@@ -4,6 +4,13 @@
   some completely ridiculous prop.) 
   * Birthday cake, salmon, dry ice, open 2L bottle of soda?
 
+* The period extend/contract can operate several ways;
+  * - can do what it currently does - which I don't understand.
+  * + can add exactly 1 beat by just adding a [period] at the end of the existing pattern
+  * + can also do what it currently does, which is effectively a ^C^V in the text editor.
+* Add the ability to delete beats. For example, deleting the 11 from 61161 should be 441.
+* Allow the user to select two hands - any two hands - and have their ins/outs swap.
+
 Distant future, after juggling animation has been implemented:
 * Have the animation update to show where the mouse is hovering on the ladder. This will be
   ... difficult .... in 3D

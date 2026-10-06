@@ -6,6 +6,8 @@ namespace {
 // Hand that throws on a given beat in async juggling: beat 0 is the right hand.
 Hand asyncHandForBeat(int beat) { return beat % 2 == 0 ? Hand::Right : Hand::Left; }
 
+}  // namespace
+
 Pattern patternFromLoopValues(const std::vector<int>& values) {
     Pattern p;
     const int period = static_cast<int>(values.size());
@@ -32,8 +34,6 @@ Pattern patternFromLoopValues(const std::vector<int>& values) {
     p.sections.push_back(s);
     return p;
 }
-
-}  // namespace
 
 int defaultSpinCount(int value) {
     if (value <= 2) return 0;

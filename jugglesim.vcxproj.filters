@@ -24,6 +24,9 @@
     <ClCompile Include="src\juggler_figure.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\ladder_edit.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
     <ClCompile Include="src\ladder_view.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -78,6 +81,9 @@
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\juggler_figure.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\ladder_edit.h">
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\ladder_view.h">
