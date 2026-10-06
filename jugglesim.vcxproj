@@ -79,6 +79,7 @@
     <ClCompile Include="src\color_vision.cpp" />
     <ClCompile Include="src\draw_helpers.cpp" />
     <ClCompile Include="src\gl_funcs.cpp" />
+    <ClCompile Include="src\juggle_sim.cpp" />
     <ClCompile Include="src\juggler_figure.cpp" />
     <ClCompile Include="src\ladder_edit.cpp" />
     <ClCompile Include="src\ladder_view.cpp" />
@@ -100,6 +101,7 @@
     <ClInclude Include="src\color_vision.h" />
     <ClInclude Include="src\draw_helpers.h" />
     <ClInclude Include="src\gl_funcs.h" />
+    <ClInclude Include="src\juggle_sim.h" />
     <ClInclude Include="src\juggler_figure.h" />
     <ClInclude Include="src\ladder_edit.h" />
     <ClInclude Include="src\ladder_view.h" />

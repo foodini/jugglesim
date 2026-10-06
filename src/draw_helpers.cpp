@@ -20,15 +20,9 @@ struct DashSpec {
 };
 
 DashSpec dashSpec(DashPattern dash) {
-    static const float kLong[] = {4.0f, 2.0f};
-    static const float kShort[] = {1.5f, 1.5f};
-    static const float kDashDot[] = {4.0f, 1.5f, 0.7f, 1.5f};
-    switch (dash) {
-        case DashPattern::LongDash: return {kLong, 2};
-        case DashPattern::ShortDash: return {kShort, 2};
-        case DashPattern::DashDot: return {kDashDot, 4};
-        default: return {nullptr, 0};
-    }
+    DashSpec spec{nullptr, 0};
+    dashPatternLengths(dash, &spec.lengths, &spec.count);
+    return spec;
 }
 
 // Draws a polyline with a dash pattern applied along its length.

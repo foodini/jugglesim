@@ -21,6 +21,9 @@
     <ClCompile Include="src\gl_funcs.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\juggle_sim.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
     <ClCompile Include="src\juggler_figure.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -78,6 +81,9 @@
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\gl_funcs.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\juggle_sim.h">
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\juggler_figure.h">

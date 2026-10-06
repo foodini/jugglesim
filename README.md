@@ -67,8 +67,9 @@ src/
   gl_funcs.h/.cpp     tiny loader for the OpenGL 3.3 functions we use (no GLAD/GLEW)
   math3d.h            Vec3 / Mat4 (no GLM)
   mesh.h/.cpp         procedural primitives: sphere, cylinder, torso frustum, cube
-  renderer.h/.cpp     one lit solid-color shader
-  juggler_figure.*    stick-figure pose and drawing
+  renderer.h/.cpp     lit solid-color shader, plus additive "glow" ribbons for trails
+  juggler_figure.*    stick-figure pose, arm IK, and drawing
+  juggle_sim.h/.cpp   where hands and balls are at any moment (closed-form physics)
   timing.h            ticks (5040 per beat, int64) and the TempoMap (beats <-> seconds)
   pattern.h/.cpp      throw events + sections: the source of truth for juggling
   siteswap.h/.cpp     siteswap parsing/validation (vanilla only, for now)
@@ -77,7 +78,7 @@ src/
   color_vision.*      color-vision modes; per-ball color + marker shape + dash pattern
   draw_helpers.*      markers, dashed curves, arrowheads for ImGui draw lists
   settings.*          user preferences in %APPDATA%\JuggleSim\settings.ini
-docs/                 user documentation (start with ladder.md)
+docs/                 user documentation: ladder.md, juggler.md
 third_party/imgui/    git submodule
 ```
 

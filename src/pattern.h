@@ -74,6 +74,27 @@ std::vector<int> loopThrowValues(const Pattern& pattern);
 
 int ballCount(const Pattern& pattern);
 
+// --- Ball identity ---
+//
+// In a repeating pattern each ball follows a fixed cycle ("orbit") through the loop's throws,
+// so which ball a throw carries can be worked out from its beat alone. The ladder and the 3D
+// view both use this, so a ball has the same id (and color) in both, wherever you look.
+struct BallOrbits {
+    int period = 0;
+    std::vector<int> loop;    // the loop values these orbits were computed from
+    std::vector<int> start;   // per slot: first slot of its orbit (-1 for an empty beat)
+    std::vector<int> offset;  // per slot: beats from the orbit's first slot to this one
+    std::vector<int> base;    // per slot: first ball id of its orbit
+    std::vector<int> balls;   // per slot: number of balls in its orbit
+    int totalBalls = 0;
+};
+
+BallOrbits computeBallOrbits(const std::vector<int>& loop);
+
+// Id (0 .. totalBalls-1) of the ball thrown on beat `beat` (any integer, including negative),
+// or -1 for an empty beat.
+int orbitBallAt(const BallOrbits& orbits, int beat);
+
 // Shortest period (in beats) the loop actually repeats at: 531531 -> 3, 333 -> 1.
 int shortestPeriodBeats(const Pattern& pattern);
 

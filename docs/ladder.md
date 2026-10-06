@@ -20,6 +20,9 @@ diagram so you can trace any point on a throw straight down to its beat number.
   style. See *View > Color Vision* for palettes suited to different kinds of color vision, and
   *View > Color Vision > Preview all modes...* to compare them.
 
+The **playhead** (a vertical line with a small cap) shows where the juggler is in the pattern;
+see [juggler.md](juggler.md).
+
 ## Moving around
 
 - **Mouse wheel** (or a sideways swipe on a trackpad) pans the ladder left and right. You can go

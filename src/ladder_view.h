@@ -47,6 +47,7 @@ LadderToolbarRequest drawLadderToolbar(const Pattern& pattern, bool patternValid
 
 // What the user did to the pattern this frame. The caller applies it.
 struct LadderEditResult {
+    bool startedChain = false;  // the user picked up a throw this frame
     bool committed = false;  // an edit chain closed
     std::vector<int> loop;   // the new loop values (same period as before)
 };
@@ -59,5 +60,8 @@ void resetLadderView(LadderEditState& edit);
 bool ladderViewIsDefault(const LadderEditState& edit);
 
 // Fills the remaining content region of the current ImGui window, and handles drag editing.
+// playheadBeat is the playback position (fractional beats, same numbering as the ladder); it's
+// drawn as a line at that beat and at the same point in every other repeat on screen.
 LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
-                                   ColorVisionMode colorVision, LadderEditState& edit);
+                                   ColorVisionMode colorVision, LadderEditState& edit,
+                                   double playheadBeat);

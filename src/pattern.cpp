@@ -103,3 +103,51 @@ bool patternToSiteswap(const Pattern& pattern, std::string* text) {
     *text = out;
     return true;
 }
+
+namespace {
+int modPositive(int a, int m) {
+    const int r = a % m;
+    return r < 0 ? r + m : r;
+}
+}  // namespace
+
+BallOrbits computeBallOrbits(const std::vector<int>& loop) {
+    BallOrbits o;
+    o.period = static_cast<int>(loop.size());
+    o.loop = loop;
+    const size_t n = loop.size();
+    o.start.assign(n, -1);
+    o.offset.assign(n, 0);
+    o.base.assign(n, 0);
+    o.balls.assign(n, 0);
+    for (int s0 = 0; s0 < o.period; ++s0) {
+        if (o.start[static_cast<size_t>(s0)] >= 0 || loop[static_cast<size_t>(s0)] <= 0) continue;
+        std::vector<int> members;
+        int cur = s0;
+        int travelled = 0;
+        while (o.start[static_cast<size_t>(cur)] < 0) {
+            o.start[static_cast<size_t>(cur)] = s0;
+            o.offset[static_cast<size_t>(cur)] = travelled;
+            members.push_back(cur);
+            travelled += loop[static_cast<size_t>(cur)];
+            cur = modPositive(cur + loop[static_cast<size_t>(cur)], o.period);
+        }
+        const int balls = travelled / o.period;
+        for (int m : members) {
+            o.base[static_cast<size_t>(m)] = o.totalBalls;
+            o.balls[static_cast<size_t>(m)] = balls;
+        }
+        o.totalBalls += balls;
+    }
+    return o;
+}
+
+int orbitBallAt(const BallOrbits& o, int beat) {
+    if (o.period <= 0) return -1;
+    const size_t si = static_cast<size_t>(modPositive(beat, o.period));
+    if (o.loop[si] <= 0 || o.balls[si] <= 0) return -1;
+    // A ball thrown from the orbit's first slot on beat start + m*period reaches this slot
+    // `offset` beats later; solve for m (the division is exact).
+    const int lap = (beat - o.start[si] - o.offset[si]) / o.period;
+    return o.base[si] + modPositive(lap, o.balls[si]);
+}

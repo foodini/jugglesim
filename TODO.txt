@@ -3,6 +3,7 @@
 * add a config to choose a prop (clubs, balls, rings, bowling balls, and we really need
   some completely ridiculous prop.) 
   * Birthday cake, salmon, dry ice, open 2L bottle of soda?
+* The current state of the 3D animation should be highlighted on the ladder.
 
 * The period extend/contract can operate several ways;
   * - can do what it currently does - which I don't understand.

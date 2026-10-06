@@ -6,6 +6,20 @@
 #include "mesh.h"
 
 #include <string>
+#include <vector>
+
+// One vertex of glowing, unlit geometry (trails): position and RGBA color.
+struct GlowVertex {
+    float x, y, z;
+    float r, g, b, a;
+};
+
+// Appends a camera-facing ribbon along `points` (a polyline) to `out` as triangles. fade[i]
+// (0-1) scales the alpha at each point; width is in meters. dashLengths/dashCount give an
+// on/off dash pattern along the ribbon in units of dashUnit meters (dashCount 0 = solid).
+void appendRibbon(std::vector<GlowVertex>& out, const std::vector<Vec3>& points,
+                  const std::vector<float>& fade, Vec3 color, float alpha, float width,
+                  Vec3 cameraPos, const float* dashLengths, int dashCount, float dashUnit);
 
 class Renderer {
 public:
@@ -17,10 +31,19 @@ public:
     void drawMesh(const Mesh& mesh, const Mat4& model, Vec3 color);
     void endScene();
 
+    // Draws glowing triangles with additive blending: depth-tested against the scene but not
+    // writing depth, so overlapping glows add up. Call after the solid geometry.
+    void drawGlow(const Mat4& viewProj, const std::vector<GlowVertex>& triangles);
+
 private:
     GLuint program_ = 0;
     GLint locModel_ = -1;
     GLint locViewProj_ = -1;
     GLint locColor_ = -1;
     GLint locLightDir_ = -1;
+
+    GLuint glowProgram_ = 0;
+    GLint locGlowViewProj_ = -1;
+    GLuint glowVao_ = 0;
+    GLuint glowVbo_ = 0;
 };

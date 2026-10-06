@@ -18,6 +18,9 @@ struct JugglerPose {
     Vec3 elbowR, elbowL;
     Vec3 wristR, wristL;
     Vec3 palmNormalR, palmNormalL;  // direction the palm faces (up for a self-catch)
+    // Direction the fingers point, in the palm's plane. The hand is drawn from the wrist along
+    // this, so the wrist bends to keep the palm facing palmNormal whatever the forearm does.
+    Vec3 handForwardR{0.0f, 0.0f, 1.0f}, handForwardL{0.0f, 0.0f, 1.0f};
 
     Vec3 hipR, hipL;
     Vec3 kneeR, kneeL;
@@ -26,6 +29,11 @@ struct JugglerPose {
 
 // Standing, forearms horizontal and forward, palms up: the neutral juggling stance.
 JugglerPose makeNeutralPose();
+
+// Moves the arms so each palm is at the given point (palms facing up), solving each arm as a
+// two-bone chain (upper arm + forearm, lengths taken from the pose) with the elbow pointing
+// down and out. Targets out of reach are clamped to full extension.
+void poseArmsForPalms(JugglerPose& pose, Vec3 palmRight, Vec3 palmLeft);
 
 struct JugglerStyle {
     Vec3 bodyColor{0.78f, 0.80f, 0.86f};

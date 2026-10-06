@@ -155,7 +155,8 @@ void cancelLadderEdit(LadderEditState& edit) {
 }
 
 LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
-                                   ColorVisionMode colorVision, LadderEditState& edit) {
+                                   ColorVisionMode colorVision, LadderEditState& edit,
+                                   double playheadBeat) {
     LadderEditResult result;
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const ImVec2 size = ImGui::GetContentRegionAvail();
@@ -205,7 +206,8 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
             const float beatsPerNotch = 2.0f / edit.zoom;
             edit.firstBeat -= (io.MouseWheel + io.MouseWheelH) * beatsPerNotch;
         }
-        if ((ImGui::IsWindowHovered() || ImGui::IsWindowFocused()) && !io.WantTextInput &&
+        // Only while the mouse is over the ladder: Home over the juggler resets the camera.
+        if (ImGui::IsWindowHovered() && !io.WantTextInput &&
             (ImGui::IsKeyPressed(ImGuiKey_Home) || (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_0))))
             resetLadderView(edit);
     }
@@ -324,39 +326,9 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
     // In a repeating pattern each ball follows a fixed cycle ("orbit") through the loop's
     // throws, so a throw's ball can be worked out from its beat alone. Ids therefore don't
     // depend on what part of the ladder is on screen, and panning never recolors anything.
-    std::vector<int> orbitStart(static_cast<size_t>(period), -1);   // first slot of the orbit
-    std::vector<int> orbitOffset(static_cast<size_t>(period), 0);   // beats from orbit start
-    std::vector<int> orbitBase(static_cast<size_t>(period), 0);     // first ball id of orbit
-    std::vector<int> orbitBalls(static_cast<size_t>(period), 0);    // balls in the orbit
-    int totalBalls = 0;
-    for (int s0 = 0; s0 < period; ++s0) {
-        if (orbitStart[static_cast<size_t>(s0)] >= 0 || loop[static_cast<size_t>(s0)] <= 0) continue;
-        std::vector<int> members;
-        int cur = s0, travelled = 0;
-        while (orbitStart[static_cast<size_t>(cur)] < 0) {
-            orbitStart[static_cast<size_t>(cur)] = s0;
-            orbitOffset[static_cast<size_t>(cur)] = travelled;
-            members.push_back(cur);
-            travelled += loop[static_cast<size_t>(cur)];
-            cur = positiveMod(cur + loop[static_cast<size_t>(cur)], period);
-        }
-        const int balls = travelled / period;
-        for (int m : members) {
-            orbitBase[static_cast<size_t>(m)] = totalBalls;
-            orbitBalls[static_cast<size_t>(m)] = balls;
-        }
-        totalBalls += balls;
-    }
-    // Ball thrown on beat b of the unedited pattern (-1 for an empty beat).
-    auto orbitBallAt = [&](int b) {
-        const int slot = positiveMod(b, period);
-        const size_t si = static_cast<size_t>(slot);
-        if (loop[si] <= 0 || orbitBalls[si] <= 0) return -1;
-        // A ball thrown from the orbit's first slot on beat start + m*period reaches this slot
-        // offset beats later; solve for m.
-        const int lap = (b - orbitStart[si] - orbitOffset[si]) / period;  // exact division
-        return orbitBase[si] + positiveMod(lap, orbitBalls[si]);
-    };
+    const BallOrbits orbits = computeBallOrbits(loop);
+    const int totalBalls = orbits.totalBalls;
+    auto orbitBallAt = [&](int b) { return ::orbitBallAt(orbits, b); };
 
     // While a chain is open, follow the balls through the edit: start well before anything the
     // chain touched (where the pattern is unedited, so orbit ids apply), and track landings
@@ -484,8 +456,10 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         if (leftClicked && hoverIndex >= 0) {
             const DrawnThrow& d = drawn[static_cast<size_t>(hoverIndex)];
             chain = beginEditChain(loop, d.beat, hoverEnd);
+            result.startedChain = true;
         } else if (leftClicked && hoverZeroBeat != INT_MIN) {
             chain = beginEditChain(loop, hoverZeroBeat, HeldEnd::Arrival);
+            result.startedChain = true;
         }
     } else if (canvasHovered && chain.active) {
         // Near a beat's point on the rail, that beat is the target: several curves meet there,
@@ -664,6 +638,33 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
             drawBezierHalfHighlight(dl, c.p0, c.c1, c.c2, c.p1, !arrivalMode, heldStyle.color, 1.0f);
         } else {
             dl->AddCircleFilled(arrivalMode ? c.p1 : c.p0, 4.0f, mixColor(heldStyle.color, white, 0.5f, 0.9f));
+        }
+    }
+
+    // Playhead: where the juggler is now, at sub-beat resolution, plus the same moment in every
+    // other repeat of the loop that's on screen (fainter). Positioned with floats so it glides.
+    {
+        const float top = railTopY - outsideRoom;
+        const float bottom = maxPt.y - numbersHeight + fontSize * 0.15f;
+        const double localBeat = static_cast<double>(firstBeat);
+        const double rel = playheadBeat - localBeat;
+        // Copies at playheadBeat + k*period; draw every one that lands on screen. The left-most
+        // visible copy is the bright one, so there's always exactly one to follow.
+        const double firstCopy = playheadBeat - std::floor(rel / period) * period - period;
+        bool primaryDrawn = false;
+        for (double b = firstCopy; ; b += period) {
+            const float x = x0 + static_cast<float>(b - localBeat) * beatSpacing;
+            if (x > maxPt.x + 2.0f) break;
+            if (x < origin.x + margin * 2.0f) continue;
+            const bool primary = !primaryDrawn;
+            primaryDrawn = true;
+            const ImU32 col = primary ? IM_COL32(255, 255, 255, 220) : IM_COL32(255, 255, 255, 90);
+            if (primary) dl->AddLine(ImVec2(x, top), ImVec2(x, bottom), IM_COL32(255, 255, 255, 40), 6.0f);
+            dl->AddLine(ImVec2(x, top), ImVec2(x, bottom), col, primary ? 2.0f : 1.0f);
+            // A small downward-pointing cap, so playhead copies can't be mistaken for beat lines.
+            const float cap = fontSize * (primary ? 0.45f : 0.35f);
+            dl->AddTriangleFilled(ImVec2(x - cap, top - cap * 1.1f), ImVec2(x + cap, top - cap * 1.1f),
+                                  ImVec2(x, top + cap * 0.2f), col);
         }
     }
 

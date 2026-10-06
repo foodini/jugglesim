@@ -95,6 +95,18 @@ BallStyle ballStyle(ColorVisionMode mode, int ballIndex) {
     return style;
 }
 
+void dashPatternLengths(DashPattern dash, const float** lengths, int* count) {
+    static const float kLong[] = {4.0f, 2.0f};
+    static const float kShort[] = {1.5f, 1.5f};
+    static const float kDashDot[] = {4.0f, 1.5f, 0.7f, 1.5f};
+    switch (dash) {
+        case DashPattern::LongDash: *lengths = kLong; *count = 2; return;
+        case DashPattern::ShortDash: *lengths = kShort; *count = 2; return;
+        case DashPattern::DashDot: *lengths = kDashDot; *count = 4; return;
+        default: *lengths = nullptr; *count = 0; return;
+    }
+}
+
 ImU32 errorTextColor(ColorVisionMode mode) {
     switch (mode) {
         case ColorVisionMode::Protan:

@@ -34,6 +34,10 @@ bool colorVisionModeFromKey(const char* key, ColorVisionMode* mode);
 
 BallStyle ballStyle(ColorVisionMode mode, int ballIndex);
 
+// A dash pattern as alternating on/off lengths, in "dash units" (the caller picks the unit:
+// pixels on the ladder, meters for 3D trails). count is 0 for a solid line.
+void dashPatternLengths(DashPattern dash, const float** lengths, int* count);
+
 // Color for error text. Error text always says what is wrong in words; this is just emphasis.
 ImU32 errorTextColor(ColorVisionMode mode);
 
