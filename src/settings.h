@@ -12,6 +12,7 @@
 struct AppSettings {
     ColorVisionMode colorVision = ColorVisionMode::Normal;
     PropType prop = PropType::Ball;
+    bool tempoPanelCollapsed = false;  // the juggler pane's tempo/dwell panel
 };
 
 // Returns defaults for anything missing or unreadable.

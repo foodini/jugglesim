@@ -28,6 +28,7 @@
 #include "siteswap.h"
 
 #include "imgui.h"
+#include "imgui_internal.h"  // to open a slider's text field on double-click (fineSlider)
 #include "imgui_impl_opengl3.h"
 #include "imgui_impl_win32.h"
 
@@ -174,9 +175,15 @@ struct GLRect {
 // above the highest point any ball reaches. The user can orbit (drag) and zoom (wheel); those
 // are kept as offsets from the automatic framing, so changing patterns re-frames from wherever
 // the user is looking. Home (over the juggler) or View > Reset Camera clears them.
+//
+// Zooming in keeps the bottom of the view where it is (just below the lowest point the hands
+// reach) and crops from the top, so the juggler stays in view and the flights are what get cut
+// off. Zoomed in further than the juggler's own height (from that low point to the top of the
+// head), the view stays centered on the juggler.
 
 constexpr float kCameraFovY = 35.0f * kPi / 180.0f;
 constexpr float kHandPlaneZ = 0.36f;  // the hands and most flights are in this plane
+constexpr float kJugglerTopY = 1.80f;  // a little above the top of the juggler's head
 
 struct CameraControl {
     // User offsets.
@@ -186,6 +193,7 @@ struct CameraControl {
     // Automatic framing, eased toward the pattern's extents so changes glide instead of jumping.
     bool framed = false;
     float centerY = 1.4f;
+    float bottomY = 0.8f;  // bottom edge of the full framing
     float distance = 3.0f;
 };
 
@@ -212,21 +220,162 @@ CameraView updateCamera(CameraControl& c, const SceneExtents& extents, float asp
     const float wantCenterY = 0.5f * (bottom + top);
     if (!c.framed) {
         c.centerY = wantCenterY;
+        c.bottomY = bottom;
         c.distance = wantDistance;
         c.framed = true;
     } else {
         const float ease = 1.0f - std::exp(-dt * 5.0f);
         c.centerY += (wantCenterY - c.centerY) * ease;
+        c.bottomY += (bottom - c.bottomY) * ease;
         c.distance += (wantDistance - c.distance) * ease;
     }
     CameraView v;
-    v.target = Vec3(0.0f, c.centerY, kHandPlaneZ);
     const float d = c.distance * c.zoom;
+    float targetY = c.centerY;
+    if (c.zoom < 1.0f) {
+        // Half the height the view covers at the target. Keep the bottom edge where the full
+        // framing has it, but no higher than the middle of the juggler, and never above the
+        // full framing's center (so zooming in from a wide view is continuous).
+        const float halfHeight = d * tanHalf;
+        const float jugglerMiddle = 0.5f * (c.bottomY + kJugglerTopY);
+        targetY = std::min(std::max(c.bottomY + halfHeight, jugglerMiddle), c.centerY);
+    }
+    v.target = Vec3(0.0f, targetY, kHandPlaneZ);
     const Vec3 dir(std::sin(c.yaw) * std::cos(c.pitch), std::sin(c.pitch),
                    std::cos(c.yaw) * std::cos(c.pitch));
     v.position = v.target + dir * d;
     v.farPlane = d * 3.0f + 50.0f;
     return v;
+}
+
+// ---- Tempo and dwell panel ----------------------------------------------------------------
+//
+// A small panel in the top-right corner of the juggler pane. Each setting has a slider with
+// -/+ buttons for fine steps (Shift: bigger steps; hold a button to repeat), the mouse wheel
+// over the slider for one step, and Ctrl+click or double-click on the slider to type a value.
+// The panel collapses to a one-line readout.
+
+constexpr double kMinTempo = 40.0, kMaxTempo = 420.0;  // 420 BPM: 7 throws a second
+constexpr double kMinDwell = 0.1, kMaxDwell = 1.9;
+
+struct FineSliderState {
+    double beforeClick = 0.0;          // the value before the latest click on the slider
+    double beforePreviousClick = 0.0;  // and before the one before that
+};
+
+// Returns true if the value changed.
+bool fineSlider(const char* id, double* value, double minValue, double maxValue, double step,
+                double bigStep, const char* format, float width, FineSliderState& state,
+                const char* tooltip) {
+    ImGui::PushID(id);
+    bool changed = false;
+    const double stepNow = ImGui::GetIO().KeyShift ? bigStep : step;
+    auto nudge = [&](double direction) {
+        // Steps land on the step grid (149.6 BPM + 1 -> 151, not 150.6).
+        const double snapped = std::round(*value / step) * step;
+        *value = std::clamp(snapped + direction * stepNow, minValue, maxValue);
+        changed = true;
+    };
+    const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+    ImGui::PushItemFlag(ImGuiItemFlags_ButtonRepeat, true);
+    if (ImGui::Button("-")) nudge(-1.0);
+    ImGui::SameLine(0.0f, spacing);
+
+    const double before = *value;
+    float v = static_cast<float>(*value);
+    ImGui::SetNextItemWidth(width);
+    if (ImGui::SliderFloat("##slider", &v, static_cast<float>(minValue), static_cast<float>(maxValue), format)) {
+        *value = v;
+        changed = true;
+    }
+    const ImGuiID sliderId = ImGui::GetItemID();
+    if (ImGui::IsItemActivated()) {
+        state.beforePreviousClick = state.beforeClick;
+        state.beforeClick = before;
+    }
+    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+        // Each click on a slider jumps the value to the mouse; a double-click means "let me type
+        // it", so put back the value from before the first click and open the text field.
+        *value = state.beforePreviousClick;
+        changed = true;
+        ImGui::ClearActiveID();
+        GImGui->NavNextActivateId = sliderId;
+        GImGui->NavNextActivateFlags = ImGuiActivateFlags_PreferInput;
+    }
+    if (ImGui::IsItemHovered() && ImGui::GetIO().MouseWheel != 0.0f)
+        nudge(ImGui::GetIO().MouseWheel > 0.0f ? 1.0 : -1.0);
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && !ImGui::IsItemActive())
+        ImGui::SetTooltip("%s", tooltip);
+
+    ImGui::SameLine(0.0f, spacing);
+    if (ImGui::Button("+")) nudge(1.0);
+    ImGui::PopItemFlag();
+    ImGui::PopID();
+    return changed;
+}
+
+struct TempoPanelState {
+    FineSliderState tempo, dwell;
+};
+
+// Draws the panel with its top-right corner at `topRight`. Returns true if the user collapsed
+// or expanded it (so the caller can remember that).
+bool drawTempoPanel(JuggleParams& params, bool& collapsed, ImVec2 topRight, TempoPanelState& state) {
+    const float em = ImGui::GetFontSize();
+    ImGui::SetNextWindowPos(topRight, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.8f);
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                                   ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
+    bool toggled = false;
+    if (ImGui::Begin("Tempo and dwell", nullptr, flags)) {
+        if (collapsed) {
+            if (ImGui::ArrowButton("##expand", ImGuiDir_Down)) toggled = true;
+            ImGui::SameLine();
+            ImGui::AlignTextToFramePadding();
+            ImGui::Text("%.0f BPM, dwell %.2f", params.bpm, params.dwellBeats);
+            if (ImGui::IsItemClicked()) toggled = true;
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) ImGui::SetTooltip("Show the tempo and dwell controls");
+        } else {
+            if (ImGui::ArrowButton("##collapse", ImGuiDir_Up)) toggled = true;
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) ImGui::SetTooltip("Hide the controls");
+            ImGui::SameLine();
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Tempo and dwell");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset")) {
+                const JuggleParams defaults;
+                params.bpm = defaults.bpm;
+                params.dwellBeats = defaults.dwellBeats;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) ImGui::SetTooltip("150 BPM, dwell 1.40 beats");
+
+            const float labelWidth = em * 3.5f;
+            const float sliderWidth = em * 14.0f;
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Tempo");
+            ImGui::SameLine(labelWidth);
+            fineSlider("tempo", &params.bpm, kMinTempo, kMaxTempo, 1.0, 10.0, "%.0f BPM", sliderWidth,
+                       state.tempo,
+                       "Beats per minute: one beat is one throw, alternating hands.\n"
+                       "-/+ or the mouse wheel: 1 BPM (Shift: 10).\n"
+                       "Double-click or Ctrl+click to type a value.");
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Dwell");
+            ImGui::SameLine(labelWidth);
+            fineSlider("dwell", &params.dwellBeats, kMinDwell, kMaxDwell, 0.05, 0.1, "%.2f beats", sliderWidth,
+                       state.dwell,
+                       "How long each hand holds a ball before throwing it, in beats.\n"
+                       "Each hand throws every other beat, so this is out of 2; real\n"
+                       "cascades are often around 1.3-1.6. Short throws (like 1s)\n"
+                       "automatically get a shorter dwell so they still have some flight.\n"
+                       "-/+ or the mouse wheel: 0.05 (Shift: 0.1).\n"
+                       "Double-click or Ctrl+click to type a value.");
+        }
+    }
+    ImGui::End();
+    if (toggled) collapsed = !collapsed;
+    return toggled;
 }
 
 Vec3 colorToVec3(ImU32 c) {
@@ -480,6 +629,7 @@ int main() {
                         "The change is kept until JuggleSim closes.";
     };
 
+    TempoPanelState tempoPanel;
     bool showImGuiDemo = false;
     bool showColorPreview = false;
     Playback playback;
@@ -574,19 +724,11 @@ int main() {
                 if (ImGui::MenuItem("Step Forward One Beat", "Shift+Right")) stepPlayback(1.0);
                 if (ImGui::MenuItem("Step Back One Beat", "Shift+Left")) stepPlayback(-1.0);
                 ImGui::Separator();
-                float bpm = static_cast<float>(juggleParams.bpm);
-                ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
-                if (ImGui::SliderFloat("Tempo (BPM)", &bpm, 40.0f, 300.0f, "%.0f"))
-                    juggleParams.bpm = bpm;
-                float dwell = static_cast<float>(juggleParams.dwellBeats);
-                ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
-                if (ImGui::SliderFloat("Dwell (beats)", &dwell, 0.1f, 1.9f, "%.2f"))
-                    juggleParams.dwellBeats = dwell;
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("How long each hand holds a ball before throwing it, in beats.\n"
-                                      "Each hand throws every other beat, so this is out of 2;\n"
-                                      "real cascades are often around 1.3-1.6. Short throws (like 1s)\n"
-                                      "automatically get a shorter dwell so they still have some flight.");
+                if (ImGui::MenuItem("Reset Tempo and Dwell")) {
+                    const JuggleParams defaults;
+                    juggleParams.bpm = defaults.bpm;
+                    juggleParams.dwellBeats = defaults.dwellBeats;
+                }
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Props")) {
@@ -732,6 +874,13 @@ int main() {
         ImGui::End();
         ImGui::PopStyleVar();
 
+        // Tempo and dwell, in the top-right corner of the juggler pane (over the input window,
+        // which never comes to the front).
+        const float panelMargin = style.WindowPadding.x;
+        if (drawTempoPanel(juggleParams, settings.tempoPanelCollapsed,
+                           ImVec2(W - panelMargin, top + panelMargin), tempoPanel))
+            saveSettings(settings);
+
         // Transport bar along the bottom of the juggler pane (right half).
         const float transportHeight = ImGui::GetFrameHeight() + style.WindowPadding.y * 2.0f;
         ImGui::SetNextWindowPos(ImVec2(leftWidth, H - transportHeight));
@@ -752,9 +901,6 @@ int main() {
             ImGui::SameLine(0.0f, style.ItemSpacing.x * 4.0f);
             ImGui::AlignTextToFramePadding();
             ImGui::Text("Beat %.2f", playback.beat + 1.0);  // beat 0 is "beat 1", as on the ladder
-            ImGui::SameLine(0.0f, style.ItemSpacing.x * 4.0f);
-            ImGui::TextDisabled("%.0f BPM   dwell %.2f beats   (Playback menu to change)", juggleParams.bpm,
-                                juggleParams.dwellBeats);
         }
         ImGui::End();
 

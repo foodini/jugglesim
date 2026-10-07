@@ -44,6 +44,7 @@ Vec3 withinReach(Vec3 shoulderPos, Vec3 p) {
 }
 
 // Hand dynamics (see palm() for how they're used).
+constexpr double kMaxTrailBeats = 1.8;  // longest a flight's trail gets (see evaluateScene)
 constexpr float kHandDriveAccel = 60.0f;   // m/s^2: how hard a hand can accelerate a throw
 constexpr float kMaxArmDrive = 0.28f;      // m: the part of a drive the arms alone can make
 constexpr float kMaxDrive = 0.60f;         // m: the longest drive, arms plus knees and back
@@ -717,7 +718,10 @@ JugglerScene evaluateScene(const std::vector<int>& loop, const BallOrbits& orbit
             ev.flightProp(b, v, t, &flying);
             scene.balls.push_back(flying);
         }
-        const double trailLength = 0.5 * (catchTime - b);
+        // Half the flight long, but at most kMaxTrailBeats: a hand throws at most every other
+        // beat, so the next prop on the same path (in a 5, a 7, 373737, ...) is at least two
+        // beats behind, and its trail shouldn't run into the end of this one.
+        const double trailLength = std::min(0.5 * (catchTime - b), kMaxTrailBeats);
         const double from = std::max(static_cast<double>(b), t - trailLength);
         const double to = std::min(t, catchTime);
         if (t >= b && to > from) {

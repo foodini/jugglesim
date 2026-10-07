@@ -14,6 +14,8 @@
 * Do a pass over "Recent." Should it move to the top level of File?
 * Add a trash icon next to a pattern in the menu to allow deletion? Ask for confirmation,
   of course.
+* DETECT COLLISIONS. Eventually, we'll want to feed JS a pattern and find out if there are
+  airspace contention issues.
 
 * The period extend/contract can operate several ways;
   * - can do what it currently does - which I don't understand.

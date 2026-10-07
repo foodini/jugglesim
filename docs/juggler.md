@@ -14,7 +14,7 @@ The bar along the bottom of the juggler pane has the transport controls:
 
 The same commands are in the **Playback** menu. The keys don't act while you're typing in the
 siteswap box. Next to the buttons is the current beat (beat 1 is the right hand's first throw,
-as on the ladder), the tempo and the dwell.
+as on the ladder).
 
 Stepping works in both directions, by any amount: the juggler's position at any moment is
 worked out directly from the pattern (every flight is an exact parabola), so nothing has to be
@@ -40,7 +40,9 @@ To look around:
 
 - **Drag** in the juggler pane to orbit: left and right swing around the juggler, up and down
   tilt to look from above or below.
-- **Mouse wheel** zooms in and out.
+- **Mouse wheel** zooms in and out. Zooming in keeps the bottom of the view where it is, so the
+  juggler stays in view and the tops of the flights are what get cropped. Zoomed in closer than
+  the juggler's own height, the view stays centered on the juggler.
 - **Home** (with the mouse over the juggler) or *View > Reset Camera* goes back to the default
   view.
 
@@ -49,9 +51,18 @@ looking from the side, you stay at the side and the new pattern is still framed.
 
 ## Tempo and dwell
 
-Both are in the **Playback** menu.
+Both are set in the panel in the top-right corner of the juggler pane:
 
-- **Tempo** is in beats per minute: one beat is one throw, alternating hands. The default is 150,
+- Drag a slider, or use its **-** and **+** buttons (or the mouse wheel over the slider) for
+  fine steps: 1 BPM and 0.05 beats, or 10 BPM and 0.1 beats with **Shift**. Hold a button down
+  to keep stepping.
+- **Double-click** (or **Ctrl+click**) a slider to type an exact value; **Enter** sets it.
+- **Reset** (or *Playback > Reset Tempo and Dwell*) goes back to 150 BPM and a dwell of 1.4.
+- The arrow at the top left collapses the panel to a one-line readout ("150 BPM, dwell 1.40");
+  click it again to bring the controls back. JuggleSim remembers which way you left it.
+
+- **Tempo** is in beats per minute: one beat is one throw, alternating hands. It goes from 40 to
+  420 (7 throws a second, about the fastest anyone throws accurately). The default is 150,
   which makes a 3 rise about half a meter above the hands.
 - **Dwell** is how long a hand holds a ball before throwing it, in beats. Each hand throws every
   other beat, so dwell is out of 2: at 1.4 (the default) a hand holds each ball for 70% of its
@@ -122,6 +133,7 @@ ladder, and every flight leaves the same dashed trail.
   - **The head** follows the balls, mostly the highest ones; the eyes show where the juggler is
     looking.
 - **Props** have the same colors as their balls on the ladder (see *Props* above).
-- **Trails** glow behind each prop in flight, fading out over about half the flight. Each trail
-  uses the same dash pattern as that ball's lines on the ladder, so balls can be told apart even
-  without color (see *View > Color Vision*).
+- **Trails** glow behind each prop in flight, fading out over about half the flight, but never
+  more than 1.8 beats, so in patterns like 5, 7 or 373737 a trail ends just before the next prop
+  passes the same spot. Each trail uses the same dash pattern as that ball's lines on the
+  ladder, so balls can be told apart even without color (see *View > Color Vision*).

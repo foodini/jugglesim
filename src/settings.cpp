@@ -44,6 +44,8 @@ AppSettings loadSettings() {
         if (key == "color_vision") {
             ColorVisionMode mode;
             if (colorVisionModeFromKey(value.c_str(), &mode)) settings.colorVision = mode;
+        } else if (key == "tempo_panel") {
+            settings.tempoPanelCollapsed = value == "collapsed";
         } else if (key == "props") {
             PropType prop;
             if (propTypeFromKey(value.c_str(), &prop)) settings.prop = prop;
@@ -62,5 +64,6 @@ bool saveSettings(const AppSettings& settings) {
     out << "# JuggleSim user settings\n";
     out << "color_vision = " << colorVisionModeKey(settings.colorVision) << "\n";
     out << "props = " << propTypeKey(settings.prop) << "\n";
+    out << "tempo_panel = " << (settings.tempoPanelCollapsed ? "collapsed" : "open") << "\n";
     return static_cast<bool>(out);
 }

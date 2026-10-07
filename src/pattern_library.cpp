@@ -69,7 +69,7 @@ void parseSettings(const std::string& text, LibraryPattern* pattern) {
                 s.prop = prop;
             }
         } else if (key == "tempo") {
-            if (parseNumber(value, &number) && number >= 40.0 && number <= 300.0) {
+            if (parseNumber(value, &number) && number >= 40.0 && number <= 420.0) {
                 s.hasTempo = true;
                 s.tempo = number;
             }
