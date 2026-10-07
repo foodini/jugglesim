@@ -1,0 +1,85 @@
+# JuggleSim pattern library (built into jugglesim.exe; this file is compiled in).
+#
+# One pattern per line:   siteswap ; name ; settings
+#   - name is optional (the siteswap is used when it's empty or missing).
+#   - settings are optional "key=value" pairs separated by spaces:
+#       props=balls|clubs|rings   tempo=<beats per minute>   dwell=<beats>
+#     A pattern without a setting leaves the current one alone when it's loaded.
+#   - Blank lines and lines starting with # are ignored.
+#
+# The menu groups patterns by juggler count, number of props and period, all worked out from
+# the siteswap, so they don't need to be written here. Only use well-established names; where
+# a pattern has none, leave the name empty and the siteswap is shown.
+
+# --- 1 prop ---
+1        ;
+20       ;
+300      ;
+
+# --- 2 props ---
+2        ;
+31       ;
+40       ;
+330      ;
+312      ;
+411      ;
+501      ;
+
+# --- 3 props ---
+3        ; Cascade
+51       ; Shower
+42       ;
+423      ;
+441      ;
+531      ;
+315      ;
+4440     ;
+50505    ; Snake
+55500    ; Flash
+52512    ;
+51414    ;
+45141    ;
+52413    ;
+
+# --- 4 props ---
+4        ; Fountain
+71       ; Shower
+53       ;
+534      ;
+552      ;
+633      ;
+642      ;
+7441     ;
+7531     ;
+6316     ;
+5551     ;
+6451     ;
+64514    ;
+
+# --- 5 props ---
+5        ; Cascade
+91       ; Shower
+645      ;
+744      ;
+753      ;
+771      ;
+726      ;
+915      ;
+97531    ;
+66661    ;
+75751    ;
+
+# --- 6 props ---
+6        ; Fountain
+75       ;
+8448     ;
+b97531   ;
+
+# --- 7 or more ---
+7        ; Cascade
+966      ;
+867      ;
+8        ; Fountain
+9        ; Cascade
+a        ; Fountain
+b        ; Cascade

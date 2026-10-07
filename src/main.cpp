@@ -15,7 +15,10 @@
 #include "gl_funcs.h"
 #include "juggle_sim.h"
 #include "juggler_figure.h"
+#include "pattern_library.h"
+#include "pattern_library_ui.h"
 #include "prop_figure.h"
+#include "resource.h"
 #include "ladder_view.h"
 #include "math3d.h"
 #include "mesh.h"
@@ -104,21 +107,58 @@ void destroyGLContext(HWND hwnd) {
     g_hdc = nullptr;
 }
 
+// The built-in pattern library (data/patterns.txt), compiled into the executable as a
+// resource. Empty if it's missing.
+std::string loadBuiltInPatternText() {
+    HRSRC resource = ::FindResourceW(nullptr, MAKEINTRESOURCEW(IDR_PATTERN_LIBRARY), MAKEINTRESOURCEW(10) /*RT_RCDATA*/);
+    if (!resource) return std::string();
+    HGLOBAL loaded = ::LoadResource(nullptr, resource);
+    const DWORD size = ::SizeofResource(nullptr, resource);
+    const void* data = loaded ? ::LockResource(loaded) : nullptr;
+    if (!data || size == 0) return std::string();
+    return std::string(static_cast<const char*>(data), static_cast<size_t>(size));
+}
+
 // Undo/redo history of the pattern, kept as siteswap text (which also records the loop
 // period: 531 and 531531 are different entries). One step per closed edit chain, period
-// change, or siteswap committed in the text box.
+// change, siteswap committed in the text box, or pattern loaded from the library. Loading
+// from the library can also change the props, tempo and dwell, so those steps carry the
+// settings from before and after too (other changes to those settings aren't undoable).
+struct HistoryStep {
+    std::string before, after;
+    bool settingsChanged = false;
+    PatternSettings settingsBefore, settingsAfter;
+};
 struct PatternHistory {
-    std::vector<std::string> undo;
-    std::vector<std::string> redo;
+    std::vector<HistoryStep> undo;
+    std::vector<HistoryStep> redo;
     std::string current;  // text of the pattern being shown
 
     // Call when the pattern has changed to `next` by a user action.
     void record(const std::string& next) {
         if (next == current) return;
-        undo.push_back(current);
+        HistoryStep step;
+        step.before = current;
+        step.after = next;
+        push(step);
+    }
+    // Call when a library pattern has been loaded (settings: all of them, before and after).
+    void recordWithSettings(const std::string& next, const PatternSettings& before,
+                            const PatternSettings& after) {
+        if (next == current && before == after) return;
+        HistoryStep step;
+        step.before = current;
+        step.after = next;
+        step.settingsChanged = before != after;
+        step.settingsBefore = before;
+        step.settingsAfter = after;
+        push(step);
+    }
+    void push(const HistoryStep& step) {
+        undo.push_back(step);
         if (undo.size() > 1000) undo.erase(undo.begin());
         redo.clear();
-        current = next;
+        current = step.after;
     }
 };
 
@@ -359,6 +399,29 @@ int main() {
     PatternHistory history;
     history.current = siteswapText;
 
+    JuggleParams juggleParams;
+    juggleParams.prop = settings.prop;
+
+    // The settings a library pattern can carry, as they are now (all of them).
+    auto currentPatternSettings = [&]() -> PatternSettings {
+        PatternSettings current;
+        current.hasProp = current.hasTempo = current.hasDwell = true;
+        current.prop = juggleParams.prop;
+        current.tempo = juggleParams.bpm;
+        current.dwell = juggleParams.dwellBeats;
+        return current;
+    };
+    // Applies the settings a library pattern (or an undo step) carries; leaves the rest alone.
+    auto applyPatternSettings = [&](const PatternSettings& apply) {
+        if (apply.hasProp && apply.prop != settings.prop) {
+            settings.prop = apply.prop;  // the Props menu choice is remembered between runs
+            saveSettings(settings);
+        }
+        juggleParams.prop = settings.prop;
+        if (apply.hasTempo) juggleParams.bpm = apply.tempo;
+        if (apply.hasDwell) juggleParams.dwellBeats = apply.dwell;
+    };
+
     // Replaces the pattern with the one written in `text` (used by undo/redo).
     auto showPatternText = [&](const std::string& text) {
         cancelLadderEdit(ladderEdit);
@@ -373,24 +436,53 @@ int main() {
             return;
         }
         if (history.undo.empty()) return;
-        history.redo.push_back(history.current);
-        history.current = history.undo.back();
+        const HistoryStep step = history.undo.back();
         history.undo.pop_back();
-        showPatternText(history.current);
+        history.redo.push_back(step);
+        history.current = step.before;
+        showPatternText(step.before);
+        if (step.settingsChanged) applyPatternSettings(step.settingsBefore);
     };
     auto redo = [&]() {
         if (history.redo.empty()) return;
         cancelLadderEdit(ladderEdit);
-        history.undo.push_back(history.current);
-        history.current = history.redo.back();
+        const HistoryStep step = history.redo.back();
         history.redo.pop_back();
-        showPatternText(history.current);
+        history.undo.push_back(step);
+        history.current = step.after;
+        showPatternText(step.after);
+        if (step.settingsChanged) applyPatternSettings(step.settingsAfter);
     };
+    // The pattern library: built-in patterns, the user's own (saved, renamed and deleted from
+    // the File menu), and the recently loaded ones.
+    const std::vector<LibraryPattern> builtInPatterns = parsePatternLibrary(loadBuiltInPatternText());
+    std::vector<LibraryPattern> myPatterns = loadUserPatterns();
+    std::vector<RecentPattern> recentPatterns = loadRecentPatterns();
+    PatternMenuState juggleSimMenuState, myMenuState;
+
+    // Loads a pattern from the library: its siteswap, and whatever settings it carries. One
+    // undo step, which also puts the settings back. It goes to the top of Recent.
+    auto loadLibraryPattern = [&](const LibraryPattern& chosen, bool mine) {
+        const PatternSettings before = currentPatternSettings();
+        showPatternText(chosen.siteswap);
+        applyPatternSettings(chosen.settings);
+        history.recordWithSettings(siteswapText, before, currentPatternSettings());
+        addRecentPattern(&recentPatterns, chosen, mine);
+        saveRecentPatterns(recentPatterns);  // not worth bothering the user if this fails
+    };
+
+    SavePatternDialog saveDialog;
+    ManagePatternsWindow manageWindow;
+    std::string fileError;  // shown in a message box when set
+    auto saveMyPatterns = [&]() {
+        if (!saveUserPatterns(myPatterns))
+            fileError = "Couldn't write your patterns to my_patterns.txt in %APPDATA%\\JuggleSim. "
+                        "The change is kept until JuggleSim closes.";
+    };
+
     bool showImGuiDemo = false;
     bool showColorPreview = false;
     Playback playback;
-    JuggleParams juggleParams;
-    juggleParams.prop = settings.prop;
     CameraControl camera;
     // Pattern extents depend only on the loop and timing, so they're cached.
     std::vector<int> extentsLoop;
@@ -437,6 +529,33 @@ int main() {
         float menuHeight = 0.0f;
         if (ImGui::BeginMainMenuBar()) {
             if (ImGui::BeginMenu("File")) {
+                // (A chosen pattern is copied before loading it: loading changes the Recent list
+                // the choice may point into.)
+                if (ImGui::BeginMenu("JuggleSim Patterns")) {
+                    const PatternChoice choice =
+                        drawJuggleSimPatternsMenu(builtInPatterns, juggleSimMenuState, settings.colorVision);
+                    if (choice.pattern) {
+                        const LibraryPattern chosen = *choice.pattern;
+                        loadLibraryPattern(chosen, choice.mine);
+                    }
+                    ImGui::EndMenu();
+                }
+                if (ImGui::BeginMenu("My Patterns")) {
+                    const PatternChoice choice =
+                        drawMyPatternsMenu(myPatterns, recentPatterns, myMenuState, settings.colorVision);
+                    if (choice.pattern) {
+                        const LibraryPattern chosen = *choice.pattern;
+                        loadLibraryPattern(chosen, choice.mine);
+                    }
+                    ImGui::EndMenu();
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Save to My Patterns...", nullptr, false, patternValid)) {
+                    std::snprintf(saveDialog.name, sizeof(saveDialog.name), "%s", siteswapText);
+                    saveDialog.openRequested = true;
+                }
+                ImGui::MenuItem("Manage My Patterns...", nullptr, &manageWindow.open);
+                ImGui::Separator();
                 if (ImGui::MenuItem("Exit")) done = true;
                 ImGui::EndMenu();
             }
@@ -640,6 +759,55 @@ int main() {
         ImGui::End();
 
         if (showColorPreview) drawColorVisionPreview(&showColorPreview, settings.colorVision);
+
+        // Pattern library dialogs.
+        const SavePatternRequest saveRequest =
+            drawSavePatternDialog(saveDialog, siteswapText, currentPatternSettings(), myPatterns);
+        if (saveRequest.save && patternValid) {
+            LibraryPattern saved;
+            saved.siteswap = siteswapText;
+            saved.name = saveRequest.name;
+            saved.settings = currentPatternSettings();
+            classifyPattern(&saved);
+            bool replaced = false;
+            if (saveRequest.replace) {
+                for (LibraryPattern& existing : myPatterns) {
+                    if (existing.displayName() == saved.name) {
+                        existing = saved;
+                        replaced = true;
+                        break;
+                    }
+                }
+            }
+            if (!replaced) myPatterns.push_back(saved);
+            saveMyPatterns();
+        }
+        const ManagePatternsRequest manageRequest =
+            drawManagePatternsWindow(manageWindow, myPatterns, settings.colorVision);
+        if (manageRequest.load >= 0) {
+            const LibraryPattern chosen = myPatterns[static_cast<size_t>(manageRequest.load)];
+            loadLibraryPattern(chosen, true);
+        }
+        if (manageRequest.rename >= 0) {
+            myPatterns[static_cast<size_t>(manageRequest.rename)].name = manageRequest.newName;
+            saveMyPatterns();
+        }
+        if (manageRequest.remove >= 0) {
+            myPatterns.erase(myPatterns.begin() + manageRequest.remove);
+            saveMyPatterns();
+        }
+        if (!fileError.empty()) ImGui::OpenPopup("Couldn't save");
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        if (ImGui::BeginPopupModal("Couldn't save", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+            ImGui::TextUnformatted(fileError.c_str());
+            ImGui::PopTextWrapPos();
+            if (ImGui::Button("OK", ImVec2(ImGui::GetFontSize() * 6.0f, 0.0f))) {
+                fileError.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
         if (showImGuiDemo) ImGui::ShowDemoWindow(&showImGuiDemo);
 
         ImGui::Render();

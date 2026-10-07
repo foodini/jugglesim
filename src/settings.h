@@ -7,6 +7,8 @@
 #include "color_vision.h"
 #include "juggle_sim.h"
 
+#include <filesystem>
+
 struct AppSettings {
     ColorVisionMode colorVision = ColorVisionMode::Normal;
     PropType prop = PropType::Ball;
@@ -17,3 +19,7 @@ AppSettings loadSettings();
 
 // Returns false if the file couldn't be written (the app keeps running either way).
 bool saveSettings(const AppSettings& settings);
+
+// Where per-user files live: %APPDATA%\JuggleSim\<fileName>, or the working directory if
+// APPDATA is unset. (The folder may not exist yet; writers create it.)
+std::filesystem::path userDataPath(const wchar_t* fileName);

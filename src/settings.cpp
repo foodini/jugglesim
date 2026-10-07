@@ -9,12 +9,7 @@
 
 namespace {
 
-// %APPDATA%\JuggleSim\settings.ini, or settings.ini in the working directory if APPDATA is unset.
-std::filesystem::path settingsPath() {
-    const wchar_t* appData = _wgetenv(L"APPDATA");
-    if (!appData || !*appData) return std::filesystem::path(L"settings.ini");
-    return std::filesystem::path(appData) / L"JuggleSim" / L"settings.ini";
-}
+std::filesystem::path settingsPath() { return userDataPath(L"settings.ini"); }
 
 std::string trim(const std::string& s) {
     const char* kSpace = " \t\r\n";
@@ -25,6 +20,12 @@ std::string trim(const std::string& s) {
 }
 
 }  // namespace
+
+std::filesystem::path userDataPath(const wchar_t* fileName) {
+    const wchar_t* appData = _wgetenv(L"APPDATA");
+    if (!appData || !*appData) return std::filesystem::path(fileName);
+    return std::filesystem::path(appData) / L"JuggleSim" / fileName;
+}
 
 AppSettings loadSettings() {
     AppSettings settings;

@@ -11,6 +11,9 @@
   right hand, but that's clearly not a valid juggle.
 * Ballistic trails overlap with any pattern that repeats the same throws consecutively.
   Shorten the trails when this happens.
+* Do a pass over "Recent." Should it move to the top level of File?
+* Add a trash icon next to a pattern in the menu to allow deletion? Ask for confirmation,
+  of course.
 
 * The period extend/contract can operate several ways;
   * - can do what it currently does - which I don't understand.

@@ -1,0 +1,5 @@
+// jugglesim.rc - resources compiled into jugglesim.exe.
+#include "src/resource.h"
+
+// The built-in pattern library. Edit data/patterns.txt and rebuild to change it.
+IDR_PATTERN_LIBRARY RCDATA "data\\patterns.txt"
