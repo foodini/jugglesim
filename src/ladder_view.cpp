@@ -9,7 +9,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <string>
-#include <unordered_map>
+#include <map>
 #include <vector>
 
 namespace {
@@ -46,7 +46,7 @@ void drawRepeatSignGlyph(ImDrawList* dl, ImVec2 min, ImVec2 max, ImU32 color) {
 }  // namespace
 
 LadderToolbarRequest drawLadderToolbar(const Pattern& pattern, bool patternValid,
-                                       const LadderEditState& edit) {
+                                       const LadderEditState& edit, bool showValues) {
     LadderToolbarRequest request;
     const float h = ImGui::GetFrameHeight();
     const ImGuiStyle& style = ImGui::GetStyle();
@@ -63,6 +63,14 @@ LadderToolbarRequest drawLadderToolbar(const Pattern& pattern, bool patternValid
             "Currently: Pattern mode. The pattern is one loop that repeats forever,\n"
             "and edits apply to every repeat.\n\n"
             "Sequence mode (a timeline with exact repeat counts) isn't implemented yet.");
+
+    // Throw values: label every throw ("3", "4p"). Shown pressed in while on.
+    ImGui::SameLine();
+    if (showValues) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    if (ImGui::Button("3p##values", ImVec2(h * 1.6f, h))) request.toggleValues = true;
+    if (showValues) ImGui::PopStyleColor();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Throw values (V)\n\nLabels every throw with its value: 3, 4p (a pass), ...");
 
     // Period control: write the loop out at a multiple of its shortest period.
     const int period = patternValid ? loopPeriodBeats(pattern) : 0;
@@ -109,8 +117,8 @@ LadderToolbarRequest drawLadderToolbar(const Pattern& pattern, bool patternValid
     ImGui::EndDisabled();
     if (lost) ImGui::PopStyleColor();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("Back to the default pan and zoom, with beat 1 at the left (Home, or Ctrl+0).\n\n"
-                          "On the ladder: mouse wheel pans, Ctrl+wheel zooms.");
+        ImGui::SetTooltip("Back to the default pan and zoom, with beat 1 at the top (Home, or Ctrl+0).\n\n"
+                          "On the ladder: mouse wheel scrolls, Ctrl+wheel zooms.");
 
     return request;
 }
@@ -124,20 +132,34 @@ struct Curve {
 
 // A throw as drawn this frame (one instance of a loop slot).
 struct DrawnThrow {
-    int beat;   // departure beat
-    int value;  // siteswap value; arrival beat = beat + value
-    int ball;   // ball id (index into the ball styles)
+    Slot from;      // departure
+    LoopThrow t;    // value and destination juggler
+    int ball;       // ball id (index into the ball styles)
     Curve curve;
+    Slot to() const { return landingSlot(from, t); }
 };
 
-// What the mouse is over: a throw end (idle) or a drop target beat (holding).
+// What the mouse is over: a throw end (idle) or a drop target (holding).
 struct HitResult {
     int index = -1;  // index into the DrawnThrow list, or -1
     float t = 0.0f;  // curve parameter of the nearest point
     float distance = 1e9f;
 };
 
+char valueChar(int value) {
+    return value < 10 ? static_cast<char>('0' + value) : static_cast<char>('a' + value - 10);
+}
+
 }  // namespace
+
+std::string throwLabel(const LoopThrow& t, int thrower, int jugglers) {
+    std::string label(1, valueChar(t.value));
+    if (t.dest != thrower) {
+        label += 'p';
+        if (jugglers > 2) label += std::to_string(t.dest + 1);
+    }
+    return label;
+}
 
 void resetLadderView(LadderEditState& edit) {
     edit.firstBeat = 0.0f;
@@ -150,13 +172,13 @@ bool ladderViewIsDefault(const LadderEditState& edit) {
 
 void cancelLadderEdit(LadderEditState& edit) {
     edit.chain = EditChain();
-    edit.hoverBeat = INT_MIN;
-    edit.hoverTarget = INT_MIN;
+    edit.hovering = false;
+    edit.targeting = false;
 }
 
 LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
                                    ColorVisionMode colorVision, LadderEditState& edit,
-                                   double playheadBeat) {
+                                   double playheadBeat, const LadderViewOptions& options) {
     LadderEditResult result;
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const ImVec2 size = ImGui::GetContentRegionAvail();
@@ -176,35 +198,64 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
     dl->PushClipRect(origin, maxPt, true);
     dl->AddRectFilled(origin, maxPt, kCanvasBackground);
 
+    const JugglingLoop loop = patternValid ? patternLoop(pattern) : JugglingLoop();
+    if (loop.empty() && edit.chain.active) cancelLadderEdit(edit);
+    EditChain& chain = edit.chain;
+    const int period = loop.period;
+    const int jugglers = std::max(1, loop.jugglers);
+    const bool shiftHeld = ImGui::GetIO().KeyShift;
+
+    // ---- Layout --------------------------------------------------------------------------------
+    // Top to bottom: header + legend, the strip headers (juggler numbers with several jugglers,
+    // then L and R over the hand columns), then the ladder itself, time running down. Beat
+    // numbers are in a gutter on the left.
+    //
+    // Across each juggler's strip: room for the left hand's same-hand (even) arches, the left
+    // hand's column, the space odd throws cross, the right hand's column, and room for the
+    // right hand's arches. Same-hand throws bulge away from the middle of the juggler throwing
+    // them, so the crossings stay between that juggler's columns. Passes run from strip to strip.
     const float fontSize = ImGui::GetFontSize();
     const float margin = fontSize;
-    // Vertical layout, top to bottom: header + legend, room for the right hand's same-hand
-    // (even) arches, the ladder itself (odd throws cross between the rails), room for the left
-    // hand's arches, then beat numbers.
     const float headerHeight = margin * 0.5f + fontSize * 2.8f;
-    const float numbersHeight = fontSize * 1.8f;
-    const float bodyHeight = size.y - headerHeight - numbersHeight;
-    const float outsideRoom = bodyHeight * 0.28f;  // above the top rail and below the bottom one
-    const float railTopY = origin.y + headerHeight + outsideRoom;
-    const float railBotY = origin.y + headerHeight + bodyHeight - outsideRoom;
-    const float x0 = origin.x + margin * 3.0f;  // where the left-most beat sits; room for R/L
-    const float baseSpacing = fontSize * 3.0f;   // beat spacing at zoom 1
+    const float stripHeaderHeight = fontSize * (jugglers > 1 ? 2.9f : 1.5f);
+    const float bodyTop = origin.y + headerHeight + stripHeaderHeight;
+    const float bodyHeight = maxPt.y - bodyTop;
+    const float gutterWidth = ImGui::CalcTextSize("-000").x + fontSize * 1.1f;
+    const float areaLeft = origin.x + gutterWidth;
+    const float areaWidth = std::max(1.0f, maxPt.x - margin * 0.5f - areaLeft);
+    // Strips are kept apart by a gap (where the passes cross), shrinking when space is short.
+    const float jugglerCount = static_cast<float>(jugglers);
+    const float stripGap = jugglers > 1 ? std::clamp((areaWidth - jugglerCount * fontSize * 12.0f) / (jugglerCount - 1.0f),
+                                                     0.0f, fontSize * 5.0f)
+                                        : 0.0f;
+    const float stripWidth = std::min((areaWidth - stripGap * (jugglerCount - 1.0f)) / jugglerCount, fontSize * 22.0f);
+    const float stripsWidth = stripWidth * jugglerCount + stripGap * (jugglerCount - 1.0f);
+    const float stripsLeft = areaLeft + (areaWidth - stripsWidth) * 0.5f;
+    const float stripsRight = stripsLeft + stripsWidth;
+    const float outsideRoom = stripWidth * 0.25f;  // beside each column, for same-hand arches
+    auto stripLeft = [&](int j) { return stripsLeft + (stripWidth + stripGap) * static_cast<float>(j); };
+    auto columnX = [&](int j, bool right) {
+        return stripLeft(j) + outsideRoom + (right ? stripWidth * 0.5f : 0.0f);
+    };
+    // About 24 beats on screen at zoom 1, within sensible limits for the markers.
+    const float baseSpacing = std::clamp(bodyHeight / 24.0f, fontSize * 1.25f, fontSize * 3.0f);
+    const float y0 = bodyTop + fontSize * 0.9f;  // where the top-most beat sits at the default view
 
-    // Pan and zoom. Wheel (or a horizontal trackpad swipe) pans; Ctrl+wheel zooms around the
-    // mouse; Home or Ctrl+0 resets. firstBeat is the (fractional) beat drawn at x0.
+    // Pan and zoom. The wheel scrolls through time; Ctrl+wheel zooms around the mouse; Home or
+    // Ctrl+0 resets. firstBeat is the (fractional) beat drawn at y0.
     {
         ImGuiIO& io = ImGui::GetIO();
         if (canvasHovered && io.KeyCtrl && io.MouseWheel != 0.0f) {
             const float oldSpacing = baseSpacing * edit.zoom;
-            const float mouseBeat = edit.firstBeat + (mouse.x - x0) / oldSpacing;
+            const float mouseBeat = edit.firstBeat + (mouse.y - y0) / oldSpacing;
             edit.zoom = std::clamp(edit.zoom * std::pow(1.15f, io.MouseWheel), kMinLadderZoom,
                                    kMaxLadderZoom);
-            edit.firstBeat = mouseBeat - (mouse.x - x0) / (baseSpacing * edit.zoom);
+            edit.firstBeat = mouseBeat - (mouse.y - y0) / (baseSpacing * edit.zoom);
         } else if (canvasHovered && !io.KeyCtrl) {
-            // Wheel up / swipe left moves toward earlier beats. ~2 beats per notch, scaled so
-            // the same distance on screen moves at any zoom.
+            // Wheel up moves toward earlier beats. ~2 beats per notch, scaled so the same
+            // distance on screen moves at any zoom.
             const float beatsPerNotch = 2.0f / edit.zoom;
-            edit.firstBeat -= (io.MouseWheel + io.MouseWheelH) * beatsPerNotch;
+            edit.firstBeat -= io.MouseWheel * beatsPerNotch;
         }
         // Only while the mouse is over the ladder: Home over the juggler resets the camera.
         if (ImGui::IsWindowHovered() && !io.WantTextInput &&
@@ -213,37 +264,36 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
     }
     const float beatSpacing = baseSpacing * edit.zoom;
     const float firstBeat = edit.firstBeat;
+    auto beatY = [&](int b) { return y0 + (static_cast<float>(b) - firstBeat) * beatSpacing; };
     // Beats with any part on screen (a little margin either side for markers and labels).
-    const int bFirst = static_cast<int>(std::floor(firstBeat - (x0 - origin.x) / beatSpacing)) - 1;
-    const int bLast = static_cast<int>(std::ceil(firstBeat + (maxPt.x - x0) / beatSpacing)) + 1;
+    const int bFirst = static_cast<int>(std::floor(firstBeat - (y0 - bodyTop) / beatSpacing)) - 1;
+    const int bLast = static_cast<int>(std::ceil(firstBeat + (maxPt.y - y0) / beatSpacing)) + 1;
     // Remember whether beat 1 was visible, for the toolbar's Reset View button.
-    edit.beatOneVisible = (x0 + (0.0f - firstBeat) * beatSpacing >= origin.x + margin * 2.0f) &&
-                          (x0 + (0.0f - firstBeat) * beatSpacing <= maxPt.x);
+    edit.beatOneVisible = beatY(0) >= bodyTop && beatY(0) <= maxPt.y;
 
-    auto beatX = [&](int b) { return x0 + (static_cast<float>(b) - firstBeat) * beatSpacing; };
-    // Beat 0 (and every even beat) is the right hand. Works for negative beats too.
-    auto railY = [&](int b) { return positiveMod(b, 2) == 0 ? railTopY : railBotY; };
-    auto beatPoint = [&](int b) { return ImVec2(beatX(b), railY(b)); };
+    // Every juggler throws right on even beats (beat 0 is "beat 1"). Works for negative beats.
+    auto rightHandBeat = [](int b) { return positiveMod(b, 2) == 0; };
+    auto slotPoint = [&](Slot s) { return ImVec2(columnX(s.juggler, rightHandBeat(s.beat)), beatY(s.beat)); };
 
-    // Curve for a throw of value v made on beat b.
-    auto throwCurve = [&](int b, int v) {
+    // Curve for a throw made from `from`.
+    auto throwCurve = [&](Slot from, const LoopThrow& t) {
         Curve c;
-        c.p0 = beatPoint(b);
-        c.p1 = beatPoint(b + v);
-        const float dx = c.p1.x - c.p0.x;
-        if (v % 2 != 0) {
-            // Crossing throw: gentle S-curve from one rail to the other.
-            c.c1 = ImVec2(c.p0.x + dx * 0.35f, c.p0.y);
-            c.c2 = ImVec2(c.p1.x - dx * 0.35f, c.p1.y);
+        const Slot to = landingSlot(from, t);
+        c.p0 = slotPoint(from);
+        c.p1 = slotPoint(to);
+        const float dy = c.p1.y - c.p0.y;
+        if (to.juggler == from.juggler && t.value % 2 == 0) {
+            // Same hand: arch outside the juggler's columns (right hand to the right, left
+            // hand to the left), wider for higher throws, reaching the edge of the room at 8.
+            const float bulge = outsideRoom * 0.9f * std::min(1.0f, static_cast<float>(t.value) / 8.0f);
+            const float dir = rightHandBeat(from.beat) ? 1.0f : -1.0f;
+            const float cx = c.p0.x + dir * bulge * (4.0f / 3.0f);  // cubic peak ~= bulge
+            c.c1 = ImVec2(cx, c.p0.y + dy * 0.1f);
+            c.c2 = ImVec2(cx, c.p1.y - dy * 0.1f);
         } else {
-            // Same-hand throw: arch outside the ladder (right hand above the top rail, left hand
-            // below the bottom one), taller for higher throws, reaching the edge of the
-            // available room at 8.
-            const float bulge = outsideRoom * 0.9f * std::min(1.0f, static_cast<float>(v) / 8.0f);
-            const float dir = (c.p0.y == railTopY) ? -1.0f : 1.0f;
-            const float cy = c.p0.y + dir * bulge * (4.0f / 3.0f);  // cubic peak ~= bulge
-            c.c1 = ImVec2(c.p0.x + dx * 0.1f, cy);
-            c.c2 = ImVec2(c.p1.x - dx * 0.1f, cy);
+            // To the other hand, or to another juggler: a gentle S-curve.
+            c.c1 = ImVec2(c.p0.x, c.p0.y + dy * 0.35f);
+            c.c2 = ImVec2(c.p1.x, c.p1.y - dy * 0.35f);
         }
         return c;
     };
@@ -252,9 +302,9 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         Curve c;
         c.p0 = from;
         c.p1 = to;
-        const float dx = to.x - from.x;
-        c.c1 = ImVec2(from.x + dx * 0.35f, from.y);
-        c.c2 = ImVec2(to.x - dx * 0.35f, to.y);
+        const float dy = to.y - from.y;
+        c.c1 = ImVec2(from.x, from.y + dy * 0.35f);
+        c.c2 = ImVec2(to.x, to.y - dy * 0.35f);
         return c;
     };
 
@@ -266,128 +316,141 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
     const ImU32 white = IM_COL32(255, 255, 255, 255);
     const ImU32 ghostColor = IM_COL32(170, 172, 180, 255);  // a held empty beat (a 0)
 
-    std::vector<int> loop = patternValid ? loopThrowValues(pattern) : std::vector<int>();
-    if (loop.empty() && edit.chain.active) cancelLadderEdit(edit);
-    EditChain& chain = edit.chain;
-    const int period = static_cast<int>(loop.size());
-    const bool shiftHeld = ImGui::GetIO().KeyShift;
+    // The body (everything below the strip headers) is clipped, so throws scrolled up slide
+    // under the headers.
+    dl->PushClipRect(ImVec2(origin.x, bodyTop), maxPt, true);
 
     // Background: alternate shades every loop period, so the repeat stands out. Plain grays,
     // independent of color-vision mode, kept very dark so throw colors keep their contrast.
     if (period > 0) {
         const ImU32 periodShades[2] = {kCanvasBackground, IM_COL32(24, 26, 32, 255)};
-        const float top = origin.y + headerHeight;
         for (int b = bFirst; b <= bLast; ++b) {
-            const float left = beatX(b) - beatSpacing * 0.5f;
+            const float top = beatY(b) - beatSpacing * 0.5f;
             const int periodIndex = b >= 0 ? b / period : -((-b + period - 1) / period);
-            dl->AddRectFilled(ImVec2(left, top), ImVec2(left + beatSpacing, maxPt.y),
+            dl->AddRectFilled(ImVec2(origin.x, top), ImVec2(maxPt.x, top + beatSpacing),
                               periodShades[positiveMod(periodIndex, 2)]);
         }
     }
 
-    // Beat lines, rails, labels, and beat numbers. When zoomed out, only every n-th beat is
-    // numbered so the numbers don't collide (always including beat 1).
-    const float widestLabel = ImGui::CalcTextSize("-000").x + fontSize * 0.5f;
-    const int labelStep = std::max(1, static_cast<int>(std::ceil(widestLabel / beatSpacing)));
+    // Beat lines across each strip, so any point on a throw can be traced straight across to
+    // its beat. Each strip styles its own lines by its juggler's hand on that beat: right-hand
+    // beats get a brighter, heavier line, so a throw's hand can be read from the line it starts
+    // on. Beat numbers in the gutter; when zoomed out, only every n-th beat is numbered so they
+    // don't collide (always including beat 1).
+    const int labelStep = std::max(1, static_cast<int>(std::ceil(fontSize * 1.1f / beatSpacing)));
     for (int b = bFirst; b <= bLast; ++b) {
-        // Beat line: from the top of the right hand's arch space down to just above the beat
-        // number, so any point on a throw can be traced straight down to its beat.
-        // Right-hand beats (1, 3, 5, ...) get a brighter, heavier line than left-hand beats, so
-        // a throw's hand can be read from the line it starts on.
-        const bool rightHandBeat = (b % 2 == 0);
-        dl->AddLine(ImVec2(beatX(b), railTopY - outsideRoom),
-                    ImVec2(beatX(b), maxPt.y - numbersHeight + fontSize * 0.15f),
-                    rightHandBeat ? rungRightCol : rungLeftCol, rightHandBeat ? 2.0f : 1.0f);
+        const float y = beatY(b);
+        for (int j = 0; j < jugglers; ++j) {
+            const bool right = rightHandBeat(b);
+            dl->AddLine(ImVec2(stripLeft(j) + fontSize * 0.2f, y), ImVec2(stripLeft(j) + stripWidth - fontSize * 0.2f, y),
+                        right ? rungRightCol : rungLeftCol, right ? 2.0f : 1.0f);
+        }
         if (positiveMod(b, labelStep) != 0) continue;
         const std::string label = std::to_string(b + 1);  // beat 0 is "beat 1"
         const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
-        dl->AddText(ImVec2(beatX(b) - ts.x * 0.5f, maxPt.y - numbersHeight + fontSize * 0.3f),
-                    dimText, label.c_str());
+        dl->AddText(ImVec2(areaLeft - fontSize * 0.6f - ts.x, y - ts.y * 0.5f), dimText, label.c_str());
     }
-    const float railStart = x0 - margin;
-    dl->AddLine(ImVec2(railStart, railTopY), ImVec2(maxPt.x, railTopY), railCol, 2.0f);
-    dl->AddLine(ImVec2(railStart, railBotY), ImVec2(maxPt.x, railBotY), railCol, 2.0f);
+    for (int j = 0; j < jugglers; ++j) {
+        for (int right = 0; right < 2; ++right) {
+            const float x = columnX(j, right != 0);
+            dl->AddLine(ImVec2(x, bodyTop), ImVec2(x, maxPt.y), railCol, 2.0f);
+        }
+    }
 
     if (period == 0) {
+        dl->PopClipRect();
         const char* msg = "No valid pattern to display. Enter a siteswap below.";
         dl->AddText(ImVec2(origin.x + margin, origin.y + margin * 0.5f), dimText, msg);
         dl->PopClipRect();
         return result;
     }
 
-    // Throw value on a beat. While a chain is open, its local edits are applied (and the held
-    // throw's departure reads kNoThrow).
-    auto valueAt = [&](int beat) {
-        return chain.active ? editValueAt(chain, beat)
-                            : loop[static_cast<size_t>(positiveMod(beat, period))];
+    // The throw made from a slot. While a chain is open, its local edits are applied (and the
+    // held throw's departure reads kNoThrow).
+    auto throwAt = [&](Slot s) {
+        return chain.active ? editThrowAt(chain, s) : loop.at(s.juggler, positiveMod(s.beat, period));
     };
 
     // ---- Ball identity (for colors) ----------------------------------------------------------
     // In a repeating pattern each ball follows a fixed cycle ("orbit") through the loop's
-    // throws, so a throw's ball can be worked out from its beat alone. Ids therefore don't
-    // depend on what part of the ladder is on screen, and panning never recolors anything.
+    // throws, so a throw's ball can be worked out from its slot alone. Ids therefore don't
+    // depend on what part of the ladder is on screen, and scrolling never recolors anything.
     const BallOrbits orbits = computeBallOrbits(loop);
     const int totalBalls = orbits.totalBalls;
-    auto orbitBallAt = [&](int b) { return ::orbitBallAt(orbits, b); };
 
     // While a chain is open, follow the balls through the edit: start well before anything the
     // chain touched (where the pattern is unedited, so orbit ids apply), and track landings
     // forward. The held throw is treated as if it had gone back to the empty spot, so it keeps
     // its own ball and nothing else shares its color.
-    auto virtualAt = [&](int beat) {
+    auto virtualAt = [&](Slot s) {
         if (chain.active) {
-            if (chain.end == HeldEnd::Arrival && beat == chain.fixedBeat)
-                return std::max(0, chain.holeBeat - chain.fixedBeat);
-            if (chain.end == HeldEnd::Departure && beat == chain.holeBeat)
-                return std::max(0, chain.fixedBeat - chain.holeBeat);
+            if (chain.end == HeldEnd::Arrival && s == chain.fixed) {
+                LoopThrow t;
+                t.value = std::max(0, chain.hole.beat - chain.fixed.beat);
+                t.dest = chain.hole.juggler;
+                return t;
+            }
+            if (chain.end == HeldEnd::Departure && s == chain.hole) {
+                LoopThrow t;
+                t.value = std::max(0, chain.fixed.beat - chain.hole.beat);
+                t.dest = chain.fixed.juggler;
+                return t;
+            }
         }
-        return valueAt(beat);
+        return throwAt(s);
     };
-    std::unordered_map<int, int> chainBallOfBeat;  // departure beat -> ball id
+    std::map<Slot, int> chainBallOf;  // departure slot -> ball id
     if (chain.active) {
-        int lo = std::min(chain.fixedBeat, chain.holeBeat);
-        if (!chain.overrides.empty()) lo = std::min(lo, chain.overrides.begin()->first);
+        int lo = std::min(chain.fixed.beat, chain.hole.beat);
+        if (!chain.overrides.empty()) lo = std::min(lo, chain.overrides.begin()->first.beat);
         const int simStart = std::min(bFirst - 40, lo - 40);
-        std::unordered_map<int, int> arriving;  // landing beat -> ball id
+        std::map<Slot, int> arriving;  // landing slot -> ball id
         for (int d = simStart - 36; d < simStart; ++d) {  // balls already in the air
-            const int v = loop[static_cast<size_t>(positiveMod(d, period))];
-            if (v > 0 && d + v >= simStart) arriving[d + v] = orbitBallAt(d);
+            for (int j = 0; j < jugglers; ++j) {
+                const LoopThrow& t = loop.at(j, positiveMod(d, period));
+                if (t.value > 0 && d + t.value >= simStart) arriving[landingSlot(Slot{j, d}, t)] = orbitBallAt(orbits, j, d);
+            }
         }
         for (int b = simStart; b <= bLast; ++b) {
-            const int t = virtualAt(b);
-            if (t <= 0) continue;
-            std::unordered_map<int, int>::iterator it = arriving.find(b);
-            const int ball = it != arriving.end() ? it->second : orbitBallAt(b);
-            if (it != arriving.end()) arriving.erase(it);
-            chainBallOfBeat[b] = ball;
-            arriving[b + t] = ball;
+            for (int j = 0; j < jugglers; ++j) {
+                const Slot s{j, b};
+                const LoopThrow t = virtualAt(s);
+                if (t.value <= 0) continue;
+                std::map<Slot, int>::iterator it = arriving.find(s);
+                const int ball = it != arriving.end() ? it->second : orbitBallAt(orbits, j, b);
+                if (it != arriving.end()) arriving.erase(it);
+                chainBallOf[s] = ball;
+                arriving[landingSlot(s, t)] = ball;
+            }
         }
     }
-    auto ballAt = [&](int b) {
-        if (!chain.active) return orbitBallAt(b);
-        std::unordered_map<int, int>::const_iterator it = chainBallOfBeat.find(b);
-        return it != chainBallOfBeat.end() ? it->second : -1;
+    auto ballAt = [&](Slot s) {
+        if (!chain.active) return orbitBallAt(orbits, s.juggler, s.beat);
+        std::map<Slot, int>::const_iterator it = chainBallOf.find(s);
+        return it != chainBallOf.end() ? it->second : -1;
     };
-    const int nextBall = totalBalls;  // number of balls in the legend
     if (chain.active) {
-        const int heldBeat = chain.end == HeldEnd::Arrival ? chain.fixedBeat : chain.holeBeat;
-        edit.heldBall = chain.heldValue == 0 ? -1 : ballAt(heldBeat);
+        const Slot heldFrom = chain.end == HeldEnd::Arrival ? chain.fixed : chain.hole;
+        edit.heldBall = chain.held.value == 0 ? -1 : ballAt(heldFrom);
     }
 
-    // The throws drawn this frame.
-    // Includes throws made before the left edge that are still in the air on screen.
+    // The throws drawn this frame, including throws made above the top edge that are still in
+    // the air on screen.
     std::vector<DrawnThrow> drawn;
     for (int b = bFirst - 36; b <= bLast; ++b) {
-        const int t = valueAt(b);
-        if (t <= 0 || b + t < bFirst) continue;
-        drawn.push_back({b, t, std::max(0, ballAt(b)), throwCurve(b, t)});
+        for (int j = 0; j < jugglers; ++j) {
+            const Slot s{j, b};
+            const LoopThrow t = throwAt(s);
+            if (t.value <= 0 || b + t.value < bFirst) continue;
+            drawn.push_back({s, t, std::max(0, ballAt(s)), throwCurve(s, t)});
+        }
     }
 
     // ---- Interaction -------------------------------------------------------------------------
     const float hitRadius = std::max(6.0f, fontSize * 0.5f);
     const float ambiguityMargin = 3.0f;  // the nearest curve must win by this much
     const float stickyRadius = hitRadius * 1.6f;  // keep the current hover while within this
-    const float snapRadius = beatSpacing * 0.45f;  // grabbing a beat's point on the rail
+    const float snapRadius = std::max(beatSpacing * 0.45f, fontSize * 0.9f);  // grabbing a slot's point
 
     // Nearest drawn throw to the mouse, with "clearly nearest" and hysteresis rules. `keep`
     // says whether a candidate is the one currently highlighted. `allowHalf(t)` filters by
@@ -417,23 +480,46 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
     if (canvasHovered && (rightClicked || ImGui::IsKeyPressed(ImGuiKey_Escape)) && chain.active)
         cancelLadderEdit(edit);
 
+    // Strip headers: with several jugglers, clicking one selects that juggler (clicking the
+    // selected one deselects).
+    auto jugglerHeaderRect = [&](int j, ImVec2* min, ImVec2* max) {
+        const float cx = stripLeft(j) + stripWidth * 0.5f;
+        const float w = ImGui::CalcTextSize("J00").x + fontSize * 0.9f;
+        const float top = origin.y + headerHeight + fontSize * 0.15f;
+        *min = ImVec2(cx - w * 0.5f, top);
+        *max = ImVec2(cx + w * 0.5f, top + fontSize * 1.3f);
+    };
+    int hoverHeader = -1;
+    if (jugglers > 1 && canvasHovered && !chain.active) {
+        for (int j = 0; j < jugglers; ++j) {
+            ImVec2 a, b;
+            jugglerHeaderRect(j, &a, &b);
+            if (mouse.x >= a.x && mouse.x <= b.x && mouse.y >= a.y && mouse.y <= b.y) hoverHeader = j;
+        }
+        if (hoverHeader >= 0 && leftClicked)
+            result.selectJuggler = hoverHeader == options.selectedJuggler ? -1 : hoverHeader;
+    }
+    const bool inBody = mouse.y >= bodyTop;
+
     // Idle hover: which end of which throw would a click pick up?
     int hoverIndex = -1;
     HeldEnd hoverEnd = HeldEnd::Arrival;
-    int hoverZeroBeat = INT_MIN;  // an empty beat (0) under the mouse
-    // Holding: which beat would a click drop the held end on?
-    int targetBeat = INT_MIN;
+    bool hoverZero = false;  // an empty beat (0) under the mouse...
+    Slot hoverZeroSlot;      // ...here
+    // Holding: which slot would a click drop the held end on?
+    bool haveTarget = false;
+    Slot target;
 
-    if (canvasHovered && !chain.active) {
+    if (canvasHovered && inBody && !chain.active) {
         const HitResult hit = pickThrow([&](const DrawnThrow& d, float t) {
             const HeldEnd e = t < 0.5f ? HeldEnd::Departure : HeldEnd::Arrival;
-            return d.beat == edit.hoverBeat && e == edit.hoverEnd;
+            return edit.hovering && d.from == edit.hoverSlot && e == edit.hoverEnd;
         }, [](float) { return true; });
         if (hit.index >= 0) {
             const DrawnThrow& d = drawn[static_cast<size_t>(hit.index)];
             hoverIndex = hit.index;
             // Small dead zone around the midpoint so the chosen half doesn't flicker.
-            if (d.beat == edit.hoverBeat && std::fabs(hit.t - 0.5f) < 0.06f)
+            if (edit.hovering && d.from == edit.hoverSlot && std::fabs(hit.t - 0.5f) < 0.06f)
                 hoverEnd = edit.hoverEnd;
             else
                 hoverEnd = hit.t < 0.5f ? HeldEnd::Departure : HeldEnd::Arrival;
@@ -441,74 +527,88 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
             // Empty beats can be picked up too (they "land" on their own beat).
             float bestD = fontSize * 0.6f;
             for (int b = bFirst; b <= bLast; ++b) {
-                if (valueAt(b) != 0) continue;
-                const ImVec2 p = beatPoint(b);
-                const float d = std::hypot(p.x - mouse.x, p.y - mouse.y);
-                if (d < bestD) {
-                    bestD = d;
-                    hoverZeroBeat = b;
+                for (int j = 0; j < jugglers; ++j) {
+                    const Slot s{j, b};
+                    if (throwAt(s).value != 0) continue;
+                    const ImVec2 p = slotPoint(s);
+                    const float d = std::hypot(p.x - mouse.x, p.y - mouse.y);
+                    if (d < bestD) {
+                        bestD = d;
+                        hoverZero = true;
+                        hoverZeroSlot = s;
+                    }
                 }
             }
         }
-        edit.hoverBeat = hoverIndex >= 0 ? drawn[static_cast<size_t>(hoverIndex)].beat : INT_MIN;
+        edit.hovering = hoverIndex >= 0;
+        if (edit.hovering) edit.hoverSlot = drawn[static_cast<size_t>(hoverIndex)].from;
         edit.hoverEnd = hoverEnd;
 
         if (leftClicked && hoverIndex >= 0) {
-            const DrawnThrow& d = drawn[static_cast<size_t>(hoverIndex)];
-            chain = beginEditChain(loop, d.beat, hoverEnd);
+            chain = beginEditChain(loop, drawn[static_cast<size_t>(hoverIndex)].from, hoverEnd);
             result.startedChain = true;
-        } else if (leftClicked && hoverZeroBeat != INT_MIN) {
-            chain = beginEditChain(loop, hoverZeroBeat, HeldEnd::Arrival);
+        } else if (leftClicked && hoverZero) {
+            chain = beginEditChain(loop, hoverZeroSlot, HeldEnd::Arrival);
             result.startedChain = true;
         }
-    } else if (canvasHovered && chain.active) {
-        // Near a beat's point on the rail, that beat is the target: several curves meet there,
-        // and the beat under the mouse is what the user means. Elsewhere, a curve under the
-        // mouse targets its relevant end (its landing for a held arrival, its start for a held
-        // departure), and failing that the nearest beat point within snapping distance.
+    } else if (canvasHovered && inBody && chain.active) {
+        // Near a slot's point, that slot is the target: several curves meet there, and the
+        // slot under the mouse is what the user means. Elsewhere, a curve under the mouse
+        // targets its relevant end (its landing for a held arrival, its start for a held
+        // departure), and failing that the nearest slot within snapping distance.
         const bool arrivalMode = chain.end == HeldEnd::Arrival;
         const float pointPriorityRadius = fontSize * 0.9f;
-        int nearestBeat = INT_MIN;
+        Slot nearest;
         float nearestD = 1e9f;
         for (int b = bFirst; b <= bLast; ++b) {
-            const ImVec2 p = beatPoint(b);
-            const float dd = std::hypot(p.x - mouse.x, p.y - mouse.y);
-            if (dd < nearestD) {
-                nearestD = dd;
-                nearestBeat = b;
+            for (int j = 0; j < jugglers; ++j) {
+                const Slot s{j, b};
+                const ImVec2 p = slotPoint(s);
+                const float dd = std::hypot(p.x - mouse.x, p.y - mouse.y);
+                if (dd < nearestD) {
+                    nearestD = dd;
+                    nearest = s;
+                }
             }
         }
         if (nearestD <= pointPriorityRadius) {
-            targetBeat = nearestBeat;
+            haveTarget = true;
+            target = nearest;
         } else {
             // Only the matching half of other throws counts: a held catch is dropped by pointing
             // at another throw's incoming (catch) half, a held throw end at an outgoing half.
-            // Otherwise a throw leaving the beat you're aiming at would steal the drop.
+            // Otherwise a throw leaving the slot you're aiming at would steal the drop.
             const HitResult hit = pickThrow(
                 [&](const DrawnThrow& d, float) {
-                    return (arrivalMode ? d.beat + d.value : d.beat) == edit.hoverTarget;
+                    return edit.targeting && (arrivalMode ? d.to() : d.from) == edit.hoverTarget;
                 },
                 [&](float t) { return arrivalMode ? t >= 0.5f : t <= 0.5f; });
             if (hit.index >= 0) {
                 const DrawnThrow& d = drawn[static_cast<size_t>(hit.index)];
-                targetBeat = arrivalMode ? d.beat + d.value : d.beat;
+                haveTarget = true;
+                target = arrivalMode ? d.to() : d.from;
             } else if (nearestD <= snapRadius) {
-                targetBeat = nearestBeat;
+                haveTarget = true;
+                target = nearest;
             }
         }
-        if (targetBeat != INT_MIN && !editDropValue(chain, targetBeat, nullptr))
-            targetBeat = INT_MIN;  // not a legal drop: the rubber band just follows the mouse
-        edit.hoverTarget = targetBeat;
+        if (haveTarget && !editDropThrow(chain, target, nullptr))
+            haveTarget = false;  // not a legal drop: the rubber band just follows the mouse
+        edit.targeting = haveTarget;
+        edit.hoverTarget = target;
 
-        if (leftClicked && targetBeat != INT_MIN) {
-            std::vector<int> newLoop;
-            const DropResult r = editDrop(chain, targetBeat, shiftHeld, &newLoop);
+        if (leftClicked && haveTarget) {
+            JugglingLoop newLoop;
+            const DropResult r = editDrop(chain, target, shiftHeld, &newLoop);
             if (r == DropResult::Closed) {
                 result.committed = true;
                 result.loop = newLoop;
                 cancelLadderEdit(edit);
             }
         }
+    } else if (!canvasHovered || !inBody) {
+        edit.hovering = false;
+        edit.targeting = false;
     }
 
     // ---- Drawing -----------------------------------------------------------------------------
@@ -516,38 +616,6 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
     const float arrowSize = fontSize * 0.55f;
     const float markerRadius = fontSize * 0.36f;
     const float dashUnit = fontSize * 0.35f;
-
-    // Header line.
-    {
-        std::string header;
-        if (chain.active && chain.end == HeldEnd::Arrival)
-            header = "Holding a throw: click where it should land. Esc or right-click cancels.";
-        else if (chain.active)
-            header = "Holding a throw: click the beat it should be thrown from. "
-                     "Esc or right-click cancels.";
-        else
-            header = "Ladder diagram: " + std::to_string(ballCount(pattern)) + " objects, period " +
-                     std::to_string(period) + ".  Click near either end of a throw to edit.";
-        dl->AddText(ImVec2(origin.x + margin, origin.y + margin * 0.5f),
-                    chain.active ? textCol : dimText, header.c_str());
-    }
-
-    // Legend: one sample per ball, so identity never depends on color alone.
-    {
-        float x = origin.x + margin;
-        const float y = origin.y + margin * 0.5f + fontSize * 1.9f;
-        const float sampleLength = fontSize * 2.6f;
-        for (int ball = 0; ball < nextBall; ++ball) {
-            const BallStyle style = ballStyle(colorVision, ball);
-            const ImVec2 a(x + markerRadius, y);
-            const ImVec2 b(x + markerRadius + sampleLength, y);
-            drawStyledLine(dl, a, b, style.color, thickness, style.dash, dashUnit);
-            drawMarker(dl, a, markerRadius, style.shape, style.color, 2.0f, kCanvasBackground);
-            const std::string label = std::to_string(ball + 1);
-            dl->AddText(ImVec2(b.x + fontSize * 0.3f, y - fontSize * 0.5f), textCol, label.c_str());
-            x = b.x + fontSize * 0.3f + ImGui::CalcTextSize(label.c_str()).x + fontSize * 1.0f;
-        }
-    }
 
     // Throws: curves and arrowheads.
     for (const DrawnThrow& d : drawn) {
@@ -564,8 +632,8 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         drawBezierHalfHighlight(dl, c.p0, c.c1, c.c2, c.p1, hoverEnd == HeldEnd::Departure,
                                 ballStyle(colorVision, h.ball).color, 1.0f);
     }
-    if (hoverZeroBeat != INT_MIN)
-        dl->AddCircle(beatPoint(hoverZeroBeat), 9.0f, mixColor(ghostColor, white, 0.5f, 0.9f), 0, 2.0f);
+    if (hoverZero)
+        dl->AddCircle(slotPoint(hoverZeroSlot), 9.0f, mixColor(ghostColor, white, 0.5f, 0.9f), 0, 2.0f);
 
     // Holding: the empty spot(s), the rubber band and its repeats.
     if (chain.active) {
@@ -573,15 +641,16 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         const float pulse = 0.5f + 0.5f * std::sin(time * 5.0f);
 
         // The empty spot that closes the chain: pulsing circles. Its copies in other repeats
-        // that the chain could close on instead (Shift-click, changing the ball count) get
+        // that the chain could close on instead (Shift-click, changing the prop count) get
         // pulsing squares, dim normally and bright while Shift is held.
         for (int b = bFirst; b <= bLast; ++b) {
-            if (positiveMod(b - chain.holeBeat, period) != 0) continue;
-            const ImVec2 p = beatPoint(b);
-            if (b == chain.holeBeat) {
+            if (positiveMod(b - chain.hole.beat, period) != 0) continue;
+            const Slot s{chain.hole.juggler, b};
+            const ImVec2 p = slotPoint(s);
+            if (s == chain.hole) {
                 dl->AddCircle(p, markerRadius + 5.0f + 2.0f * pulse, mixColor(white, white, 0.0f, 0.95f), 0, 2.0f);
                 dl->AddCircle(p, markerRadius + 1.5f, mixColor(white, white, 0.0f, 0.57f), 0, 1.5f);
-            } else if (editCloseLoopLength(chain, b, true) > 0) {
+            } else if (editCloseLoopLength(chain, s, true) > 0) {
                 const float a = shiftHeld ? 0.95f : 0.35f;
                 const float outer = markerRadius + 4.0f + 2.0f * pulse;
                 const float inner = markerRadius + 1.5f;
@@ -602,13 +671,29 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         // The held throw's curve for one repeat (m = 0 is the one being dragged).
         auto heldCurve = [&](int m) {
             const int shift = m * echoSpacing;
-            const int fixedB = chain.fixedBeat + shift;
-            if (targetBeat != INT_MIN) {
-                const int target = targetBeat + shift;
-                return arrivalMode ? throwCurve(fixedB, target - fixedB) : throwCurve(target, fixedB - target);
+            if (haveTarget) {
+                Slot shiftedTarget = target;
+                shiftedTarget.beat += shift;
+                Slot shiftedFixed = chain.fixed;
+                shiftedFixed.beat += shift;
+                LoopThrow t;
+                Slot from;
+                // Same throw as the real drop, just shifted (editDropThrow already said it's legal).
+                if (arrivalMode) {
+                    from = shiftedFixed;
+                    t.value = shiftedTarget.beat - shiftedFixed.beat;
+                    t.dest = shiftedTarget.juggler;
+                } else {
+                    from = shiftedTarget;
+                    t.value = shiftedFixed.beat - shiftedTarget.beat;
+                    t.dest = shiftedFixed.juggler;
+                }
+                return throwCurve(from, t);
             }
-            const ImVec2 fixedP = beatPoint(fixedB);
-            const ImVec2 loose(mouse.x + static_cast<float>(shift) * beatSpacing, mouse.y);
+            Slot fixedShifted = chain.fixed;
+            fixedShifted.beat += shift;
+            const ImVec2 fixedP = slotPoint(fixedShifted);
+            const ImVec2 loose(mouse.x, mouse.y + static_cast<float>(shift) * beatSpacing);
             return arrivalMode ? looseCurve(fixedP, loose) : looseCurve(loose, fixedP);
         };
 
@@ -616,11 +701,11 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         // while the mouse is over a valid drop target, so they show where the edit would go
         // rather than chasing the mouse. Skipped for a 1-beat spacing: then every throw is a
         // copy, which says nothing useful.
-        if (targetBeat != INT_MIN && echoSpacing >= 2) {
+        if (haveTarget && echoSpacing >= 2) {
             for (int m = -3; m <= 3; ++m) {
                 if (m == 0) continue;
                 const Curve c = heldCurve(m);
-                if (std::max(c.p0.x, c.p1.x) < origin.x || std::min(c.p0.x, c.p1.x) > maxPt.x) continue;
+                if (std::max(c.p0.y, c.p1.y) < bodyTop || std::min(c.p0.y, c.p1.y) > maxPt.y) continue;
                 const float fade = 0.8f - 0.2f * static_cast<float>(std::abs(m));
                 drawStyledBezier(dl, c.p0, c.c1, c.c2, c.p1,
                                  mixColor(heldStyle.color, kCanvasBackground, 0.45f, fade), 2.0f,
@@ -632,7 +717,7 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         const Curve c = heldCurve(0);
         drawHeldThrowEffects(dl, c.p0, c.c1, c.c2, c.p1, heldStyle.color, time, 1.0f);
         drawStyledBezier(dl, c.p0, c.c1, c.c2, c.p1, heldStyle.color, thickness + 0.5f, heldStyle.dash, dashUnit);
-        if (targetBeat != INT_MIN) {
+        if (haveTarget) {
             drawBezierArrowHead(dl, c.p0, c.c1, c.c2, c.p1, heldStyle.color, arrowSize, markerRadius + 3.0f);
             // Highlight the target the way a hovered end is highlighted.
             drawBezierHalfHighlight(dl, c.p0, c.c1, c.c2, c.p1, !arrivalMode, heldStyle.color, 1.0f);
@@ -641,43 +726,47 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         }
     }
 
-    // Playhead: where the juggler is now, at sub-beat resolution, plus the same moment in every
-    // other repeat of the loop that's on screen (fainter). Positioned with floats so it glides.
+    // Playhead: where the jugglers are now, at sub-beat resolution, plus the same moment in
+    // every other repeat of the loop that's on screen (fainter). Positioned with floats so it
+    // glides.
     {
-        const float top = railTopY - outsideRoom;
-        const float bottom = maxPt.y - numbersHeight + fontSize * 0.15f;
+        const float left = areaLeft - fontSize * 0.3f;
+        const float right = stripsRight;
         const double localBeat = static_cast<double>(firstBeat);
         const double rel = playheadBeat - localBeat;
-        // Copies at playheadBeat + k*period; draw every one that lands on screen. The left-most
+        // Copies at playheadBeat + k*period; draw every one that lands on screen. The top-most
         // visible copy is the bright one, so there's always exactly one to follow.
         const double firstCopy = playheadBeat - std::floor(rel / period) * period - period;
         bool primaryDrawn = false;
         for (double b = firstCopy; ; b += period) {
-            const float x = x0 + static_cast<float>(b - localBeat) * beatSpacing;
-            if (x > maxPt.x + 2.0f) break;
-            if (x < origin.x + margin * 2.0f) continue;
+            const float y = y0 + static_cast<float>(b - localBeat) * beatSpacing;
+            if (y > maxPt.y + 2.0f) break;
+            if (y < bodyTop) continue;
             const bool primary = !primaryDrawn;
             primaryDrawn = true;
             const ImU32 col = primary ? IM_COL32(255, 255, 255, 220) : IM_COL32(255, 255, 255, 90);
-            if (primary) dl->AddLine(ImVec2(x, top), ImVec2(x, bottom), IM_COL32(255, 255, 255, 40), 6.0f);
-            dl->AddLine(ImVec2(x, top), ImVec2(x, bottom), col, primary ? 2.0f : 1.0f);
-            // A small downward-pointing cap, so playhead copies can't be mistaken for beat lines.
+            if (primary) dl->AddLine(ImVec2(left, y), ImVec2(right, y), IM_COL32(255, 255, 255, 40), 6.0f);
+            dl->AddLine(ImVec2(left, y), ImVec2(right, y), col, primary ? 2.0f : 1.0f);
+            // A small right-pointing cap, so playhead copies can't be mistaken for beat lines.
             const float cap = fontSize * (primary ? 0.45f : 0.35f);
-            dl->AddTriangleFilled(ImVec2(x - cap, top - cap * 1.1f), ImVec2(x + cap, top - cap * 1.1f),
-                                  ImVec2(x, top + cap * 0.2f), col);
+            dl->AddTriangleFilled(ImVec2(left - cap * 1.1f, y - cap), ImVec2(left - cap * 1.1f, y + cap),
+                                  ImVec2(left + cap * 0.2f, y), col);
         }
     }
 
     // Departure markers on top, ringed in the background color so they stay readable where
     // curves cross them. Empty beats get a small hollow circle.
     for (int b = bFirst; b <= bLast; ++b) {
-        const int t = valueAt(b);
-        const ImVec2 p0 = beatPoint(b);
-        if (t == 0) {
-            dl->AddCircle(p0, fontSize * 0.25f, dimText, 0, 1.5f);
-        } else if (t > 0) {
-            const BallStyle style = ballStyle(colorVision, std::max(0, ballAt(b)));
-            drawMarker(dl, p0, markerRadius, style.shape, style.color, 2.0f, kCanvasBackground);
+        for (int j = 0; j < jugglers; ++j) {
+            const Slot s{j, b};
+            const LoopThrow t = throwAt(s);
+            const ImVec2 p0 = slotPoint(s);
+            if (t.value == 0) {
+                dl->AddCircle(p0, fontSize * 0.25f, dimText, 0, 1.5f);
+            } else if (t.value > 0) {
+                const BallStyle style = ballStyle(colorVision, std::max(0, ballAt(s)));
+                drawMarker(dl, p0, markerRadius, style.shape, style.color, 2.0f, kCanvasBackground);
+            }
         }
     }
     if (chain.active) {
@@ -685,53 +774,136 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         const bool ghost = edit.heldBall < 0;
         const BallStyle heldStyle = ghost ? BallStyle{ghostColor, MarkerShape::Circle, DashPattern::ShortDash}
                                           : ballStyle(colorVision, edit.heldBall);
-        const int departure = chain.end == HeldEnd::Arrival
-                                  ? chain.fixedBeat
-                                  : (targetBeat != INT_MIN ? targetBeat : INT_MIN);
-        if (departure != INT_MIN)
-            drawMarker(dl, beatPoint(departure), markerRadius + 1.0f, heldStyle.shape, heldStyle.color, 2.0f,
+        Slot from;
+        if (chain.end == HeldEnd::Arrival || haveTarget) {
+            from = chain.end == HeldEnd::Arrival ? chain.fixed : target;
+            drawMarker(dl, slotPoint(from), markerRadius + 1.0f, heldStyle.shape, heldStyle.color, 2.0f,
                        kCanvasBackground);
+        }
+    }
+
+    // Throw values: a small label on each throw, a little way along it from where it's thrown
+    // (so it reads as belonging to that throw, not to one of the others meeting at the marker).
+    if (options.showValues) {
+        auto drawValueLabel = [&](const Curve& c, const std::string& label, ImU32 color) {
+            const float along = std::min(0.3f, (fontSize * 1.3f) / std::max(1.0f, std::hypot(c.p1.x - c.p0.x, c.p1.y - c.p0.y)));
+            const ImVec2 p = bezierPoint(c.p0, c.c1, c.c2, c.p1, std::max(0.12f, along));
+            const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+            const ImVec2 pad(fontSize * 0.2f, fontSize * 0.05f);
+            const ImVec2 a(p.x - ts.x * 0.5f - pad.x, p.y - ts.y * 0.5f - pad.y);
+            const ImVec2 b(p.x + ts.x * 0.5f + pad.x, p.y + ts.y * 0.5f + pad.y);
+            dl->AddRectFilled(a, b, kCanvasBackground, fontSize * 0.25f);
+            dl->AddRect(a, b, color, fontSize * 0.25f, 0, 1.0f);
+            dl->AddText(ImVec2(a.x + pad.x, a.y + pad.y), IM_COL32(230, 232, 238, 255), label.c_str());
+        };
+        for (const DrawnThrow& d : drawn) {
+            if (d.from.beat < bFirst - 1) continue;  // its label is above the top edge anyway
+            drawValueLabel(d.curve, throwLabel(d.t, d.from.juggler, jugglers), ballStyle(colorVision, d.ball).color);
+        }
     }
 
     // Tooltip describing what a click would do.
-    if (chain.active && targetBeat != INT_MIN) {
-        int v = 0;
-        editDropValue(chain, targetBeat, &v);
-        const int closeLength = editCloseLoopLength(chain, targetBeat, shiftHeld);
-        const int wouldBeLength = editCloseLoopLengthUnlimited(chain, targetBeat, shiftHeld);
-        const int copyLength =
-            (!shiftHeld && targetBeat != chain.holeBeat) ? editCloseLoopLength(chain, targetBeat, true) : 0;
+    if (chain.active && haveTarget) {
+        LoopThrow t;
+        Slot from;
+        editDropThrow(chain, target, &t, &from);
+        const std::string name = throwLabel(t, from.juggler, jugglers);
+        std::string what = "Becomes a " + name;
+        if (t.dest != from.juggler) what += " (a pass to J" + std::to_string(t.dest + 1) + ")";
+        what += ".";
+        const int closeLength = editCloseLoopLength(chain, target, shiftHeld);
+        const int wouldBeLength = editCloseLoopLengthUnlimited(chain, target, shiftHeld);
+        const int copyLength = (!shiftHeld && target != chain.hole) ? editCloseLoopLength(chain, target, true) : 0;
         if (closeLength == 0 && wouldBeLength > 0) {
             ImGui::SetTooltip("Can't close here: the loop would be %d beats long (the limit is %d).\n"
                               "Keep going and close somewhere that keeps the edit shorter,\n"
                               "or press Esc to cancel.",
                               wouldBeLength, kMaxLoopBeats);
         } else if (closeLength > 0) {
-            const int delta = editDropBallDelta(chain, targetBeat);
+            const int delta = editDropBallDelta(chain, target);
             if (delta == 0)
-                ImGui::SetTooltip("Becomes a %d. Fills the empty spot: done.\nThe edit repeats every %d beat%s.",
-                                  v, closeLength, closeLength == 1 ? "" : "s");
+                ImGui::SetTooltip("%s Fills the empty spot: done.\nThe edit repeats every %d beat%s.",
+                                  what.c_str(), closeLength, closeLength == 1 ? "" : "s");
             else
-                ImGui::SetTooltip("Becomes a %d. Closes on a copy of the empty spot: %s%d ball%s.\n"
+                ImGui::SetTooltip("%s Closes on a copy of the empty spot: %s%d prop%s.\n"
                                   "The edit repeats every %d beat%s.",
-                                  v, delta > 0 ? "+" : "", delta, (delta == 1 || delta == -1) ? "" : "s",
+                                  what.c_str(), delta > 0 ? "+" : "", delta, (delta == 1 || delta == -1) ? "" : "s",
                                   closeLength, closeLength == 1 ? "" : "s");
         } else if (copyLength > 0) {
-            const int delta = editDropBallDelta(chain, targetBeat);
-            ImGui::SetTooltip("Becomes a %d. Picks up the throw that was here.\n"
-                              "(Shift-click to close here instead: %s%d ball%s.)",
-                              v, delta > 0 ? "+" : "", delta, (delta == 1 || delta == -1) ? "" : "s");
+            const int delta = editDropBallDelta(chain, target);
+            ImGui::SetTooltip("%s Picks up the throw that was here.\n"
+                              "(Shift-click to close here instead: %s%d prop%s.)",
+                              what.c_str(), delta > 0 ? "+" : "", delta, (delta == 1 || delta == -1) ? "" : "s");
         } else {
-            ImGui::SetTooltip("Becomes a %d. Picks up the throw that was here.", v);
+            ImGui::SetTooltip("%s Picks up the throw that was here.", what.c_str());
         }
     }
 
-    // Left gutter with the R/L labels, drawn last so throws scrolled off to the left slide
-    // under it instead of over the labels.
-    dl->AddRectFilled(ImVec2(origin.x, origin.y + headerHeight),
-                      ImVec2(origin.x + margin * 2.0f, maxPt.y), kCanvasBackground);
-    dl->AddText(ImVec2(origin.x + margin * 0.6f, railTopY - fontSize * 0.5f), textCol, "R");
-    dl->AddText(ImVec2(origin.x + margin * 0.6f, railBotY - fontSize * 0.5f), textCol, "L");
+    dl->PopClipRect();  // the body
+
+    // Header line.
+    {
+        std::string header;
+        if (chain.active && chain.end == HeldEnd::Arrival)
+            header = "Holding a throw: click where it should land. Esc or right-click cancels.";
+        else if (chain.active)
+            header = "Holding a throw: click where it should be thrown from. "
+                     "Esc or right-click cancels.";
+        else
+            header = std::to_string(ballCount(pattern)) + " props, period " + std::to_string(period) +
+                     ".  Click near either end of a throw to edit it.";
+        dl->AddText(ImVec2(origin.x + margin, origin.y + margin * 0.5f),
+                    chain.active ? textCol : dimText, header.c_str());
+    }
+
+    // Legend: one sample per ball, so identity never depends on color alone.
+    {
+        float x = origin.x + margin;
+        const float y = origin.y + margin * 0.5f + fontSize * 1.9f;
+        const float sampleLength = fontSize * 2.6f;
+        for (int ball = 0; ball < totalBalls; ++ball) {
+            const BallStyle style = ballStyle(colorVision, ball);
+            const ImVec2 a(x + markerRadius, y);
+            const ImVec2 b(x + markerRadius + sampleLength, y);
+            drawStyledLine(dl, a, b, style.color, thickness, style.dash, dashUnit);
+            drawMarker(dl, a, markerRadius, style.shape, style.color, 2.0f, kCanvasBackground);
+            const std::string label = std::to_string(ball + 1);
+            dl->AddText(ImVec2(b.x + fontSize * 0.3f, y - fontSize * 0.5f), textCol, label.c_str());
+            x = b.x + fontSize * 0.3f + ImGui::CalcTextSize(label.c_str()).x + fontSize * 1.0f;
+        }
+    }
+
+    // Strip headers: the juggler's number (with several jugglers; the selected one is drawn
+    // dark on light, as over their head in the 3D view), then L and R over the columns.
+    {
+        const float handY = bodyTop - fontSize * 1.25f;
+        for (int j = 0; j < jugglers; ++j) {
+            if (jugglers > 1) {
+                ImVec2 a, b;
+                jugglerHeaderRect(j, &a, &b);
+                const bool selected = j == options.selectedJuggler;
+                const bool hovered = j == hoverHeader;
+                const float rounding = fontSize * 0.3f;
+                dl->AddRectFilled(a, b, selected ? IM_COL32(236, 238, 244, 255)
+                                                 : (hovered ? IM_COL32(52, 56, 68, 255) : IM_COL32(28, 30, 36, 255)),
+                                  rounding);
+                dl->AddRect(a, b, IM_COL32(210, 214, 224, 230), rounding, 0, selected ? 2.0f : 1.0f);
+                const std::string label = "J" + std::to_string(j + 1);
+                const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+                dl->AddText(ImVec2((a.x + b.x - ts.x) * 0.5f, (a.y + b.y - ts.y) * 0.5f),
+                            selected ? IM_COL32(16, 16, 20, 255) : IM_COL32(232, 234, 240, 255), label.c_str());
+            }
+            for (int right = 0; right < 2; ++right) {
+                const char* label = right ? "R" : "L";
+                const float x = columnX(j, right != 0);
+                dl->AddText(ImVec2(x - ImGui::CalcTextSize(label).x * 0.5f, handY), textCol, label);
+            }
+        }
+        if (hoverHeader >= 0 && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            ImGui::SetTooltip(hoverHeader == options.selectedJuggler ? "Juggler %d (selected): click to deselect"
+                                                                     : "Juggler %d: click to select",
+                              hoverHeader + 1);
+    }
 
     dl->PopClipRect();
     return result;

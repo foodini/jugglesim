@@ -1,10 +1,12 @@
 // ladder_view.h - ladder diagram of a pattern, drawn with ImGui's draw list.
 //
-// Time runs left to right. The top rail is the right hand, the bottom rail the left hand,
-// with beat 1 thrown by the right hand. Each throw is a curve from its throw beat to its
-// landing beat, styled (color + marker shape + dash pattern) by which ball it carries.
+// Time runs down the page. Each juggler has a strip with two columns, the left hand on the left
+// and the right hand on the right (the juggler's own view, like reading a score), and the
+// strips sit side by side: J1, J2, ... Every juggler throws with the right hand on beat 1. Each
+// throw is a curve from where it's thrown to where it lands, styled (color + marker shape +
+// dash pattern) by which prop it carries. A pass is a curve from one strip to another.
 //
-// Read-only for now. The canvas is an ImGui InvisibleButton so later editing can hit-test it.
+// The canvas is an ImGui InvisibleButton, so editing can hit-test it.
 //
 // Above the diagram is a toolbar row for ladder modes and tools. It doesn't change anything
 // itself: it returns what the user asked for, and the caller applies it.
@@ -14,7 +16,7 @@
 #include "ladder_edit.h"
 #include "pattern.h"
 
-#include <climits>
+#include <string>
 #include <vector>
 
 // Zoom limits for the ladder (1 = default beat spacing).
@@ -25,12 +27,14 @@ constexpr float kMaxLadderZoom = 4.0f;
 struct LadderEditState {
     EditChain chain;               // the open edit chain, if any
     int heldBall = -1;             // ball id of the held throw (-1 = an empty beat)
-    int hoverBeat = INT_MIN;       // idle: departure beat of the highlighted throw
+    bool hovering = false;         // idle: a throw is highlighted...
+    Slot hoverSlot;                // ...the one thrown from here
     HeldEnd hoverEnd = HeldEnd::Arrival;
-    int hoverTarget = INT_MIN;     // holding: the highlighted drop beat
+    bool targeting = false;        // holding: a drop target is highlighted...
+    Slot hoverTarget;              // ...this one
 
     // View: pan and zoom.
-    float firstBeat = 0.0f;        // beat drawn at the left edge of the ladder (may be negative)
+    float firstBeat = 0.0f;        // beat drawn at the top of the ladder (may be negative)
     float zoom = 1.0f;
     bool beatOneVisible = true;    // as of the last frame drawn
 };
@@ -38,18 +42,29 @@ struct LadderEditState {
 struct LadderToolbarRequest {
     int newPeriodBeats = 0;  // 0 = no change
     bool resetView = false;
+    bool toggleValues = false;  // the throw-values button was clicked
 };
 
-// Draws the toolbar row (mode toggle, period control, reset view). Call before
+// Draws the toolbar row (mode toggle, throw values, period control, reset view). Call before
 // drawLadderDiagram.
 LadderToolbarRequest drawLadderToolbar(const Pattern& pattern, bool patternValid,
-                                       const LadderEditState& edit);
+                                       const LadderEditState& edit, bool showValues);
 
-// What the user did to the pattern this frame. The caller applies it.
+// How to draw the ladder (things owned by the rest of the app).
+struct LadderViewOptions {
+    bool showValues = false;    // label every throw with its value ("3", "4p")
+    int selectedJuggler = -1;   // shown highlighted in the strip headers (-1: none)
+};
+
+constexpr int kNoSelectionChange = -2;
+
+// What the user did this frame. The caller applies it.
 struct LadderEditResult {
     bool startedChain = false;  // the user picked up a throw this frame
-    bool committed = false;  // an edit chain closed
-    std::vector<int> loop;   // the new loop values (same period as before)
+    bool committed = false;     // an edit chain closed
+    JugglingLoop loop;          // the new loop (every juggler)
+    // A strip header was clicked: the juggler to select, or -1 to deselect.
+    int selectJuggler = kNoSelectionChange;
 };
 
 // Abandons any open edit chain (e.g. when the pattern is changed some other way).
@@ -59,9 +74,13 @@ void cancelLadderEdit(LadderEditState& edit);
 void resetLadderView(LadderEditState& edit);
 bool ladderViewIsDefault(const LadderEditState& edit);
 
+// A throw as the ladder labels it: "3", "b", "4p" (for 3+ jugglers, "4p2": to juggler 2).
+// thrower is the juggler throwing it.
+std::string throwLabel(const LoopThrow& t, int thrower, int jugglers);
+
 // Fills the remaining content region of the current ImGui window, and handles drag editing.
 // playheadBeat is the playback position (fractional beats, same numbering as the ladder); it's
 // drawn as a line at that beat and at the same point in every other repeat on screen.
 LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
                                    ColorVisionMode colorVision, LadderEditState& edit,
-                                   double playheadBeat);
+                                   double playheadBeat, const LadderViewOptions& options);

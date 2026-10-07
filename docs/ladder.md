@@ -1,37 +1,51 @@
 # The ladder diagram
 
-The ladder pane (top left) shows the juggling pattern over time. Time runs left to right, one
-column per beat, numbered along the bottom. Each beat's line runs the full height of the
-diagram so you can trace any point on a throw straight down to its beat number.
+The ladder pane (top left) shows the juggling pattern over time. Time runs down the page, one
+row per beat, numbered down the left edge. Each beat's line runs across the whole strip, so you
+can trace any point on a throw straight across to its beat number.
 
 ## Reading the ladder
 
-- **Rails.** The top rail is the right hand (R), the bottom rail the left hand (L). Beat 1 is
-  thrown by the right hand, and hands alternate every beat.
+- **Columns.** Each hand is a column: the left hand on the left (L), the right hand on the
+  right (R), as the juggler sees them, like reading a score. Beat 1 is thrown by the right hand,
+  and hands alternate every beat. Right-hand beats have the brighter beat lines.
+- **Jugglers.** In a passing pattern each juggler has a strip of their own (an L and an R
+  column), side by side: J1, J2. Every juggler throws with the right hand on beat 1. Click a
+  juggler's number over their strip to select them (the same selection as in the 3D view; see
+  [juggler.md](juggler.md)); click it again to deselect.
 - **Throws.** Each throw is drawn from the beat it's thrown on to the beat it lands on, with an
   arrowhead at the landing.
-  - **Odd throws** (1, 3, 5, ...) change hands, so they cross between the rails.
-  - **Even throws** (2, 4, 6, ...) return to the same hand, so they arch *outside* the ladder:
-    the right hand's above the top rail, the left hand's below the bottom rail. Higher throws
-    arch higher.
-  - **Empty beats** (0) are shown as a small hollow circle on the rail.
+  - **Odd throws** (1, 3, 5, ...) change hands, so they cross between the juggler's columns.
+  - **Even throws** (2, 4, 6, ...) return to the same hand, so they arch *outside* the juggler's
+    columns: the right hand's to the right, the left hand's to the left. Higher throws arch
+    wider.
+  - **Passes** run from one juggler's strip to the other's. A 3p from the right hand lands in
+    the partner's left; a 4p in their right.
+  - **Empty beats** (0) are shown as a small hollow circle in the column.
+- **Throw values.** The **3p** button on the toolbar, the **V** key or *View > Throw Values*
+  labels every throw with its value, a little way along it from where it's thrown: `3`, `4p`
+  (a pass). The props in the 3D view get the same labels while they're in the air. JuggleSim
+  remembers the setting.
 - **Balls.** Every ball has its own color, marker shape and dash pattern, so you can follow one
   ball through the pattern even without color. The legend under the title shows each ball's
   style. See *View > Color Vision* for palettes suited to different kinds of color vision, and
   *View > Color Vision > Preview all modes...* to compare them.
 
-The **playhead** (a vertical line with a small cap) shows where the juggler is in the pattern;
-see [juggler.md](juggler.md).
+The **playhead** (a horizontal line with a small cap at its left end) shows where the jugglers
+are in the pattern; see [juggler.md](juggler.md).
 
 ## Moving around
 
-- **Mouse wheel** (or a sideways swipe on a trackpad) pans the ladder left and right. You can go
-  back past beat 1 into beats 0, -1, -2, ...: the pattern repeats forever in both directions.
-- **Ctrl + mouse wheel** zooms in and out around the mouse. When zoomed out, only every few
-  beats are numbered.
+- **Mouse wheel** scrolls up and down through time. You can go back past beat 1 into beats 0,
+  -1, -2, ...: the pattern repeats forever in both directions.
+- **Ctrl + mouse wheel** zooms in and out around the mouse. The default shows about 24 beats.
+  When zoomed out, only every few beats are numbered.
 - **Home**, **Ctrl+0**, the toolbar's **Reset View** button or *View > Reset Ladder View* puts
-  beat 1 back at the left edge at the normal zoom. The button lights up when beat 1 is off
-  screen.
+  beat 1 back at the top at the normal zoom. The button lights up when beat 1 is off screen.
+
+The divider between the ladder and the 3D view can be dragged to give either more room.
+Double-click it (or use *View > Reset Layout*) to share the width equally again. JuggleSim
+remembers where you left it.
 
 Each ball keeps its color and shape wherever you scroll.
 
@@ -74,13 +88,21 @@ the result is always a valid pattern.
    the one you want.
 2. **Click** to pick up that end. The throw glows and follows the mouse like a rubber band. The
    spot you picked it up from is now empty and is marked with a pulsing ring.
-3. **Click a new spot** for the held end: a beat's point on the rail, or the matching half of
-   another throw. A held catch goes to the catch point of the throw whose *incoming* half
+3. **Click a new spot** for the held end: a hand's point on a beat (any juggler's), or the
+   matching half of another throw. A held catch goes to the catch point of the throw whose *incoming* half
    you're pointing at; a held throw end goes to the throw point of the throw whose *outgoing*
    half you're pointing at. (The other halves are ignored while you're holding something, so a
    throw leaving the beat you're aiming at can't steal the drop.) A tooltip says what the throw
    will become. Whatever was already there is picked up in turn, and you keep going.
 4. **The chain closes** when you put the held end into the empty spot.
+
+With two jugglers, where you drop decides everything: drop a held catch in the other juggler's
+column and the throw becomes a pass; drop a pass's catch back in the thrower's own columns and
+it becomes a self. For example, in a 4-count (`<3p 3 3 3|3p 3 3 3>`), pick up the catch of J1's
+first pass and drop it in J2's right hand on beat 5: it becomes a 4p, and J2's throw that used to
+land there (the 3 from beat 2) is picked up. Drop that in the empty spot (J2's left on beat 4)
+and it becomes a 2: the result is `<4p 3 3 3|3p 2 3 3>`, the right-to-right double with the
+receiver's hold.
 
 While you're editing, only the throws you touch change. When the chain closes, your edit
 becomes the pattern's loop: the loop is as long as the stretch of beats you touched, rounded up
@@ -99,7 +121,7 @@ tells you how many balls the change would add or remove. (A plain click on a cop
 the throw that's there, like anywhere else.)
 
 Empty beats (0s) can be picked up and moved like throws; while held they appear as a grey
-"ghost". That's how a pattern gains or loses empty beats, e.g. editing a snake (`50505`).
+"ghost". A 0 stays with its own juggler (it's an empty hand, not a throw). That's how a pattern gains or loses empty beats, e.g. editing a snake (`50505`).
 
 **Esc**, a **right-click** or **Ctrl+Z** cancels the chain and puts everything back.
 
@@ -134,5 +156,4 @@ throw with the right hand on beat 1, and which hand catches a pass follows from 
 in any siteswap: a `3p` from the right lands in the partner's left, a `4p` in their right. The
 box below the text shows the number of jugglers along with the props and period.
 
-The ladder for passing patterns is coming in the next update. Until then the ladder pane says so,
-and passing patterns are edited by typing.
+Passing patterns are drawn and edited on the ladder like any other (see above).

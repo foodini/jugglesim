@@ -82,6 +82,11 @@ struct BallState {
     Vec3 axis{0.0f, 1.0f, 0.0f};
     Vec3 spinAxis{1.0f, 0.0f, 0.0f};
     bool inFlight = false;
+    // The throw it's on, while in flight or riding a held 2 (value 0 otherwise): its value,
+    // who threw it and who catches it.
+    int throwValue = 0;
+    int thrower = -1;
+    int catcher = -1;
 };
 
 // A ball's recent path, oldest point first. fade[i] goes from 0 (the oldest end, about to

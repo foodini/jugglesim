@@ -46,6 +46,13 @@ AppSettings loadSettings() {
             if (colorVisionModeFromKey(value.c_str(), &mode)) settings.colorVision = mode;
         } else if (key == "tempo_panel") {
             settings.tempoPanelCollapsed = value == "collapsed";
+        } else if (key == "throw_values") {
+            settings.showThrowValues = value == "on";
+        } else if (key == "ladder_width") {
+            char* end = nullptr;
+            const double fraction = std::strtod(value.c_str(), &end);
+            if (end != value.c_str() && fraction >= 0.1 && fraction <= 0.9)
+                settings.ladderFraction = static_cast<float>(fraction);
         } else if (key == "props") {
             PropType prop;
             if (propTypeFromKey(value.c_str(), &prop)) settings.prop = prop;
@@ -65,5 +72,7 @@ bool saveSettings(const AppSettings& settings) {
     out << "color_vision = " << colorVisionModeKey(settings.colorVision) << "\n";
     out << "props = " << propTypeKey(settings.prop) << "\n";
     out << "tempo_panel = " << (settings.tempoPanelCollapsed ? "collapsed" : "open") << "\n";
+    out << "throw_values = " << (settings.showThrowValues ? "on" : "off") << "\n";
+    out << "ladder_width = " << settings.ladderFraction << "\n";
     return static_cast<bool>(out);
 }

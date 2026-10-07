@@ -36,6 +36,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -334,8 +335,9 @@ int pickJuggler(const JugglerScene& scene, const Mat4& viewProj, ImVec2 rectMin,
     return best;
 }
 
-// Juggler numbers over their heads (only drawn with two or more jugglers). The selected
-// juggler's number is inverted (dark on light), so selection doesn't depend on color.
+// Juggler numbers ("J1", "J2", as on the ladder) over their heads (only drawn with two or more
+// jugglers). The selected juggler's number is inverted (dark on light), so selection doesn't
+// depend on color.
 void drawJugglerLabels(ImDrawList* dl, const JugglerScene& scene, const Mat4& viewProj, ImVec2 rectMin,
                        ImVec2 rectSize, int selected) {
     if (scene.jugglers.size() < 2) return;
@@ -348,7 +350,7 @@ void drawJugglerLabels(ImDrawList* dl, const JugglerScene& scene, const Mat4& vi
         ImVec2 anchor;
         if (!projectToScreen(viewProj, above, rectMin, rectSize, &anchor)) continue;
         char text[8];
-        std::snprintf(text, sizeof(text), "%d", static_cast<int>(j) + 1);
+        std::snprintf(text, sizeof(text), "J%d", static_cast<int>(j) + 1);
         const ImVec2 textSize = ImGui::CalcTextSize(text);
         const float padX = em * 0.45f, padY = em * 0.15f;
         const float boxWidth = std::max(textSize.x + 2.0f * padX, textSize.y + 2.0f * padY);
@@ -361,6 +363,34 @@ void drawJugglerLabels(ImDrawList* dl, const JugglerScene& scene, const Mat4& vi
         dl->AddRect(boxMin, boxMax, IM_COL32(210, 214, 224, 230), rounding, 0, isSelected ? 2.0f : 1.0f);
         dl->AddText(ImVec2(anchor.x - textSize.x * 0.5f, boxMin.y + padY),
                     isSelected ? IM_COL32(16, 16, 20, 255) : IM_COL32(232, 234, 240, 255), text);
+    }
+    dl->PopClipRect();
+}
+
+// Throw values over the props in flight (and on held 2s), when the ladder's throw values are
+// on: "3", "4p", as on the ladder, in a small box edged in the prop's color.
+void drawPropValueLabels(ImDrawList* dl, const JugglerScene& scene, const Mat4& viewProj, ImVec2 rectMin,
+                         ImVec2 rectSize, ColorVisionMode colorVision) {
+    dl->PushClipRect(rectMin, ImVec2(rectMin.x + rectSize.x, rectMin.y + rectSize.y), true);
+    const float em = ImGui::GetFontSize();
+    const int jugglers = static_cast<int>(scene.jugglers.size());
+    // Above the prop: clear of a ball, or of a club or ring, whichever way it's turned.
+    const float above = scene.prop == PropType::Ball ? kBallRadius + 0.05f : 0.34f;
+    for (const BallState& b : scene.balls) {
+        if (b.throwValue <= 0) continue;
+        ImVec2 anchor;
+        if (!projectToScreen(viewProj, b.center + Vec3(0.0f, above, 0.0f), rectMin, rectSize, &anchor)) continue;
+        LoopThrow t;
+        t.value = b.throwValue;
+        t.dest = b.catcher;
+        const std::string label = throwLabel(t, b.thrower, jugglers);
+        const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+        const ImVec2 pad(em * 0.25f, em * 0.08f);
+        const ImVec2 a(anchor.x - ts.x * 0.5f - pad.x, anchor.y - ts.y - 2.0f * pad.y);
+        const ImVec2 c(anchor.x + ts.x * 0.5f + pad.x, anchor.y);
+        dl->AddRectFilled(a, c, IM_COL32(20, 22, 28, 200), em * 0.25f);
+        dl->AddRect(a, c, ballStyle(colorVision, b.ball).color, em * 0.25f, 0, 1.0f);
+        dl->AddText(ImVec2(a.x + pad.x, a.y + pad.y), IM_COL32(232, 234, 240, 255), label.c_str());
     }
     dl->PopClipRect();
 }
@@ -686,6 +716,11 @@ int main() {
     io.IniFilename = nullptr;  // fixed layout; nothing worth persisting yet
     // Keyboard navigation between widgets is left off: Space and the arrow keys drive playback.
     ImGui::StyleColorsDark();
+    // Fonts: the classic pixel font for the UI (the first one added is the default), and the
+    // scalable default font for larger text (the pattern's name over the juggler pane).
+    io.Fonts->AddFontDefaultBitmap();
+    ImFont* titleFont = io.Fonts->AddFontDefaultVector();
+    constexpr float kTitleFontSize = 20.0f;
 
     ImGui_ImplWin32_InitForOpenGL(hwnd);
     ImGui_ImplOpenGL3_Init();
@@ -828,7 +863,30 @@ int main() {
     SavePatternDialog saveDialog;
     ManagePatternsWindow manageWindow;
     std::string fileError;  // shown in a message box when set
+    // Names of known patterns by their siteswap (written at the shortest period, so "51" and a
+    // typed "5151" both find the Shower). The user's own names win over the built-in ones.
+    auto canonicalSiteswap = [](const Pattern& p) {
+        std::string text;
+        if (!patternToSiteswap(withPeriod(p, shortestPeriodBeats(p)), &text)) text.clear();
+        return text;
+    };
+    std::map<std::string, std::string> patternNames;
+    auto rebuildPatternNames = [&]() {
+        patternNames.clear();
+        const std::vector<LibraryPattern>* lists[] = {&builtInPatterns, &myPatterns};
+        for (const std::vector<LibraryPattern>* list : lists) {
+            for (const LibraryPattern& p : *list) {
+                if (p.name.empty()) continue;
+                const Siteswap known = parseSiteswap(p.siteswap);
+                if (!known.valid) continue;
+                const std::string key = canonicalSiteswap(patternFromSiteswap(known));
+                if (!key.empty()) patternNames[key] = p.name;
+            }
+        }
+    };
+    rebuildPatternNames();
     auto saveMyPatterns = [&]() {
+        rebuildPatternNames();
         if (!saveUserPatterns(myPatterns))
             fileError = "Couldn't write your patterns to my_patterns.txt in %APPDATA%\\JuggleSim. "
                         "The change is kept until JuggleSim closes.";
@@ -886,6 +944,10 @@ int main() {
             if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) stepPlayback(io.KeyShift ? 1.0 : kStepBeats);
             if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) stepPlayback(io.KeyShift ? -1.0 : -kStepBeats);
             if (ImGui::IsKeyPressed(ImGuiKey_F, false)) frameSelected = selectedJuggler >= 0;
+            if (ImGui::IsKeyPressed(ImGuiKey_V, false)) {
+                settings.showThrowValues = !settings.showThrowValues;
+                saveSettings(settings);
+            }
         }
 
         // --- Main menu bar ---
@@ -957,6 +1019,14 @@ int main() {
             if (ImGui::BeginMenu("View")) {
                 if (ImGui::MenuItem("Reset Ladder View", "Home over ladder", false, !ladderViewIsDefault(ladderEdit)))
                     resetLadderView(ladderEdit);
+                if (ImGui::MenuItem("Throw Values", "V", settings.showThrowValues)) {
+                    settings.showThrowValues = !settings.showThrowValues;
+                    saveSettings(settings);
+                }
+                if (ImGui::MenuItem("Reset Layout", nullptr, false, settings.ladderFraction != 0.5f)) {
+                    settings.ladderFraction = 0.5f;
+                    saveSettings(settings);
+                }
                 if (ImGui::MenuItem("Reset Camera", "Home over juggler")) {
                     resetCamera(camera);
                     frameSelected = false;
@@ -992,7 +1062,10 @@ int main() {
         const float W = io.DisplaySize.x;
         const float H = io.DisplaySize.y;
         const float top = menuHeight;
-        const float leftWidth = std::floor(W * 0.5f);
+        // The ladder pane's width: the user's share of the window (dragging the divider), but
+        // never so narrow that either pane is unusable.
+        const float minPaneWidth = std::min(ImGui::GetFontSize() * 16.0f, W * 0.5f);
+        const float leftWidth = std::floor(std::clamp(W * settings.ladderFraction, minPaneWidth, W - minPaneWidth));
         const float entryHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeight() +
                                   style.WindowPadding.y * 2.0f;
         const ImGuiWindowFlags paneFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
@@ -1004,42 +1077,43 @@ int main() {
         ImGui::SetNextWindowSize(ImVec2(leftWidth, H - top - entryHeight));
         // The ladder handles the mouse wheel itself (pan/zoom), so the pane mustn't scroll.
         if (ImGui::Begin("Ladder", nullptr, paneFlags | ImGuiWindowFlags_NoScrollWithMouse)) {
-            if (pattern.jugglers > 1) {
-                // Passing patterns get their own ladder in the next update.
-                ImGui::Dummy(ImVec2(0.0f, ImGui::GetFontSize()));
-                ImGui::PushTextWrapPos(0.0f);
-                ImGui::TextUnformatted("The ladder for passing patterns is coming in the next update.");
-                ImGui::Spacing();
-                ImGui::TextDisabled("For now, edit passing patterns by typing them below, or load one from "
-                                    "File > JuggleSim Patterns > 2 Jugglers.");
-                ImGui::PopTextWrapPos();
-            } else {
-                const LadderToolbarRequest request = drawLadderToolbar(pattern, patternValid, ladderEdit);
-                if (request.resetView) resetLadderView(ladderEdit);
-                if (request.newPeriodBeats > 0) {
-                    cancelLadderEdit(ladderEdit);
-                    pattern = withPeriod(pattern, request.newPeriodBeats);
-                    std::string text;
-                    if (patternToSiteswap(pattern, &text)) {
-                        std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
-                        parsed = parseSiteswap(siteswapText);
-                        recordPattern(text);
-                    }
+            const LadderToolbarRequest request =
+                drawLadderToolbar(pattern, patternValid, ladderEdit, settings.showThrowValues);
+            if (request.resetView) resetLadderView(ladderEdit);
+            if (request.toggleValues) {
+                settings.showThrowValues = !settings.showThrowValues;
+                saveSettings(settings);
+            }
+            if (request.newPeriodBeats > 0) {
+                cancelLadderEdit(ladderEdit);
+                pattern = withPeriod(pattern, request.newPeriodBeats);
+                std::string text;
+                if (patternToSiteswap(pattern, &text)) {
+                    std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
+                    parsed = parseSiteswap(siteswapText);
+                    recordPattern(text);
                 }
-                const LadderEditResult edited =
-                    drawLadderDiagram(pattern, patternValid, settings.colorVision, ladderEdit, playback.beat);
-                if (edited.startedChain) playback.playing = false;  // don't confuse the juggler mid-edit
-                if (edited.committed) {
-                    // A closed edit chain is always a valid siteswap; double-check before using it.
-                    Pattern editedPattern = patternFromLoopValues(edited.loop);
-                    editedPattern = withPeriod(editedPattern, shortestPeriodBeats(editedPattern));
-                    std::string text;
-                    if (patternToSiteswap(editedPattern, &text) && parseSiteswap(text).valid) {
-                        pattern = editedPattern;
-                        std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
-                        parsed = parseSiteswap(siteswapText);
-                        recordPattern(text);
-                    }
+            }
+            LadderViewOptions ladderOptions;
+            ladderOptions.showValues = settings.showThrowValues;
+            ladderOptions.selectedJuggler = selectedJuggler;
+            const LadderEditResult edited = drawLadderDiagram(pattern, patternValid, settings.colorVision,
+                                                              ladderEdit, playback.beat, ladderOptions);
+            if (edited.startedChain) playback.playing = false;  // don't confuse the jugglers mid-edit
+            if (edited.selectJuggler != kNoSelectionChange) {
+                selectedJuggler = edited.selectJuggler;
+                if (selectedJuggler < 0) frameSelected = false;
+            }
+            if (edited.committed) {
+                // A closed edit chain is always a valid pattern; double-check before using it.
+                Pattern editedPattern = patternFromLoop(edited.loop);
+                editedPattern = withPeriod(editedPattern, shortestPeriodBeats(editedPattern));
+                std::string text;
+                if (patternToSiteswap(editedPattern, &text) && parseSiteswap(text).valid) {
+                    pattern = editedPattern;
+                    std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
+                    parsed = parseSiteswap(siteswapText);
+                    recordPattern(text);
                 }
             }
         }
@@ -1155,6 +1229,43 @@ int main() {
         ImGui::End();
         ImGui::PopStyleVar();
 
+        // The divider between the ladder and juggler panes: drag to resize them, double-click
+        // to share the width equally again. (A thin window of its own over the boundary, so it
+        // gets the mouse before either pane.)
+        {
+            const float grab = 4.0f;  // half the width that catches the mouse
+            ImGui::SetNextWindowPos(ImVec2(leftWidth - grab, top));
+            ImGui::SetNextWindowSize(ImVec2(grab * 2.0f, H - top));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(1.0f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+            if (ImGui::Begin("##divider", nullptr,
+                             ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
+                                 ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoFocusOnAppearing |
+                                 ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollWithMouse)) {
+                ImGui::InvisibleButton("##split", ImVec2(grab * 2.0f, H - top));
+                const bool hovered = ImGui::IsItemHovered();
+                const bool active = ImGui::IsItemActive();
+                if (hovered || active) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+                if (active && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 0.0f))
+                    settings.ladderFraction = std::clamp(io.MousePos.x / W, 0.1f, 0.9f);
+                if (ImGui::IsItemDeactivated()) saveSettings(settings);
+                if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    settings.ladderFraction = 0.5f;
+                    saveSettings(settings);
+                }
+                if (hovered || active)
+                    ImGui::GetWindowDrawList()->AddLine(ImVec2(leftWidth, top), ImVec2(leftWidth, H),
+                                                        ImGui::GetColorU32(active ? ImGuiCol_SeparatorActive
+                                                                                  : ImGuiCol_SeparatorHovered),
+                                                        2.0f);
+                if (hovered && !active && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+                    ImGui::SetTooltip("Drag to resize the panes; double-click to share the width equally");
+            }
+            ImGui::End();
+            ImGui::PopStyleVar(3);
+        }
+
         // Tweakables, in the top-right corner of the juggler pane (over the input window, which
         // never comes to the front).
         const float panelMargin = style.WindowPadding.x;
@@ -1246,6 +1357,21 @@ int main() {
         const CameraView cameraView = updateCamera(camera, extents, jugglerAspect, io.DeltaTime);
         lastViewProj = cameraViewProj(cameraView, jugglerAspect);
         drawJugglerLabels(ImGui::GetBackgroundDrawList(), scene, lastViewProj, viewMin, viewSize, selectedJuggler);
+        if (settings.showThrowValues)
+            drawPropValueLabels(ImGui::GetBackgroundDrawList(), scene, lastViewProj, viewMin, viewSize,
+                                settings.colorVision);
+        // The pattern's name, if it has one, in the top-left corner of the juggler pane.
+        if (patternValid) {
+            const std::map<std::string, std::string>::const_iterator named =
+                patternNames.find(canonicalSiteswap(pattern));
+            if (named != patternNames.end()) {
+                ImDrawList* bg = ImGui::GetBackgroundDrawList();
+                const ImVec2 at(viewMin.x + panelMargin * 1.5f, viewMin.y + panelMargin);
+                const char* name = named->second.c_str();
+                bg->AddText(titleFont, kTitleFontSize, ImVec2(at.x + 1.0f, at.y + 1.0f), IM_COL32(0, 0, 0, 160), name);
+                bg->AddText(titleFont, kTitleFontSize, at, IM_COL32(232, 234, 240, 255), name);
+            }
+        }
 
         ImGui::Render();
 

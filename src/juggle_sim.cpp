@@ -874,6 +874,8 @@ JugglerScene evaluateScene(const JugglingLoop& loop, const BallOrbits& orbits, c
                 if (t >= b && t < b + 2) {
                     BallState held;
                     held.ball = ball;
+                    held.throwValue = v;
+                    held.thrower = held.catcher = j;
                     ev.heldProp(j, right, t, &held);
                     scene.balls.push_back(held);
                 }
@@ -886,6 +888,9 @@ JugglerScene evaluateScene(const JugglingLoop& loop, const BallOrbits& orbits, c
                 BallState flying;
                 flying.ball = ball;
                 flying.inFlight = true;
+                flying.throwValue = v;
+                flying.thrower = j;
+                flying.catcher = ev.destAt(j, b);
                 ev.flightProp(j, b, v, t, &flying);
                 scene.balls.push_back(flying);
             }

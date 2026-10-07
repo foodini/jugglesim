@@ -99,4 +99,5 @@ it as `gl::FunctionName(...)`.
 - Two passing jugglers face each other along X: juggler 1 at -X facing +X, juggler 2 at +X
   facing -X. Each juggler's hands and body are worked out in their own local space and placed
   with translation(position) * rotationY(yaw).
-- Ladder diagram: top rail = right hand, bottom rail = left hand, beat 1 thrown by the right.
+- Ladder diagram: vertical, time running down; per juggler a strip with the left hand's column
+  on the left and the right hand's on the right; beat 1 thrown by the right hand.

@@ -1,3 +1,9 @@
+* Add an edit mode that lets you start with a blank ladder and insert throws. It's how I
+  discovered the 6-club W.
+
+* We need a toggle for how clubs are colored. 
+  * Clubs that exist within a path all get the same color....
+  * Clubs that are mirrors of each other get the same color....
 * add a config that allows the user to set how many beats wide the ladder pane is (zoom)
 * add a config to choose between straight and spline lines.
 * add a config to choose a prop (clubs, balls, rings, bowling balls, and we really need
@@ -20,6 +26,7 @@
   * when paused, hovering over a club will tell you it's spin rate.
 * Provide the option to set the # of spins for different heights. I'd make this pattern-
   global. So, ALL 8s in the pattern are 2s, for example.
+* Make 1s more of a hand-across. The hands should nearly touch.
 
 * The period extend/contract can operate several ways;
   * - can do what it currently does - which I don't understand.

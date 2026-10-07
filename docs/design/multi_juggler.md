@@ -176,4 +176,7 @@ unchanged).
 
 **Delivery:** in two parts. Part 1: notation, physics, both jugglers in 3D, selection and
 framing, the pattern library, distance, undo for settings; the ladder pane shows a placeholder
-for passing patterns. Part 2: the vertical ladder with editing across both jugglers.
+for passing patterns. Part 2: the vertical ladder with editing across both jugglers, throw-value
+labels (toolbar button and V), and a draggable divider between the ladder and 3D panes.
+Same-hand throws bulge away from the middle of the juggler throwing them; a pass is identified
+only by running from one strip to the other (revisit if it gets noisy).

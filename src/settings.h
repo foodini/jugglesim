@@ -12,7 +12,9 @@
 struct AppSettings {
     ColorVisionMode colorVision = ColorVisionMode::Normal;
     PropType prop = PropType::Ball;
-    bool tempoPanelCollapsed = false;  // the juggler pane's tempo/dwell panel
+    bool tempoPanelCollapsed = false;  // the juggler pane's Tweakables panel
+    bool showThrowValues = false;      // the ladder's throw-value labels
+    float ladderFraction = 0.5f;       // the ladder pane's share of the window width
 };
 
 // Returns defaults for anything missing or unreadable.

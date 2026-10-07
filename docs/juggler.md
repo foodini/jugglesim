@@ -25,9 +25,9 @@ mid-throw. Press Space to carry on when you're done.
 
 ### The playhead
 
-The ladder shows where the juggler is with a playhead: a vertical line with a small cap on top,
-moving smoothly at the current beat. Because the pattern repeats, the same moment is also marked
-(more faintly) in every other repeat on screen; the left-most one is bright.
+The ladder shows where the juggler is with a playhead: a horizontal line with a small cap at its
+left end, moving smoothly down at the current beat. Because the pattern repeats, the same moment
+is also marked (more faintly) in every other repeat on screen; the top-most one is bright.
 
 ## The camera
 
@@ -49,18 +49,29 @@ To look around:
 Your angle and zoom are kept relative to the automatic framing, so if you switch patterns while
 looking from the side, you stay at the side and the new pattern is still framed.
 
+## Pattern names and throw values
+
+When the pattern has a name in the pattern library (yours or JuggleSim's), it's shown in the
+top-left corner of the juggler pane. It's found from the siteswap however you got there, so
+typing `51` shows "Shower", and so does editing your way to it on the ladder.
+
+With throw values on (**V**, the ladder's **3p** button or *View > Throw Values*), each prop in
+the air carries a small label with the throw it's on: `3`, `4p`, in a box edged in the prop's
+color. A held 2 is labeled while it's held.
+
 ## Two jugglers
 
 A passing pattern (see the siteswap box in [the ladder notes](ladder.md)) shows both jugglers
 facing each other, juggler 1 on the left as seen from the default camera, each with their
-number over their head. They look at their partner when nothing needs watching and follow the
+number over their head (J1, J2, as on the ladder). They look at their partner when nothing needs watching and follow the
 high throws when it does.
 
 - Balls passed to a juggler are caught where they catch their own throws. Clubs and rings are
   caught further out, about 20 cm outside the shoulder and 20 cm in front, and higher passes
   are caught higher, the way club passers reach for a pass.
 - **Click** a juggler to select them: their number turns dark-on-light and they're drawn in
-  gold. Click empty space to deselect.
+  gold. Click empty space to deselect. (Clicking a juggler's number over their strip on the
+  ladder does the same.)
 - **Double-click** a juggler (or select one and press **F**, or use *View > Frame Selected*) to
   frame just them: their hands, what they hold and their own throws (passes leave the frame).
   Double-click empty space, or use *View > Frame All*, to frame everyone again. *Home* and
