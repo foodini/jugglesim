@@ -962,28 +962,53 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
     }
 
     // Playhead: where the jugglers are now, at sub-beat resolution, plus the same moment in
-    // every other repeat of the loop that's on screen (fainter). Positioned with floats so it
-    // glides.
+    // every other repeat on screen (fainter). Positioned with floats so it glides.
+    //
+    // The repeat is how long until the ladder's colors repeat: the same prop in the same hand.
+    // Hands alternate, so an odd period takes two loops to come round; and with a color per prop,
+    // the props on an orbit take turns, so it takes as many loops as that orbit has props (all
+    // orbits at once: the least common multiple). With colors by orbit (or by path, in a
+    // sketch), only the hands matter. Spacing the copies like that means the bright one always
+    // shows the prop the jugglers are really throwing (in "3", it sweeps 6 beats, not 1).
+    //
+    // The bright copy is the one on beats 1 to `cycle`: going from beat `cycle` to the next it
+    // fades to dim over that beat while the copy coming down from beat 0 to beat 1 brightens,
+    // so there's always exactly one bright playhead and it never jumps.
     {
+        auto gcd = [](long long a, long long b) {
+            while (b != 0) {
+                const long long r = a % b;
+                a = b;
+                b = r;
+            }
+            return a;
+        };
+        auto lcm = [&](long long a, long long b) { return a / gcd(a, b) * b; };
+        long long cycle = period % 2 == 0 ? period : 2LL * period;  // hands come round
+        if (!sketch && !options.colorByOrbit) {
+            long long lapsForProps = 1;  // loops until every orbit's props are back in place
+            for (const int n : orbits.balls)
+                if (n > 1) lapsForProps = std::min(lcm(lapsForProps, n), 1000000LL);
+            cycle = lcm(cycle, static_cast<long long>(period) * lapsForProps);
+        }
+        const double repeat = static_cast<double>(std::min(cycle, 1000000LL));
         const float left = areaLeft - fontSize * 0.3f;
         const float right = stripsRight;
         const double localBeat = static_cast<double>(firstBeat);
-        const double rel = playheadBeat - localBeat;
-        // Copies at playheadBeat + k*period; draw every one that lands on screen. The top-most
-        // visible copy is the bright one, so there's always exactly one to follow.
-        const double firstCopy = playheadBeat - std::floor(rel / period) * period - period;
-        bool primaryDrawn = false;
-        for (double b = firstCopy; ; b += period) {
+        // Copies at playheadBeat + k*repeat; draw every one that lands on screen.
+        const double firstCopy = playheadBeat - std::floor((playheadBeat - localBeat) / repeat) * repeat - repeat;
+        for (double b = firstCopy; ; b += repeat) {
             const float y = y0 + static_cast<float>(b - localBeat) * beatSpacing;
             if (y > maxPt.y + 2.0f) break;
             if (y < bodyTop) continue;
-            const bool primary = !primaryDrawn;
-            primaryDrawn = true;
-            const ImU32 col = primary ? IM_COL32(255, 255, 255, 220) : IM_COL32(255, 255, 255, 90);
-            if (primary) dl->AddLine(ImVec2(left, y), ImVec2(right, y), IM_COL32(255, 255, 255, 40), 6.0f);
-            dl->AddLine(ImVec2(left, y), ImVec2(right, y), col, primary ? 2.0f : 1.0f);
+            // Brightness: 1 on beats 1..cycle (b from 0 to cycle - 1), fading in from beat 0
+            // and out past beat `cycle`, each over one beat.
+            const float w = static_cast<float>(std::clamp(std::min(b + 1.0, repeat - b), 0.0, 1.0));
+            const ImU32 col = IM_COL32(255, 255, 255, static_cast<int>(90.0f + 130.0f * w));
+            if (w > 0.0f) dl->AddLine(ImVec2(left, y), ImVec2(right, y), IM_COL32(255, 255, 255, static_cast<int>(40.0f * w)), 6.0f);
+            dl->AddLine(ImVec2(left, y), ImVec2(right, y), col, 1.0f + w);
             // A small right-pointing cap, so playhead copies can't be mistaken for beat lines.
-            const float cap = fontSize * (primary ? 0.45f : 0.35f);
+            const float cap = fontSize * (0.35f + 0.1f * w);
             dl->AddTriangleFilled(ImVec2(left - cap * 1.1f, y - cap), ImVec2(left - cap * 1.1f, y + cap),
                                   ImVec2(left + cap * 0.2f, y), col);
         }

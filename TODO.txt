@@ -1,15 +1,12 @@
-* add a config to choose between straight and spline lines.
+* add a config to choose between straight and spline lines in the ladder.
 * add a config to choose a prop (clubs, balls, rings, bowling balls, and we really need
   some completely ridiculous prop.) 
   * Birthday cake, salmon, dry ice, open 2L bottle of soda?
-* The current state of the 3D animation should be highlighted on the ladder.
 * With short periods, the read head looks pretty twitchy. It should track all the way
   across the ladder. Actually, there's a bug if it doesn't. With the pattern "3", having
   the read head reset every beat causes the ladder to not match the position of the balls.
   The read head is constantly showing the first ball (currently blue) coming out of the
   right hand, but that's clearly not a valid juggle.
-* Ballistic trails overlap with any pattern that repeats the same throws consecutively.
-  Shorten the trails when this happens.
 * Do a pass over "Recent." Should it move to the top level of File?
 * Add a trash icon next to a pattern in the menu to allow deletion? Ask for confirmation,
   of course.
@@ -18,29 +15,18 @@
   pattern may not be realistic? That specific example, if juggled perfectly, works. But,
   real jugglers are not going to have that kind of timing, targeting, and spin control. We'd
   need to specify slop parameters.
-* When spin rates differ, have the Juggler pane call this out!
-  * when paused, hovering over a club will tell you it's spin rate.
+* When spin rates differ, have the Juggler pane call this out! In spins/beat so the bpm
+  doesn't change this value.
+  * when paused, hovering over a club in the juggler pane will tell you it's spin rate.
+  * hovering over a throw in the ladder will tell you it's spin rate.
 * Provide the option to set the # of spins for different heights. I'd make this pattern-
   global. So, ALL 8s in the pattern are 2s, for example.
-* Make 1s more of a hand-across. The hands should nearly touch.
+* Make animation of 1s more of a hand-across. The hands should nearly touch.
 
 * Text editor autocomplete. If I type "<x" in the text box, the editor should fill it out 
   to "<x | ?>"
 
-* The period extend/contract can operate several ways;
-  * - can do what it currently does - which I don't understand.
-  * + can add exactly 1 beat by just adding a [period] at the end of the existing pattern
-  * + can also do what it currently does, which is effectively a ^C^V in the text editor.
-* Add the ability to delete beats. For example, deleting the 11 from 61161 should be 441.
 * Allow the user to select two hands - any two hands - and have their ins/outs swap.
-
-Distant future, after juggling animation has been implemented:
-* Have the animation update to show where the mouse is hovering on the ladder. This will be
-  ... difficult .... in 3D
-* Give the juggler some character. For high patterns, he should throw a bit wider and have
-  to shimmy to make catches. Give him a worried look, based upon how hard the pattern is.
-  Have him looking up at the peak of his juggle. When juggling massive patterns, give him
-  increasingly large biseps. 
   
   
 Easter eggs
@@ -52,3 +38,5 @@ Easter eggs
   * Pushups, burpees,
   * Shrug.
   * Stare at the camera and do a wft shrug
+  * Do a head-spin
+  

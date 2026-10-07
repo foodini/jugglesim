@@ -26,8 +26,16 @@ mid-throw. Press Space to carry on when you're done.
 ### The playhead
 
 The ladder shows where the juggler is with a playhead: a horizontal line with a small cap at its
-left end, moving smoothly down at the current beat. Because the pattern repeats, the same moment
-is also marked (more faintly) in every other repeat on screen; the top-most one is bright.
+left end, moving smoothly down at the current beat. The same moment is also marked (more faintly)
+every time the ladder's colors repeat: when the same prop is back in the same hand. Hands
+alternate, so an odd period takes two loops; and the props on an orbit take turns, so with a
+color per prop it takes as many loops as an orbit has props. In `3` that's every 6 beats, in a
+4-count every 24; with colors by orbit, only the hands matter. So the bright playhead always
+shows the prop the jugglers are really throwing.
+
+The bright playhead belongs to beats 1 up to that repeat. As it moves past the end it fades out
+over a beat, while the copy coming down from above beat 1 brightens, so there's always one
+bright playhead and it never jumps.
 
 ## The camera
 
