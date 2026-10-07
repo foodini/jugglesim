@@ -59,6 +59,13 @@ With throw values on (**V**, the ladder's **3p** button or *View > Throw Values*
 the air carries a small label with the throw it's on: `3`, `4p`, in a box edged in the prop's
 color. A held 2 is labeled while it's held.
 
+While you're sketching on the ladder (a pattern with throws not decided yet), the jugglers
+juggle what's there: props pop into a hand with a puff of glowing smoke where nothing has been
+drawn landing, and vanish in a puff where their next throw isn't decided, and hands with nothing
+to do circle empty. While you draw, they show what the pattern would be if you clicked where
+the rubber band is. See *Sketching* in [ladder.md](ladder.md). With color by orbit (**O**), the
+props are colored by orbit, as on the ladder.
+
 ## Two jugglers
 
 A passing pattern (see the siteswap box in [the ladder notes](ladder.md)) shows both jugglers

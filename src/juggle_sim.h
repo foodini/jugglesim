@@ -133,12 +133,25 @@ struct JugglerState {
     BodyMotion body;           // lookAt is in the juggler's own coordinates too
 };
 
-// Everything at a moment. Props and trails are in world coordinates.
+// A puff of glowing smoke where a prop pops into a hand or vanishes from one. That happens in
+// a sketch (a pattern with throws not decided yet): a prop thrown from a spot nothing lands in
+// appears in the hand when it would have been caught there; a prop caught in a spot whose next
+// throw isn't decided vanishes when it would have been thrown.
+struct Puff {
+    Vec3 center;          // world
+    float age = 0.0f;     // 0 (just happened) .. 1 (gone)
+    int ball = 0;         // style of the prop (its path, in a sketch)
+    bool appearing = true;
+};
+constexpr double kPuffSeconds = 0.5;
+
+// Everything at a moment. Props, trails and puffs are in world coordinates.
 struct JugglerScene {
     PropType prop = PropType::Ball;
     std::vector<JugglerState> jugglers;
     std::vector<BallState> balls;
     std::vector<Trail> trails;
+    std::vector<Puff> puffs;
 };
 
 // How much space the pattern uses (juggler-local), for framing the camera: the lowest point
@@ -162,5 +175,9 @@ float patternIntensity(const JugglingLoop& loop, const JuggleParams& params);
 
 // Evaluates the scene at `beat` (fractional; beat 0 is the right hand's first throw) for the
 // repeating loop `loop` (every juggler's throws). orbits must be computeBallOrbits(loop).
+//
+// The loop may be a sketch (some throws open, kOpenThrow): a hand with an undecided throw just
+// circles empty, props pop in and vanish (see Puff), and props are numbered by path (orbits is
+// ignored). computeSceneExtents and patternIntensity accept sketches too.
 JugglerScene evaluateScene(const JugglingLoop& loop, const BallOrbits& orbits,
                            const JuggleParams& params, double beat);

@@ -36,6 +36,9 @@
     <ClCompile Include="src\ladder_view.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\loop_ops.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
     <ClCompile Include="src\main.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -105,6 +108,9 @@
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\ladder_view.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\loop_ops.h">
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\math3d.h">

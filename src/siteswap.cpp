@@ -22,7 +22,10 @@ JugglingLoop soloLoop(const std::vector<int>& values) {
 int loopPropCount(const JugglingLoop& loop) {
     if (loop.period == 0) return 0;
     int sum = 0;
-    for (const LoopThrow& t : loop.throws) sum += t.value;
+    for (const LoopThrow& t : loop.throws) {
+        if (t.value == kOpenThrow) return 0;  // a sketch: not known yet
+        sum += t.value;
+    }
     return sum / loop.period;
 }
 
@@ -44,8 +47,12 @@ void validate(Siteswap* s) {
     const JugglingLoop& loop = s->loop;
     const int n = loop.period;
     int sum = 0;
-    for (const LoopThrow& t : loop.throws) sum += t.value;
-    if (sum % n != 0) {
+    int open = 0;
+    for (const LoopThrow& t : loop.throws) {
+        if (t.value == kOpenThrow) ++open;
+        else sum += t.value;
+    }
+    if (open == 0 && sum % n != 0) {
         if (loop.jugglers == 1)
             s->error = "Invalid: the average throw value (" + std::to_string(sum) + "/" +
                        std::to_string(n) + ") isn't a whole number.";
@@ -60,6 +67,7 @@ void validate(Siteswap* s) {
     for (int j = 0; j < loop.jugglers; ++j) {
         for (int b = 0; b < n; ++b) {
             const LoopThrow& t = loop.at(j, b);
+            if (t.value == kOpenThrow) continue;  // a sketch's open throw lands nowhere yet
             const int slot = t.dest * n + (b + t.value) % n;
             const int previous = landedFrom[static_cast<size_t>(slot)];
             if (previous >= 0) {
@@ -75,6 +83,11 @@ void validate(Siteswap* s) {
             }
             landedFrom[static_cast<size_t>(slot)] = j * n + b;
         }
+    }
+    if (open > 0) {
+        s->sketch = true;
+        s->openThrows = open;
+        return;
     }
     s->ballCount = sum / n;
     s->valid = true;
@@ -105,6 +118,8 @@ Siteswap parseVanilla(const std::string& text) {
         const int v = throwValue(ch);
         if (v >= 0) {
             s.throws.push_back(v);
+        } else if (ch == '?') {
+            s.throws.push_back(kOpenThrow);
         } else if (unsupported(ch, &s)) {
             s.throws.clear();
             return s;
@@ -159,6 +174,8 @@ Siteswap parsePassing(const std::string& text) {
             const int v = throwValue(ch);
             if (v >= 0) {
                 perJuggler[static_cast<size_t>(j)].push_back({v, j});
+            } else if (ch == '?') {
+                perJuggler[static_cast<size_t>(j)].push_back({kOpenThrow, j});
             } else if (std::tolower(ch) == 'p') {
                 if (perJuggler[static_cast<size_t>(j)].empty()) {
                     s.error = "In " + jugglerName(j) + "'s part, 'p' has to follow a throw value (3p).";
@@ -167,6 +184,10 @@ Siteswap parsePassing(const std::string& text) {
                 LoopThrow& t = perJuggler[static_cast<size_t>(j)].back();
                 if (t.value == 0) {
                     s.error = "In " + jugglerName(j) + "'s part, a 0 (an empty hand) can't be a pass.";
+                    return s;
+                }
+                if (t.value == kOpenThrow) {
+                    s.error = "In " + jugglerName(j) + "'s part, a ? (a throw not decided yet) can't be a pass.";
                     return s;
                 }
                 if (t.dest != j) {

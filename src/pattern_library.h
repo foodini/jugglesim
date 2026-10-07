@@ -45,7 +45,8 @@ struct LibraryPattern {
     std::vector<std::pair<std::string, std::string>> otherSettings;
 
     // Worked out from the siteswap. jugglers is 0 if this version can't read the siteswap
-    // (e.g. notation from a newer version): such patterns are kept but not offered.
+    // (e.g. notation from a newer version): such patterns are kept but not offered. A sketch
+    // (some throws "?") has props 0.
     int jugglers = 0;
     int props = 0;
     int period = 0;

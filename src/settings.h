@@ -14,6 +14,7 @@ struct AppSettings {
     PropType prop = PropType::Ball;
     bool tempoPanelCollapsed = false;  // the juggler pane's Tweakables panel
     bool showThrowValues = false;      // the ladder's throw-value labels
+    bool colorByOrbit = false;         // color props by orbit instead of one color each
     float ladderFraction = 0.5f;       // the ladder pane's share of the window width
 };
 

@@ -2,6 +2,7 @@
 #include "ladder_view.h"
 
 #include "draw_helpers.h"
+#include "loop_ops.h"
 #include "imgui.h"
 
 #include <algorithm>
@@ -45,8 +46,22 @@ void drawRepeatSignGlyph(ImDrawList* dl, ImVec2 min, ImVec2 max, ImU32 color) {
 
 }  // namespace
 
-LadderToolbarRequest drawLadderToolbar(const Pattern& pattern, bool patternValid,
-                                       const LadderEditState& edit, bool showValues) {
+// A small orbit: an ellipse with a prop on it.
+void drawOrbitGlyph(ImDrawList* dl, ImVec2 min, ImVec2 max, ImU32 color) {
+    const ImVec2 c((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
+    const float rx = (max.x - min.x) * 0.32f, ry = (max.y - min.y) * 0.26f;
+    dl->PathClear();
+    for (int i = 0; i <= 24; ++i) {
+        const float a = static_cast<float>(i) / 24.0f * 6.2831853f;
+        dl->PathLineTo(ImVec2(c.x + rx * std::cos(a), c.y + ry * std::sin(a)));
+    }
+    dl->PathStroke(color, 0, std::max(1.5f, (max.y - min.y) * 0.07f));
+    dl->AddCircleFilled(ImVec2(c.x + rx * 0.7071f, c.y - ry * 0.7071f), std::max(2.0f, (max.y - min.y) * 0.12f), color);
+}
+
+LadderToolbarRequest drawLadderToolbar(const JugglingLoop& loop, const LadderEditState& edit, bool showValues,
+                                       bool colorByOrbit) {
+    const bool patternValid = !loop.empty();
     LadderToolbarRequest request;
     const float h = ImGui::GetFrameHeight();
     const ImGuiStyle& style = ImGui::GetStyle();
@@ -72,9 +87,20 @@ LadderToolbarRequest drawLadderToolbar(const Pattern& pattern, bool patternValid
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Throw values (V)\n\nLabels every throw with its value: 3, 4p (a pass), ...");
 
+    // Color by orbit. Shown pressed in while on.
+    ImGui::SameLine();
+    if (colorByOrbit) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+    if (ImGui::Button("##orbits", ImVec2(h * 1.6f, h))) request.toggleOrbits = true;
+    if (colorByOrbit) ImGui::PopStyleColor();
+    drawOrbitGlyph(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                   ImGui::GetColorU32(ImGuiCol_Text));
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Color by orbit (O)\n\nOne color per orbit (the throws a group of props travels\n"
+                          "round) instead of one per prop. Sketches are always colored by path.");
+
     // Period control: write the loop out at a multiple of its shortest period.
-    const int period = patternValid ? loopPeriodBeats(pattern) : 0;
-    const int shortest = patternValid ? shortestPeriodBeats(pattern) : 0;
+    const int period = loop.period;
+    const int shortest = patternValid ? loopShortestPeriod(loop) : 0;
     const char* kPeriodHelp =
         "Loop length in beats.\n\n"
         "+ writes the loop out longer so the copies can be edited separately:\n"
@@ -174,10 +200,11 @@ void cancelLadderEdit(LadderEditState& edit) {
     edit.chain = EditChain();
     edit.hovering = false;
     edit.targeting = false;
+    edit.drawing = false;
+    edit.pathHighlight.clear();
 }
 
-LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
-                                   ColorVisionMode colorVision, LadderEditState& edit,
+LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode colorVision, LadderEditState& edit,
                                    double playheadBeat, const LadderViewOptions& options) {
     LadderEditResult result;
     const ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -198,8 +225,9 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
     dl->PushClipRect(origin, maxPt, true);
     dl->AddRectFilled(origin, maxPt, kCanvasBackground);
 
-    const JugglingLoop loop = patternValid ? patternLoop(pattern) : JugglingLoop();
-    if (loop.empty() && edit.chain.active) cancelLadderEdit(edit);
+    if (loop.empty() && (edit.chain.active || edit.drawing)) cancelLadderEdit(edit);
+    const bool sketch = !loop.empty() && openThrowCount(loop) > 0;
+    if (sketch && edit.chain.active) cancelLadderEdit(edit);  // chains need a complete pattern
     EditChain& chain = edit.chain;
     const int period = loop.period;
     const int jugglers = std::max(1, loop.jugglers);
@@ -366,17 +394,31 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
     }
 
     // The throw made from a slot. While a chain is open, its local edits are applied (and the
-    // held throw's departure reads kNoThrow).
+    // held throw's departure reads kNoThrow). In a sketch, open throws read kOpenThrow.
     auto throwAt = [&](Slot s) {
         return chain.active ? editThrowAt(chain, s) : loop.at(s.juggler, positiveMod(s.beat, period));
     };
+    auto loopSlot = [&](Slot s) { return s.juggler * period + positiveMod(s.beat, period); };
+    // Drawing stops when the spot it was drawing from has been decided some other way (undo,
+    // typing, or the sketch being completed).
+    if (edit.drawing && edit.drawEnd == HeldEnd::Arrival &&
+        loop.at(edit.drawFrom.juggler, edit.drawFrom.beat).value != kOpenThrow)
+        edit.drawing = false;
+    if (edit.drawing && edit.drawEnd == HeldEnd::Departure && loopIncoming(loop)[static_cast<size_t>(loopSlot(edit.drawTo))] >= 0)
+        edit.drawing = false;  // something lands in drawTo again (undo, typing)
 
-    // ---- Ball identity (for colors) ----------------------------------------------------------
-    // In a repeating pattern each ball follows a fixed cycle ("orbit") through the loop's
-    // throws, so a throw's ball can be worked out from its slot alone. Ids therefore don't
-    // depend on what part of the ladder is on screen, and scrolling never recolors anything.
-    const BallOrbits orbits = computeBallOrbits(loop);
+    // ---- Prop identity (for colors) ----------------------------------------------------------
+    // In a repeating pattern each prop follows a fixed cycle through the loop's throws, so a
+    // throw's prop can be worked out from its slot alone. Ids therefore don't depend on what
+    // part of the ladder is on screen, and scrolling never recolors anything. With "color by
+    // orbit", every prop on the same orbit shares its orbit's style. A sketch has no definite
+    // props yet: its throws are colored by path.
+    const BallOrbits orbits = sketch ? BallOrbits() : computeBallOrbits(loop);
+    const LoopOrbits loopOrbits = computeLoopOrbits(loop);
     const int totalBalls = orbits.totalBalls;
+    const std::vector<int> orbitOfBall =
+        (!sketch && options.colorByOrbit) ? orbitOfEachBall(loop, orbits, loopOrbits)
+                                          : std::vector<int>(static_cast<size_t>(std::max(0, totalBalls)), 0);
 
     // While a chain is open, follow the balls through the edit: start well before anything the
     // chain touched (where the pattern is unedited, so orbit ids apply), and track landings
@@ -429,9 +471,16 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         std::map<Slot, int>::const_iterator it = chainBallOf.find(s);
         return it != chainBallOf.end() ? it->second : -1;
     };
+    // The ball style for the throw made from a slot.
+    auto styleAt = [&](Slot s) {
+        if (sketch) return std::max(0, loopOrbits.idAt(s.juggler, s.beat));
+        const int ball = std::max(0, ballAt(s));
+        return options.colorByOrbit && ball < totalBalls ? orbitOfBall[static_cast<size_t>(ball)] : ball;
+    };
     if (chain.active) {
         const Slot heldFrom = chain.end == HeldEnd::Arrival ? chain.fixed : chain.hole;
-        edit.heldBall = chain.held.value == 0 ? -1 : ballAt(heldFrom);
+        const int ball = chain.held.value == 0 ? -1 : ballAt(heldFrom);
+        edit.heldBall = ball < 0 ? -1 : (options.colorByOrbit && ball < totalBalls ? orbitOfBall[static_cast<size_t>(ball)] : ball);
     }
 
     // The throws drawn this frame, including throws made above the top edge that are still in
@@ -442,9 +491,12 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
             const Slot s{j, b};
             const LoopThrow t = throwAt(s);
             if (t.value <= 0 || b + t.value < bFirst) continue;
-            drawn.push_back({s, t, std::max(0, ballAt(s)), throwCurve(s, t)});
+            drawn.push_back({s, t, styleAt(s), throwCurve(s, t)});
         }
     }
+    // In a sketch: which spots nothing lands in yet.
+    const std::vector<int> incoming = sketch ? loopIncoming(loop) : std::vector<int>();
+    auto nothingLandsIn = [&](Slot s) { return sketch && incoming[static_cast<size_t>(loopSlot(s))] < 0; };
 
     // ---- Interaction -------------------------------------------------------------------------
     const float hitRadius = std::max(6.0f, fontSize * 0.5f);
@@ -476,9 +528,32 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
             return best;
         return HitResult();
     };
+    // The slot point nearest the mouse among those on screen.
+    auto nearestSlot = [&](float* distance) {
+        Slot nearest;
+        float nearestD = 1e9f;
+        for (int b = bFirst; b <= bLast; ++b) {
+            for (int j = 0; j < jugglers; ++j) {
+                const Slot s{j, b};
+                const ImVec2 p = slotPoint(s);
+                const float dd = std::hypot(p.x - mouse.x, p.y - mouse.y);
+                if (dd < nearestD) {
+                    nearestD = dd;
+                    nearest = s;
+                }
+            }
+        }
+        *distance = nearestD;
+        return nearest;
+    };
 
-    if (canvasHovered && (rightClicked || ImGui::IsKeyPressed(ImGuiKey_Escape)) && chain.active)
-        cancelLadderEdit(edit);
+    const bool escapePressed = ImGui::IsKeyPressed(ImGuiKey_Escape) && !ImGui::GetIO().WantTextInput;
+    if (chain.active && ((canvasHovered && rightClicked) || (canvasHovered && escapePressed))) cancelLadderEdit(edit);
+    bool justStopped = false;  // the right-click that stopped drawing doesn't also open a menu
+    if (edit.drawing && ((canvasHovered && rightClicked) || escapePressed)) {
+        edit.drawing = false;
+        justStopped = true;
+    }
 
     // Strip headers: with several jugglers, clicking one selects that juggler (clicking the
     // selected one deselects).
@@ -490,7 +565,7 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         *max = ImVec2(cx + w * 0.5f, top + fontSize * 1.3f);
     };
     int hoverHeader = -1;
-    if (jugglers > 1 && canvasHovered && !chain.active) {
+    if (jugglers > 1 && canvasHovered && !chain.active && !edit.drawing) {
         for (int j = 0; j < jugglers; ++j) {
             ImVec2 a, b;
             jugglerHeaderRect(j, &a, &b);
@@ -506,13 +581,38 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
     HeldEnd hoverEnd = HeldEnd::Arrival;
     bool hoverZero = false;  // an empty beat (0) under the mouse...
     Slot hoverZeroSlot;      // ...here
-    // Holding: which slot would a click drop the held end on?
+    bool hoverOpen = false;  // a sketch's open throw ("?") under the mouse...
+    Slot hoverOpenSlot;      // ...here
+    // Holding (or drawing): which slot would a click drop the held end on?
     bool haveTarget = false;
     Slot target;
 
-    if (canvasHovered && inBody && !chain.active) {
-        const HitResult hit = pickThrow([&](const DrawnThrow& d, float t) {
-            const HeldEnd e = t < 0.5f ? HeldEnd::Departure : HeldEnd::Arrival;
+    if (canvasHovered && inBody && !chain.active && !edit.drawing) {
+        // Empty beats (0s) can be picked up too (they "land" on their own beat), and in a
+        // sketch, open throws ("?") are where drawing starts. Right on one of those points, it
+        // wins over the curves passing by.
+        {
+            float bestD = fontSize * 0.6f;
+            for (int b = bFirst; b <= bLast; ++b) {
+                for (int j = 0; j < jugglers; ++j) {
+                    const Slot s{j, b};
+                    const int v = throwAt(s).value;
+                    if (v != 0 && !(sketch && v == kOpenThrow)) continue;
+                    const ImVec2 p = slotPoint(s);
+                    const float d = std::hypot(p.x - mouse.x, p.y - mouse.y);
+                    if (d < bestD) {
+                        bestD = d;
+                        hoverZero = v == 0;
+                        hoverOpen = v == kOpenThrow;
+                        hoverZeroSlot = hoverOpenSlot = s;
+                    }
+                }
+            }
+        }
+        // The half of a throw nearest the mouse is the end a click picks up: its catch, or its
+        // throw (where it leaves from).
+        const HitResult hit = (hoverZero || hoverOpen) ? HitResult() : pickThrow([&](const DrawnThrow& d, float t) {
+            const HeldEnd e = t >= 0.5f ? HeldEnd::Arrival : HeldEnd::Departure;
             return edit.hovering && d.from == edit.hoverSlot && e == edit.hoverEnd;
         }, [](float) { return true; });
         if (hit.index >= 0) {
@@ -523,33 +623,96 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
                 hoverEnd = edit.hoverEnd;
             else
                 hoverEnd = hit.t < 0.5f ? HeldEnd::Departure : HeldEnd::Arrival;
-        } else {
-            // Empty beats can be picked up too (they "land" on their own beat).
-            float bestD = fontSize * 0.6f;
-            for (int b = bFirst; b <= bLast; ++b) {
-                for (int j = 0; j < jugglers; ++j) {
-                    const Slot s{j, b};
-                    if (throwAt(s).value != 0) continue;
-                    const ImVec2 p = slotPoint(s);
-                    const float d = std::hypot(p.x - mouse.x, p.y - mouse.y);
-                    if (d < bestD) {
-                        bestD = d;
-                        hoverZero = true;
-                        hoverZeroSlot = s;
-                    }
-                }
-            }
         }
         edit.hovering = hoverIndex >= 0;
         if (edit.hovering) edit.hoverSlot = drawn[static_cast<size_t>(hoverIndex)].from;
         edit.hoverEnd = hoverEnd;
 
-        if (leftClicked && hoverIndex >= 0) {
+        if (leftClicked && sketch && (hoverIndex >= 0 || hoverZero)) {
+            // In a sketch, picking up a throw takes it out (its spot becomes "?"), to be drawn
+            // again: by its catch, from where it was thrown to wherever it should land; by its
+            // throw, from wherever it should leave to where it lands.
+            const Slot from = hoverIndex >= 0 ? drawn[static_cast<size_t>(hoverIndex)].from : hoverZeroSlot;
+            const LoopThrow t = throwAt(from);
+            result.committed = true;
+            result.loop = deleteThrow(loop, loopSlot(from));
+            result.startedDrawing = true;
+            edit.drawing = true;
+            edit.drawEnd = (hoverIndex >= 0 && hoverEnd == HeldEnd::Departure) ? HeldEnd::Departure : HeldEnd::Arrival;
+            edit.drawFrom = from;
+            edit.drawTo = landingSlot(from, t);
+        } else if (leftClicked && hoverOpen) {
+            result.startedDrawing = true;
+            edit.drawing = true;
+            edit.drawEnd = HeldEnd::Arrival;
+            edit.drawFrom = hoverOpenSlot;
+        } else if (leftClicked && hoverIndex >= 0) {
             chain = beginEditChain(loop, drawn[static_cast<size_t>(hoverIndex)].from, hoverEnd);
             result.startedChain = true;
         } else if (leftClicked && hoverZero) {
             chain = beginEditChain(loop, hoverZeroSlot, HeldEnd::Arrival);
             result.startedChain = true;
+        }
+    } else if (canvasHovered && inBody && edit.drawing && edit.drawEnd == HeldEnd::Departure) {
+        // Holding a throw by its start: the nearest spot within snapping distance is where it
+        // would be thrown from (it still lands in drawTo).
+        float nearestD = 0.0f;
+        const Slot nearest = nearestSlot(&nearestD);
+        if (nearestD <= snapRadius && drawnThrowFor(nearest, edit.drawTo, nullptr)) {
+            haveTarget = true;
+            target = nearest;
+        }
+        if (haveTarget && !leftClicked) {
+            bool displacedAny = false;
+            Slot displacedLanding;
+            result.hasPreview = rethrowFrom(loop, target, edit.drawTo, &result.preview, &displacedAny, &displacedLanding);
+        }
+        if (leftClicked && haveTarget && !result.startedDrawing) {
+            JugglingLoop changed;
+            bool displacedAny = false;
+            Slot displacedLanding;
+            if (rethrowFrom(loop, target, edit.drawTo, &changed, &displacedAny, &displacedLanding)) {
+                result.committed = true;
+                result.loop = changed;
+                // A throw that was already leaving from there now needs a new spot to leave from.
+                if (displacedAny) edit.drawTo = displacedLanding;
+                else edit.drawing = false;
+                haveTarget = false;
+            }
+        }
+    } else if (canvasHovered && inBody && edit.drawing) {
+        // Drawing: the nearest spot within snapping distance is where the prop would land.
+        float nearestD = 0.0f;
+        const Slot nearest = nearestSlot(&nearestD);
+        if (nearestD <= snapRadius && drawnThrowFor(edit.drawFrom, nearest, nullptr)) {
+            haveTarget = true;
+            target = nearest;
+        }
+        if (haveTarget && !leftClicked) {
+            // Show the jugglers what this would be.
+            bool displacedAny = false;
+            Slot displaced;
+            result.hasPreview = drawThrow(loop, edit.drawFrom, target, &result.preview, &displacedAny, &displaced);
+        }
+        if (leftClicked && haveTarget && !result.startedDrawing) {
+            JugglingLoop drawnLoop;
+            bool displacedAny = false;
+            Slot displaced;
+            if (drawThrow(loop, edit.drawFrom, target, &drawnLoop, &displacedAny, &displaced)) {
+                result.committed = true;
+                result.loop = drawnLoop;
+                // Carry on: with a prop that lost its spot, it needs a new home first; otherwise
+                // the prop just caught is thrown next, unless that throw is already drawn (the
+                // path joins one that exists, or closes on itself).
+                if (displacedAny) {
+                    edit.drawFrom = displaced;
+                } else if (drawnLoop.at(target.juggler, positiveMod(target.beat, period)).value == kOpenThrow) {
+                    edit.drawFrom = target;
+                } else {
+                    edit.drawing = false;
+                }
+                haveTarget = false;
+            }
         }
     } else if (canvasHovered && inBody && chain.active) {
         // Near a slot's point, that slot is the target: several curves meet there, and the
@@ -558,19 +721,8 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         // departure), and failing that the nearest slot within snapping distance.
         const bool arrivalMode = chain.end == HeldEnd::Arrival;
         const float pointPriorityRadius = fontSize * 0.9f;
-        Slot nearest;
-        float nearestD = 1e9f;
-        for (int b = bFirst; b <= bLast; ++b) {
-            for (int j = 0; j < jugglers; ++j) {
-                const Slot s{j, b};
-                const ImVec2 p = slotPoint(s);
-                const float dd = std::hypot(p.x - mouse.x, p.y - mouse.y);
-                if (dd < nearestD) {
-                    nearestD = dd;
-                    nearest = s;
-                }
-            }
-        }
+        float nearestD = 0.0f;
+        const Slot nearest = nearestSlot(&nearestD);
         if (nearestD <= pointPriorityRadius) {
             haveTarget = true;
             target = nearest;
@@ -611,6 +763,34 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         edit.targeting = false;
     }
 
+    // Right-click (when not editing): a menu for the throw under the mouse, or else for the
+    // beat line nearest the mouse.
+    const char* kContextMenu = "##ladder_context";
+    if (canvasHovered && inBody && rightClicked && !chain.active && !edit.drawing && !justStopped &&
+        !result.startedChain && !result.startedDrawing) {
+        // The nearest curve within reach (no "clearly nearest" rule here: the menu names the
+        // throw it's for).
+        int nearestThrow = -1;
+        float nearestThrowD = hitRadius;
+        for (int i = 0; i < static_cast<int>(drawn.size()); ++i) {
+            const Curve& c = drawn[static_cast<size_t>(i)].curve;
+            float t = 0.0f;
+            const float d = bezierDistance(c.p0, c.c1, c.c2, c.p1, mouse, &t);
+            if (d <= nearestThrowD) {
+                nearestThrowD = d;
+                nearestThrow = i;
+            }
+        }
+        if (nearestThrow >= 0) {
+            edit.context = LadderEditState::Context::Throw;
+            edit.contextSlot = drawn[static_cast<size_t>(nearestThrow)].from;
+        } else {
+            edit.context = LadderEditState::Context::Beat;
+            edit.contextBeat = static_cast<int>(std::lround(firstBeat + (mouse.y - y0) / beatSpacing));
+        }
+        ImGui::OpenPopup(kContextMenu);
+    }
+
     // ---- Drawing -----------------------------------------------------------------------------
     const float thickness = 2.5f;
     const float arrowSize = fontSize * 0.55f;
@@ -625,6 +805,19 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         drawBezierArrowHead(dl, c.p0, c.c1, c.c2, c.p1, style.color, arrowSize, markerRadius + 3.0f);
     }
 
+    // A path picked out (hovering "Delete path" in the menu): every throw on it glows.
+    if (!edit.pathHighlight.empty()) {
+        for (const DrawnThrow& d : drawn) {
+            if (std::find(edit.pathHighlight.begin(), edit.pathHighlight.end(), loopSlot(d.from)) ==
+                edit.pathHighlight.end())
+                continue;
+            const Curve& c = d.curve;
+            const float pulse = 0.6f + 0.4f * std::sin(time * 5.0f);
+            dl->AddBezierCubic(c.p0, c.c1, c.c2, c.p1, mixColor(ballStyle(colorVision, d.ball).color, white, 0.5f, 0.45f * pulse),
+                               thickness + 6.0f);
+        }
+    }
+
     // Idle hover highlight: just the throw under the mouse.
     if (hoverIndex >= 0) {
         const DrawnThrow& h = drawn[static_cast<size_t>(hoverIndex)];
@@ -632,7 +825,7 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         drawBezierHalfHighlight(dl, c.p0, c.c1, c.c2, c.p1, hoverEnd == HeldEnd::Departure,
                                 ballStyle(colorVision, h.ball).color, 1.0f);
     }
-    if (hoverZero)
+    if (hoverZero || hoverOpen)
         dl->AddCircle(slotPoint(hoverZeroSlot), 9.0f, mixColor(ghostColor, white, 0.5f, 0.9f), 0, 2.0f);
 
     // Holding: the empty spot(s), the rubber band and its repeats.
@@ -726,6 +919,48 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         }
     }
 
+    // Drawing in a sketch: faint rings on the spots nothing lands in yet (where the prop can be
+    // caught without displacing anything), and the rubber band from the open throw.
+    if (edit.drawing) {
+        const bool byStart = edit.drawEnd == HeldEnd::Departure;
+        // The path being drawn takes the color of whatever lands in its starting spot (or, when
+        // holding a throw by its start, of the path it lands on); a new path gets a new color.
+        int pathStyle = loopOrbits.count;
+        if (byStart) {
+            const int next = loopOrbits.idAt(edit.drawTo.juggler, edit.drawTo.beat);
+            if (next >= 0) pathStyle = next;
+        } else {
+            const int into = incoming[static_cast<size_t>(loopSlot(edit.drawFrom))];
+            if (into >= 0) pathStyle = std::max(0, loopOrbits.idAt(into / period, into % period));
+        }
+        const BallStyle style = ballStyle(colorVision, pathStyle);
+        // Faint rings on the spots it can go without displacing anything: spots nothing lands
+        // in yet (holding a catch), or undecided throws (holding a throw by its start).
+        for (int b = bFirst; b <= bLast; ++b) {
+            for (int j = 0; j < jugglers; ++j) {
+                const Slot s{j, b};
+                const bool free = byStart ? (throwAt(s).value == kOpenThrow && drawnThrowFor(s, edit.drawTo, nullptr))
+                                          : (nothingLandsIn(s) && drawnThrowFor(edit.drawFrom, s, nullptr));
+                if (!free) continue;
+                dl->AddCircle(slotPoint(s), markerRadius + 4.0f, mixColor(style.color, kCanvasBackground, 0.3f, 0.55f),
+                              0, 1.5f);
+            }
+        }
+        Curve c;
+        if (haveTarget) {
+            LoopThrow t;
+            const Slot from = byStart ? target : edit.drawFrom;
+            drawnThrowFor(from, byStart ? edit.drawTo : target, &t);
+            c = throwCurve(from, t);
+        } else {
+            c = byStart ? looseCurve(mouse, slotPoint(edit.drawTo)) : looseCurve(slotPoint(edit.drawFrom), mouse);
+        }
+        drawHeldThrowEffects(dl, c.p0, c.c1, c.c2, c.p1, style.color, time, 1.0f);
+        drawStyledBezier(dl, c.p0, c.c1, c.c2, c.p1, style.color, thickness + 0.5f, style.dash, dashUnit);
+        if (haveTarget || byStart) drawBezierArrowHead(dl, c.p0, c.c1, c.c2, c.p1, style.color, arrowSize, markerRadius + 3.0f);
+        if (!haveTarget) dl->AddCircleFilled(byStart ? c.p0 : c.p1, 4.0f, mixColor(style.color, white, 0.5f, 0.9f));
+    }
+
     // Playhead: where the jugglers are now, at sub-beat resolution, plus the same moment in
     // every other repeat of the loop that's on screen (fainter). Positioned with floats so it
     // glides.
@@ -755,17 +990,34 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
     }
 
     // Departure markers on top, ringed in the background color so they stay readable where
-    // curves cross them. Empty beats get a small hollow circle.
+    // curves cross them. Empty beats get a small hollow circle. In a sketch, an open throw is a
+    // "?" in a dashed ring, and a spot nothing lands in gets a notch above it (so the two kinds
+    // of open spot read without color).
     for (int b = bFirst; b <= bLast; ++b) {
         for (int j = 0; j < jugglers; ++j) {
             const Slot s{j, b};
             const LoopThrow t = throwAt(s);
             const ImVec2 p0 = slotPoint(s);
-            if (t.value == 0) {
+            if (t.value == kOpenThrow && sketch && !(edit.drawing && edit.drawEnd == HeldEnd::Arrival && s == edit.drawFrom)) {
+                const float r = markerRadius + 1.0f;
+                dl->AddCircleFilled(p0, r + 1.0f, kCanvasBackground);
+                for (int k = 0; k < 8; ++k) {  // dashed ring
+                    const float a0 = static_cast<float>(k) * 0.785398f, a1 = a0 + 0.45f;
+                    dl->PathArcTo(p0, r, a0, a1, 4);
+                    dl->PathStroke(textCol, 0, 1.5f);
+                }
+                const ImVec2 qs = ImGui::CalcTextSize("?");
+                dl->AddText(ImVec2(p0.x - qs.x * 0.5f, p0.y - qs.y * 0.5f), textCol, "?");
+            } else if (t.value == 0) {
                 dl->AddCircle(p0, fontSize * 0.25f, dimText, 0, 1.5f);
             } else if (t.value > 0) {
-                const BallStyle style = ballStyle(colorVision, std::max(0, ballAt(s)));
+                const BallStyle style = ballStyle(colorVision, styleAt(s));
                 drawMarker(dl, p0, markerRadius, style.shape, style.color, 2.0f, kCanvasBackground);
+            }
+            if (nothingLandsIn(s)) {
+                const float r = markerRadius + 3.0f;
+                dl->AddTriangle(ImVec2(p0.x - r * 0.45f, p0.y - r - 5.0f), ImVec2(p0.x + r * 0.45f, p0.y - r - 5.0f),
+                                ImVec2(p0.x, p0.y - r + 1.0f), textCol, 1.5f);
             }
         }
     }
@@ -774,9 +1026,8 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         const bool ghost = edit.heldBall < 0;
         const BallStyle heldStyle = ghost ? BallStyle{ghostColor, MarkerShape::Circle, DashPattern::ShortDash}
                                           : ballStyle(colorVision, edit.heldBall);
-        Slot from;
         if (chain.end == HeldEnd::Arrival || haveTarget) {
-            from = chain.end == HeldEnd::Arrival ? chain.fixed : target;
+            const Slot from = chain.end == HeldEnd::Arrival ? chain.fixed : target;
             drawMarker(dl, slotPoint(from), markerRadius + 1.0f, heldStyle.shape, heldStyle.color, 2.0f,
                        kCanvasBackground);
         }
@@ -803,14 +1054,16 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
     }
 
     // Tooltip describing what a click would do.
+    auto describeThrow = [&](const LoopThrow& t, int thrower) {
+        std::string what = "Becomes a " + throwLabel(t, thrower, jugglers);
+        if (t.dest != thrower) what += " (a pass to J" + std::to_string(t.dest + 1) + ")";
+        return what + ".";
+    };
     if (chain.active && haveTarget) {
         LoopThrow t;
         Slot from;
         editDropThrow(chain, target, &t, &from);
-        const std::string name = throwLabel(t, from.juggler, jugglers);
-        std::string what = "Becomes a " + name;
-        if (t.dest != from.juggler) what += " (a pass to J" + std::to_string(t.dest + 1) + ")";
-        what += ".";
+        const std::string what = describeThrow(t, from.juggler);
         const int closeLength = editCloseLoopLength(chain, target, shiftHeld);
         const int wouldBeLength = editCloseLoopLengthUnlimited(chain, target, shiftHeld);
         const int copyLength = (!shiftHeld && target != chain.hole) ? editCloseLoopLength(chain, target, true) : 0;
@@ -837,6 +1090,126 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         } else {
             ImGui::SetTooltip("%s Picks up the throw that was here.", what.c_str());
         }
+    } else if (edit.drawing && haveTarget && edit.drawEnd == HeldEnd::Departure) {
+        LoopThrow t;
+        drawnThrowFor(target, edit.drawTo, &t);
+        const std::string what = describeThrow(t, target.juggler);
+        if (throwAt(target).value == kOpenThrow || throwAt(target).value == kNoThrow)
+            ImGui::SetTooltip("%s Thrown from here: done.", what.c_str());
+        else
+            ImGui::SetTooltip("%s Something is already thrown from here: you'll pick it up\n"
+                              "and find it a new spot to be thrown from next.", what.c_str());
+    } else if (edit.drawing && haveTarget) {
+        LoopThrow t;
+        drawnThrowFor(edit.drawFrom, target, &t);
+        const std::string what = describeThrow(t, edit.drawFrom.juggler);
+        const int targetSlot = loopSlot(target);
+        const bool taken = incoming[static_cast<size_t>(targetSlot)] >= 0;
+        const bool continues = loop.throws[static_cast<size_t>(targetSlot)].value == kOpenThrow || target == edit.drawFrom;
+        if (taken)
+            ImGui::SetTooltip("%s Something already lands here: you'll pick it up\n"
+                              "and find it a new home next.", what.c_str());
+        else if (continues)
+            ImGui::SetTooltip("%s Then click where it goes next (Esc stops).", what.c_str());
+        else
+            ImGui::SetTooltip("%s Joins the path that carries on from here: done.", what.c_str());
+    } else if (hoverOpen && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        ImGui::SetTooltip("Not decided yet. Click to draw a throw from here.");
+    } else if (sketch && hoverIndex >= 0 && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        ImGui::SetTooltip("Click to draw this throw again.\nRight-click to delete it or its whole path.");
+    }
+
+    // The right-click menu.
+    if (ImGui::BeginPopup(kContextMenu)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
+        std::vector<int> highlight;
+        auto reasonTooltip = [](const std::string& text) {
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled) && !text.empty())
+                ImGui::SetTooltip("%s", text.c_str());
+        };
+        if (edit.context == LadderEditState::Context::Throw) {
+            const int slot = loopSlot(edit.contextSlot);
+            const LoopThrow t = loop.throws[static_cast<size_t>(slot)];
+            ImGui::TextDisabled("J%d's %s on beat %d", edit.contextSlot.juggler + 1,
+                                throwLabel(t, edit.contextSlot.juggler, jugglers).c_str(), edit.contextSlot.beat + 1);
+            ImGui::Separator();
+            if (ImGui::MenuItem("Delete throw")) {
+                result.committed = true;
+                result.loop = deleteThrow(loop, slot);
+            }
+            reasonTooltip("Leaves the throw undecided (?), to be drawn again.");
+            if (ImGui::MenuItem("Delete path")) {
+                result.committed = true;
+                result.loop = deletePath(loop, slot);
+            }
+            if (ImGui::IsItemHovered()) {
+                highlight = loopPathSlots(loop, slot);
+                ImGui::SetTooltip("Leaves every throw on this path undecided (%d throw%s).",
+                                  static_cast<int>(highlight.size()), highlight.size() == 1 ? "" : "s");
+            }
+        } else {
+            const int beat = edit.contextBeat;
+            ImGui::TextDisabled("Beat %d", beat + 1);
+            ImGui::Separator();
+            auto insertItem = [&](const char* label, int before, int count) {
+                JugglingLoop changed;
+                std::string why;
+                const bool ok = insertBeats(loop, before, count, &changed, &why);
+                if (ImGui::MenuItem(label, nullptr, false, ok)) {
+                    result.committed = true;
+                    result.loop = changed;
+                }
+                std::string text;
+                if (!ok) {
+                    text = "Can't: " + why;
+                } else {
+                    std::string newText;
+                    loopToText(changed, &newText);
+                    text = "Throws in the air across the new beat" + std::string(count == 1 ? "" : "s") +
+                           " get longer; the new beat" + (count == 1 ? " is" : "s are") + " empty (0).\nResult: " + newText;
+                    if (count % 2 == 1) text += "\nSwaps left and right hands for the rest of the loop.";
+                }
+                reasonTooltip(text);
+            };
+            auto deleteItem = [&](const char* label, int first, int count) {
+                JugglingLoop changed;
+                std::string why;
+                int removed = 0;
+                const bool ok = deleteBeats(loop, first, count, &changed, &why, &removed);
+                if (ImGui::MenuItem(label, nullptr, false, ok)) {
+                    result.committed = true;
+                    result.loop = changed;
+                }
+                std::string text;
+                if (!ok) {
+                    text = "Can't: " + why;
+                } else {
+                    std::string newText;
+                    loopToText(changed, &newText);
+                    text = "A prop caught on a deleted beat goes straight on to its next throw.\nResult: " + newText;
+                    if (removed > 0)
+                        text += "\nRemoves " + std::to_string(removed) + " prop" + (removed == 1 ? "" : "s") +
+                                " (their whole route was on the deleted beat" + (count == 1 ? ")." : "s).");
+                    if (count % 2 == 1) text += "\nSwaps left and right hands for the rest of the loop.";
+                }
+                reasonTooltip(text);
+            };
+            insertItem("Add a beat above", beat, 1);
+            insertItem("Add two beats above", beat, 2);
+            insertItem("Add a beat below", beat + 1, 1);
+            insertItem("Add two beats below", beat + 1, 2);
+            ImGui::Separator();
+            deleteItem("Delete this beat", beat, 1);
+            deleteItem("Delete this beat and the next", beat, 2);
+        }
+        edit.pathHighlight = highlight;
+        ImGui::EndPopup();
+    } else {
+        edit.pathHighlight.clear();
+    }
+    if (result.committed && result.loop.period > kMaxLoopBeats) {
+        result.committed = false;  // too long to keep: refuse quietly (the menu said the result)
+        result.loop = JugglingLoop();
     }
 
     dl->PopClipRect();  // the body
@@ -849,25 +1222,47 @@ LadderEditResult drawLadderDiagram(const Pattern& pattern, bool patternValid,
         else if (chain.active)
             header = "Holding a throw: click where it should be thrown from. "
                      "Esc or right-click cancels.";
-        else
-            header = std::to_string(ballCount(pattern)) + " props, period " + std::to_string(period) +
+        else if (edit.drawing && edit.drawEnd == HeldEnd::Departure)
+            header = "Holding a throw by its start: click where it should be thrown from. Esc or right-click stops.";
+        else if (edit.drawing)
+            header = "Drawing: click where the prop is caught next. Esc or right-click stops.";
+        else if (sketch) {
+            const int open = openThrowCount(loop);
+            header = "Sketch: " + std::to_string(open) + " throw" + (open == 1 ? "" : "s") +
+                     " not decided yet (?). Click one to draw from it.";
+        } else
+            header = std::to_string(loopPropCount(loop)) + " props, period " + std::to_string(period) +
                      ".  Click near either end of a throw to edit it.";
         dl->AddText(ImVec2(origin.x + margin, origin.y + margin * 0.5f),
-                    chain.active ? textCol : dimText, header.c_str());
+                    (chain.active || edit.drawing) ? textCol : dimText, header.c_str());
     }
 
-    // Legend: one sample per ball, so identity never depends on color alone.
+    // Legend: one sample per prop (or per orbit, or per path in a sketch), so identity never
+    // depends on color alone.
     {
         float x = origin.x + margin;
         const float y = origin.y + margin * 0.5f + fontSize * 1.9f;
         const float sampleLength = fontSize * 2.6f;
-        for (int ball = 0; ball < totalBalls; ++ball) {
-            const BallStyle style = ballStyle(colorVision, ball);
+        const bool byOrbit = sketch || options.colorByOrbit;
+        const int entries = byOrbit ? loopOrbits.count : totalBalls;
+        for (int i = 0; i < entries; ++i) {
+            const BallStyle style = ballStyle(colorVision, i);
+            std::string label = std::to_string(i + 1);
+            if (byOrbit && !sketch) {
+                const int props = loopOrbits.propsOfOrbit[static_cast<size_t>(i)];
+                label = "orbit " + label + " (" + std::to_string(props) + ")";
+            } else if (sketch) {
+                label = "path " + label;
+            }
+            const float width = markerRadius + sampleLength + fontSize * 0.3f + ImGui::CalcTextSize(label.c_str()).x;
+            if (x + width > maxPt.x - margin && i > 0) {
+                dl->AddText(ImVec2(x, y - fontSize * 0.5f), textCol, "...");
+                break;
+            }
             const ImVec2 a(x + markerRadius, y);
             const ImVec2 b(x + markerRadius + sampleLength, y);
             drawStyledLine(dl, a, b, style.color, thickness, style.dash, dashUnit);
             drawMarker(dl, a, markerRadius, style.shape, style.color, 2.0f, kCanvasBackground);
-            const std::string label = std::to_string(ball + 1);
             dl->AddText(ImVec2(b.x + fontSize * 0.3f, y - fontSize * 0.5f), textCol, label.c_str());
             x = b.x + fontSize * 0.3f + ImGui::CalcTextSize(label.c_str()).x + fontSize * 1.0f;
         }

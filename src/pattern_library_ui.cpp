@@ -85,7 +85,10 @@ std::string groupHeading(const LibraryPattern& p, int fromLevel, bool withJuggle
         std::snprintf(part, sizeof(part), "%d juggler%s", p.jugglers, p.jugglers == 1 ? "" : "s");
         heading += part;
     }
-    if (fromLevel <= kPropsLevel) {
+    if (fromLevel <= kPropsLevel && p.props == 0) {
+        std::snprintf(part, sizeof(part), "%ssketches", heading.empty() ? "" : ", ");
+        heading += part;
+    } else if (fromLevel <= kPropsLevel) {
         std::snprintf(part, sizeof(part), "%s%d prop%s", heading.empty() ? "" : ", ", p.props, p.props == 1 ? "" : "s");
         heading += part;
     }
@@ -125,6 +128,8 @@ std::string levelLabel(int level, int key, int count) {
     char label[64];
     if (level == kJugglerLevel)
         std::snprintf(label, sizeof(label), "%d Juggler%s (%d)", key, key == 1 ? "" : "s", count);
+    else if (level == kPropsLevel && key == 0)
+        std::snprintf(label, sizeof(label), "Sketches (%d)", count);
     else if (level == kPropsLevel)
         std::snprintf(label, sizeof(label), "%d Prop%s (%d)", key, key == 1 ? "" : "s", count);
     else

@@ -180,3 +180,23 @@ for passing patterns. Part 2: the vertical ladder with editing across both juggl
 labels (toolbar button and V), and a draggable divider between the ladder and 3D panes.
 Same-hand throws bulge away from the middle of the juggler throwing them; a pass is identified
 only by running from one strip to the other (revisit if it gets noisy).
+
+## Sketching, beats and orbits (done after milestone 1)
+
+- Sketches: loops with open throws ("?", our own text extension, saved as-is). A sketch never
+  has two throws landing in one spot; it's only incomplete. Drawing is click-click: each click
+  places a throw and the rubber band continues as that prop's next throw; it auto-stops on
+  joining a drawn path or closing an orbit; Esc stops. Dropping on a spot something already
+  lands in displaces that throw, which becomes the one being drawn (like siteswap editing).
+  One undo step per throw. Right-click a throw: Delete throw / Delete path (path highlighted).
+- Beats: right-click a beat line to add 1 or 2 beats above/below or delete 1 or 2 (two keeps
+  hands; one swaps them for the rest of the loop). Applies at every repeat.
+- Color by orbit (standard siteswap orbits, spots mod the period). Symmetry/role coloring
+  (which would group 3-count's self clubs too) is still later.
+- File > New Pattern... (a blank sketch); File > New Performance... waits for sequence mode.
+- Sketches are animated live (no more "last complete pattern, dimmed"): open throws are empty
+  hands that circle; props pop in / vanish with puffs of glowing smoke; while drawing, the
+  jugglers preview the throw under the rubber band. Playback keeps running while drawing.
+- Next idea (own round): the rubber-banded prop thrown "wild" toward where the mouse is when
+  playback reaches it, landing on the floor; jugglers look at it, then (if their neck allows)
+  at the camera, shaking their heads. Later still: idle animations for long-empty hands.

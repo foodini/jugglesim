@@ -1,7 +1,7 @@
 // siteswap.h - siteswap parsing and validation.
 //
 // Current scope: vanilla siteswap and two-juggler asynchronous passing (Juggling Lab's
-// "<3p 3|3p 3>"). Throw values 0-9 and a-z (a = 10 ... z = 35), except that 'p' and 'x' are
+// "<3p 3|3p 3>"), plus "?" for a throw not decided yet (a sketch). Throw values 0-9 and a-z (a = 10 ... z = 35), except that 'p' and 'x' are
 // reserved for the passing and sync extensions rather than meaning 25 and 33. Whitespace is
 // ignored. Sync "( , )", multiplex "[ ]" and passing with 3+ jugglers are recognized and
 // reported as not-yet-supported, so the user gets a clear message rather than a parse error.
@@ -9,6 +9,9 @@
 
 #include <string>
 #include <vector>
+
+// The value of a throw that hasn't been decided yet, in a sketch ("?" in siteswap text).
+constexpr int kOpenThrow = -1;
 
 // One throw in a loop of throws: its value (beats until the prop is thrown again) and which
 // juggler throws it next (the same juggler for a self, another for a pass).
@@ -50,7 +53,11 @@ struct Siteswap {
     JugglingLoop loop;        // every juggler's throws (also filled in for a solo pattern)
     int ballCount = 0;
     bool valid = false;
-    std::string error;  // empty when valid, or when the input was blank
+    // A sketch: some throws are "?" (open), and no two decided throws land in the same spot.
+    // Not valid (it can't be juggled yet), but not an error either; loop holds it.
+    bool sketch = false;
+    int openThrows = 0;
+    std::string error;  // empty when valid, for a sketch, or when the input was blank
 
     int period() const { return static_cast<int>(throws.size()); }
     int jugglers() const { return loop.jugglers; }
@@ -60,6 +67,7 @@ struct Siteswap {
 
 // Parses vanilla siteswap ("531") or Juggling Lab's asynchronous passing notation for two
 // jugglers ("<3p 3|3p 3>": one field per juggler, 'p' marks a pass to the other juggler).
+// "?" is an open throw (JuggleSim's own extension, for sketches).
 // Passing patterns with three or more jugglers are recognized and reported as not supported
 // yet, as are sync and multiplex notation.
 Siteswap parseSiteswap(const std::string& text);

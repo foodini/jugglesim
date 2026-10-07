@@ -46,6 +46,9 @@ passing pattern, the distance between the jugglers), and loading
 it later sets all of them again. If you already have a pattern with that name, you're asked
 whether to replace it.
 
+Sketches (patterns with throws not decided yet, `?`) can be saved too. They're grouped under
+*Sketches* instead of a number of props.
+
 ## Managing your patterns
 
 *File > Manage My Patterns...* lists your patterns in a table. Click a column heading to sort by

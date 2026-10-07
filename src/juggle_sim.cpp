@@ -1,6 +1,8 @@
 // juggle_sim.cpp - see juggle_sim.h.
 #include "juggle_sim.h"
 
+#include "loop_ops.h"
+
 #include <algorithm>
 #include <cmath>
 #include <string>
@@ -181,6 +183,15 @@ struct Placement {
 // Everything below works per juggler (j) and beat (b). Every juggler throws on every beat,
 // right hand on even beats. A throw of value v from (j, b) is thrown again by juggler
 // dest(j, b) on beat b + v: the same juggler for a self, another for a pass.
+// The loop the physics runs on: a sketch's open throws become empty hands (0s), which the
+// hands simply circle through. (What lands in them is handled by evaluateScene.)
+JugglingLoop physicsLoop(const JugglingLoop& loop) {
+    JugglingLoop phys = loop;
+    for (size_t i = 0; i < phys.throws.size(); ++i)
+        if (phys.throws[i].value == kOpenThrow) phys.throws[i] = {0, static_cast<int>(i) / std::max(1, loop.period)};
+    return phys;
+}
+
 class Evaluator {
 public:
     Evaluator(const JugglingLoop& loop, const JuggleParams& params, float intensity = 0.0f)
@@ -756,9 +767,10 @@ void jugglerPlacement(const JugglingLoop& loop, const JuggleParams& params, int 
     *yaw = angle + kPi;
 }
 
-SceneExtents computeSceneExtents(const JugglingLoop& loop, const JuggleParams& params, int onlyJuggler) {
+SceneExtents computeSceneExtents(const JugglingLoop& sketchOrLoop, const JuggleParams& params, int onlyJuggler) {
     SceneExtents e;
-    if (loop.empty()) return e;
+    if (sketchOrLoop.empty()) return e;
+    const JugglingLoop loop = physicsLoop(sketchOrLoop);
     const Evaluator ev(loop, params, patternIntensity(loop, params));
     const int span = loop.period % 2 == 0 ? loop.period : loop.period * 2;  // hands and throws both repeat
     const float handThickness = 0.025f;
@@ -827,11 +839,19 @@ SceneExtents computeSceneExtents(const JugglingLoop& loop, const JuggleParams& p
     return e;
 }
 
-JugglerScene evaluateScene(const JugglingLoop& loop, const BallOrbits& orbits, const JuggleParams& params,
+JugglerScene evaluateScene(const JugglingLoop& sketchOrLoop, const BallOrbits& orbits, const JuggleParams& params,
                            double t) {
     JugglerScene scene;
-    if (loop.empty()) return scene;
+    if (sketchOrLoop.empty()) return scene;
+    const JugglingLoop loop = physicsLoop(sketchOrLoop);
+    const bool sketch = loop != sketchOrLoop;
+    const LoopOrbits paths = sketch ? computeLoopOrbits(sketchOrLoop) : LoopOrbits();
     const Evaluator ev(loop, params, patternIntensity(loop, params));
+    // Props: their orbit numbering, or in a sketch, their path.
+    auto ballOf = [&](int j, int b) {
+        return sketch ? std::max(0, paths.idAt(j, b)) : orbitBallAt(orbits, j, b);
+    };
+    auto isOpen = [&](int j, int b) { return sketch && sketchOrLoop.at(j, b).value == kOpenThrow; };
     scene.prop = params.prop;
     for (int j = 0; j < loop.jugglers; ++j) {
         const Placement& pl = ev.placement(j);
@@ -854,9 +874,47 @@ JugglerScene evaluateScene(const JugglingLoop& loop, const BallOrbits& orbits, c
     for (int j = 0; j < loop.jugglers; ++j) {
         for (int b = now - 36; b <= now + 36; ++b) {
             const int v = ev.valueAt(j, b);
-            if (v <= 0) continue;
-            const int ball = orbitBallAt(orbits, j, b);
             const bool right = isRightHandBeat(b);
+            if (isOpen(j, b) && ev.incomingAt(j, b) > 0) {
+                // A sketch's undecided throw: the prop landing here is caught and held as usual,
+                // then vanishes when it would have been thrown.
+                const int vIn = ev.incomingAt(j, b);
+                const int src = ev.incomingFrom(j, b);
+                const int ball = ballOf(src, b - vIn);
+                const double holdStart = b - ev.catchDwell(j, b);
+                if (!ev.incomingHeld(j, b) && t >= holdStart && t < b) {  // (a held 2 covers its own hold)
+                    BallState held;
+                    held.ball = ball;
+                    ev.heldProp(j, right, t, &held);
+                    scene.balls.push_back(held);
+                }
+                const double age = (t - b) * ev.secondsPerBeat() / kPuffSeconds;
+                if (age >= 0.0 && age < 1.0) {
+                    Puff puff;
+                    puff.center = ev.placement(j).point(ev.palm(j, right, static_cast<double>(b)));
+                    puff.age = static_cast<float>(age);
+                    puff.ball = ball;
+                    puff.appearing = false;
+                    scene.puffs.push_back(puff);
+                }
+                continue;
+            }
+            if (v <= 0) continue;
+            const int ball = ballOf(j, b);
+            // In a sketch, a prop thrown from a spot nothing lands in pops into the hand when it
+            // would have been caught there.
+            if (sketch && ev.incomingAt(j, b) == 0) {
+                const double appearAt = b - ev.catchDwell(j, b);
+                const double age = (t - appearAt) * ev.secondsPerBeat() / kPuffSeconds;
+                if (age >= 0.0 && age < 1.0) {
+                    Puff puff;
+                    puff.center = ev.placement(j).point(ev.palm(j, right, appearAt));
+                    puff.age = static_cast<float>(age);
+                    puff.ball = ball;
+                    puff.appearing = true;
+                    scene.puffs.push_back(puff);
+                }
+            }
 
             // Held before this throw (unless it arrived as a held 2, which covers its own hold).
             if (!ev.incomingHeld(j, b)) {
@@ -916,8 +974,9 @@ JugglerScene evaluateScene(const JugglingLoop& loop, const BallOrbits& orbits, c
     return scene;
 }
 
-float patternIntensity(const JugglingLoop& loop, const JuggleParams& params) {
-    if (loop.empty()) return 0.0f;
+float patternIntensity(const JugglingLoop& sketchOrLoop, const JuggleParams& params) {
+    if (sketchOrLoop.empty()) return 0.0f;
+    const JugglingLoop loop = physicsLoop(sketchOrLoop);
     const Evaluator ev(loop, params);
     // Heights of the thrown throws (empty beats and held 2s don't count).
     float maxFraction = 0.0f, sum = 0.0f, sumSq = 0.0f;

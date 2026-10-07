@@ -80,6 +80,7 @@ src/
   siteswap.h/.cpp     siteswap parsing/validation (vanilla and two-person passing, for now)
   ladder_view.h/.cpp  ladder diagram + its toolbar + drag editing, drawn with ImGui
   ladder_edit.h/.cpp  the edit chain behind ladder editing (pure logic, no drawing)
+  loop_ops.h/.cpp     loop operations: ? sketches, beat insert/delete, paths and orbits, drawing
   color_vision.*      color-vision modes; per-ball color + marker shape + dash pattern
   draw_helpers.*      markers, dashed curves, arrowheads for ImGui draw lists
   settings.*          user preferences in %APPDATA%\JuggleSim\settings.ini

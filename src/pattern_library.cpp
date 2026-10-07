@@ -98,6 +98,11 @@ void parseSettings(const std::string& text, LibraryPattern* pattern) {
 void classifyPattern(LibraryPattern* pattern) {
     pattern->jugglers = pattern->props = pattern->period = 0;
     const Siteswap parsed = parseSiteswap(pattern->siteswap);
+    if (parsed.sketch) {  // props aren't known yet: grouped as sketches (props 0)
+        pattern->jugglers = parsed.jugglers();
+        pattern->period = parsed.loop.period;
+        return;
+    }
     if (!parsed.valid) return;
     const Pattern p = patternFromSiteswap(parsed);
     pattern->jugglers = parsed.jugglers();

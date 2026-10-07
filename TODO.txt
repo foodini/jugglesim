@@ -1,10 +1,3 @@
-* Add an edit mode that lets you start with a blank ladder and insert throws. It's how I
-  discovered the 6-club W.
-
-* We need a toggle for how clubs are colored. 
-  * Clubs that exist within a path all get the same color....
-  * Clubs that are mirrors of each other get the same color....
-* add a config that allows the user to set how many beats wide the ladder pane is (zoom)
 * add a config to choose between straight and spline lines.
 * add a config to choose a prop (clubs, balls, rings, bowling balls, and we really need
   some completely ridiculous prop.) 
@@ -20,13 +13,19 @@
 * Do a pass over "Recent." Should it move to the top level of File?
 * Add a trash icon next to a pattern in the menu to allow deletion? Ask for confirmation,
   of course.
-* DETECT COLLISIONS. Eventually, we'll want to feed JS a pattern and find out if there are
-  airspace contention issues.
+* DETECT PHYSICS COLLISIONS. If a pattern puts two clubs in the same place at the same time,
+  like two pairs of jugglers trying to pass through a middle point, warn the user that the
+  pattern may not be realistic? That specific example, if juggled perfectly, works. But,
+  real jugglers are not going to have that kind of timing, targeting, and spin control. We'd
+  need to specify slop parameters.
 * When spin rates differ, have the Juggler pane call this out!
   * when paused, hovering over a club will tell you it's spin rate.
 * Provide the option to set the # of spins for different heights. I'd make this pattern-
   global. So, ALL 8s in the pattern are 2s, for example.
 * Make 1s more of a hand-across. The hands should nearly touch.
+
+* Text editor autocomplete. If I type "<x" in the text box, the editor should fill it out 
+  to "<x | ?>"
 
 * The period extend/contract can operate several ways;
   * - can do what it currently does - which I don't understand.
@@ -42,3 +41,14 @@ Distant future, after juggling animation has been implemented:
   to shimmy to make catches. Give him a worried look, based upon how hard the pattern is.
   Have him looking up at the peak of his juggle. When juggling massive patterns, give him
   increasingly large biseps. 
+  
+  
+Easter eggs
+* A juggler with a continuously empty hand will have a chance to scratch his head, or ass.
+* A juggler with empty hands may rarely pirouette, scratch his head, etc. The length of the 
+  pause will determine the animation he can play. But...
+  * Do "The Sprinkler"
+  * Do The Macarena
+  * Pushups, burpees,
+  * Shrug.
+  * Stare at the camera and do a wft shrug

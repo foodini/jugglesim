@@ -131,12 +131,90 @@ going and close it somewhere that keeps the edit shorter, or cancel.
 Throw values are limited to 0-35, except 25 and 33, because their letters (`p` and `x`) mean
 passing and synchronous throws in siteswap notation.
 
+## Adding and deleting beats
+
+**Right-click a beat line** (away from any throw) for a menu:
+
+- **Add a beat above / below**, **Add two beats above / below**: every throw in the air across
+  the new beats gets longer by that many beats, and every juggler gets an empty hand (0) on
+  each new beat.
+- **Delete this beat**, **Delete this beat and the next**: a prop caught on a deleted beat goes
+  straight on to wherever that beat would have thrown it, so its two throws become one. A prop
+  whose whole route was on the deleted beats disappears (deleting the 3 in `531` leaves `31`).
+
+Like every edit in Pattern mode, these apply at every repeat of the loop, and the period
+changes to match. Hovering over an item shows the resulting siteswap first. Hands alternate
+every beat, so adding or deleting **one** beat swaps left and right for the rest of the loop
+(the tooltip says so); adding or deleting **two** keeps every throw in its hand, which is
+usually what you want in a passing pattern. Something that would make a throw higher than
+siteswap can write (35) is refused, with the reason.
+
+## Sketching
+
+A **sketch** is a pattern with throws not decided yet, shown as **?** (in the text box too:
+`<3p 3p 3p ? ? ?|? ? ? ? ? ?>`). It's how you build a pattern up from nothing, the way you might
+on paper.
+
+- *File > New Pattern...* starts one: choose 1 or 2 jugglers and the period, and every throw is
+  a ?. If the pattern you have has changed since you loaded, saved or started it, you're asked
+  first whether to save it (changes to tempo, dwell or distance alone don't count).
+- **Right-click a throw** for **Delete throw** (it becomes a ?) or **Delete path**, which does
+  that to every throw on its path: the round a prop (or group of props) travels. Hovering over
+  *Delete path* lights the path up first. Deleting from a finished pattern turns it into a
+  sketch.
+
+**Drawing.** Click a **?** to start a throw from there, then click where the prop is caught: any
+juggler's hand on any later beat (the same spot for a 0). The value, and whether it's a pass,
+come from where you click. The rubber band then carries on from the spot you clicked, as that
+prop's next throw, so you can follow one prop around click by click. It stops by itself when the
+prop reaches a spot whose throw is already drawn (it joins that path, or closes its own), and
+**Esc** or a right-click stops it any time. Each throw drawn is one undo step.
+
+While drawing, faint rings mark the spots nothing lands in yet. If you click a spot something
+already lands in, your throw takes it, and the throw that landed there is picked up instead:
+find it a new home the same way (as when editing a finished pattern).
+
+Picking up a throw that's already drawn works as when editing a finished pattern: the half of
+the curve nearest the mouse lights up, and that's the end you get. The throw is taken out (its
+spot becomes a ?) to be placed again:
+
+- **By its catch:** it's still thrown from the same spot; click where it should land, as when
+  drawing.
+- **By its throw:** it still lands in the same spot; click where it should be thrown from. A ?
+  takes it and you're done. A spot that already throws something takes it too, and the throw
+  that was there is picked up by its start in turn, to be given a new spot to be thrown from
+  (Esc leaves it as a ?).
+
+Open spots are marked so you can see what's left without color: a **?** in a dashed ring for a
+throw not decided yet, and a small notch over a spot nothing lands in yet. When every throw is
+decided, the sketch is an ordinary pattern: it plays, and it's written at its shortest period.
+
+The jugglers juggle the sketch as far as it goes: a prop thrown from a spot nothing lands in
+pops into the hand (with a puff of glowing smoke) when it would have been caught there, and a
+prop caught in a spot whose next throw isn't decided yet vanishes in a puff when it would have
+been thrown. A hand with nothing decided just circles empty, so a new, blank pattern shows the
+jugglers standing there. While you're drawing, the jugglers keep going, and when the rubber
+band is over a spot it can land in, they show what the pattern would be if you clicked there.
+(Picking up a throw in a finished pattern still pauses them.)
+
+Sketches can be saved to My Patterns like any pattern.
+
+## Colors: props or orbits
+
+Normally every prop has its own color, marker shape and dash pattern. The orbit button on the
+toolbar (next to **3p**), the **O** key or *View > Color by Orbit* colors by **orbit** instead: the set of throws a group of props travels round. In `531` the 5s
+and 1s form one orbit (carrying two balls) and the 3s another; in a 3-count the two clubs that
+are only ever passed share an orbit, and each self club has its own; in a 4-count every club
+goes everywhere, so it's all one orbit. The legend shows each orbit and how many props it
+carries. The props in the 3D view follow the same setting. Sketches are always colored by path.
+
 ## Undo and redo
 
 **Ctrl+Z** undoes and **Ctrl+Y** (or **Ctrl+Shift+Z**) redoes, also under the *Edit* menu.
 Each of these is one step: a finished edit chain on the ladder, a change of period, a
 siteswap typed into the text box (recorded when you press Enter or click away, so undoing
-`531` doesn't step back through `53` and `5`), a pattern loaded from the library, or a change
+`531` doesn't step back through `53` and `5`), a pattern loaded from the library, beats added or
+deleted, a throw drawn or deleted in a sketch, or a change
 to the props, tempo, dwell or passing distance (recorded once you've stopped adjusting it for
 a moment, so dragging a slider is one step). While you're typing in the text box, Ctrl+Z
 undoes typing instead.
@@ -157,3 +235,6 @@ in any siteswap: a `3p` from the right lands in the partner's left, a `4p` in th
 box below the text shows the number of jugglers along with the props and period.
 
 Passing patterns are drawn and edited on the ladder like any other (see above).
+
+**?** is a throw not decided yet: JuggleSim's own extension, for sketches (see *Sketching*
+above). Other programs won't read it.

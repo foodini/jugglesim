@@ -46,6 +46,8 @@ AppSettings loadSettings() {
             if (colorVisionModeFromKey(value.c_str(), &mode)) settings.colorVision = mode;
         } else if (key == "tempo_panel") {
             settings.tempoPanelCollapsed = value == "collapsed";
+        } else if (key == "colors") {
+            settings.colorByOrbit = value == "orbit";
         } else if (key == "throw_values") {
             settings.showThrowValues = value == "on";
         } else if (key == "ladder_width") {
@@ -72,6 +74,7 @@ bool saveSettings(const AppSettings& settings) {
     out << "color_vision = " << colorVisionModeKey(settings.colorVision) << "\n";
     out << "props = " << propTypeKey(settings.prop) << "\n";
     out << "tempo_panel = " << (settings.tempoPanelCollapsed ? "collapsed" : "open") << "\n";
+    out << "colors = " << (settings.colorByOrbit ? "orbit" : "prop") << "\n";
     out << "throw_values = " << (settings.showThrowValues ? "on" : "off") << "\n";
     out << "ladder_width = " << settings.ladderFraction << "\n";
     return static_cast<bool>(out);
