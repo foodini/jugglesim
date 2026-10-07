@@ -77,7 +77,7 @@ src/
   pattern_library.*   pattern library: file format, built-in and user patterns
   pattern_library_ui.* pattern menus (adaptive tree, Find, Recent), Save and Manage dialogs
   resource.h          resource IDs (see jugglesim.rc)
-  siteswap.h/.cpp     siteswap parsing/validation (vanilla only, for now)
+  siteswap.h/.cpp     siteswap parsing/validation (vanilla and two-person passing, for now)
   ladder_view.h/.cpp  ladder diagram + its toolbar + drag editing, drawn with ImGui
   ladder_edit.h/.cpp  the edit chain behind ladder editing (pure logic, no drawing)
   color_vision.*      color-vision modes; per-ball color + marker shape + dash pattern
@@ -85,6 +85,7 @@ src/
   settings.*          user preferences in %APPDATA%\JuggleSim\settings.ini
 data/patterns.txt     the built-in pattern library (compiled into the exe by jugglesim.rc)
 docs/                 user documentation: ladder.md, juggler.md, patterns.md
+docs/design/          design notes (multi_juggler.md: passing, linking, choreography)
 third_party/imgui/    git submodule
 ```
 
@@ -95,4 +96,7 @@ it as `gl::FunctionName(...)`.
 
 - World units are meters, +Y is up.
 - A juggler faces +Z in their local space, so the juggler's own right hand is at -X.
+- Two passing jugglers face each other along X: juggler 1 at -X facing +X, juggler 2 at +X
+  facing -X. Each juggler's hands and body are worked out in their own local space and placed
+  with translation(position) * rotationY(yaw).
 - Ladder diagram: top rail = right hand, bottom rail = left hand, beat 1 thrown by the right.

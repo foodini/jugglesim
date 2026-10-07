@@ -16,8 +16,13 @@
 //   - The body helps with high throws: a hand can only drive a throw so far with the arm, so
 //     the rest comes from the knees and back (the hips sink during the scoop and rise through
 //     the release), and the torso sways toward the hand that's driving. See BodyMotion.
+//   - Passing: every juggler throws on every beat, right hand on even beats. A pass flies from
+//     one juggler's hand to another's; balls are caught where selfs are, clubs and rings a
+//     little outside the shoulder and in front of the body, higher for higher passes.
 //
 // Juggler-local coordinates: meters, +Y up, the juggler faces +Z, their right hand is at -X.
+// Each juggler has their own, placed in the world by jugglerPlacement(). Hands, bodies and
+// poses are worked out in juggler-local coordinates; flying props in world coordinates.
 #pragma once
 
 #include "math3d.h"
@@ -37,7 +42,22 @@ struct JuggleParams {
     double bpm = 150.0;
     double dwellBeats = 1.4;  // 0 < dwell < 2
     PropType prop = PropType::Ball;
+    double distance = 0.0;    // between passing jugglers (m, body to body); 0 = automatic
 };
+
+// Passing distances (m, body to body).
+constexpr double kMinPassingDistance = 1.0, kMaxPassingDistance = 5.0;
+// The automatic distance for a passing loop: grows with the highest throw (about 1.8 m for a
+// pattern of 3s, 2.2 m with 4s, ...), within kMin/kMaxPassingDistance.
+double defaultPassingDistance(const JugglingLoop& loop);
+// The distance in use: params.distance, or the automatic one.
+double passingDistance(const JugglingLoop& loop, const JuggleParams& params);
+
+// Where juggler `juggler` stands and which way they face (yaw in radians about +Y: 0 faces +Z,
+// pi/2 faces +X). One juggler stands at the origin facing +Z; two face each other along X,
+// juggler 1 on the left (-X) as seen from the default camera.
+void jugglerPlacement(const JugglingLoop& loop, const JuggleParams& params, int juggler,
+                      Vec3* position, float* yaw);
 
 constexpr float kBallRadius = 0.034f;  // a typical 68 mm juggling ball
 
@@ -98,11 +118,20 @@ inline Vec3 bodyPoint(const BodyMotion& m, Vec3 neutral) {
     return kNeutralWaist + m.pelvisOffset + bodyDirection(m, neutral - kNeutralWaist);
 }
 
-struct JugglerScene {
+// One juggler at a moment. Palms and body are in the juggler's own coordinates (their
+// juggler-local frame); `position` and `yaw` place that frame in the world.
+struct JugglerState {
+    Vec3 position;
+    float yaw = 0.0f;
     Vec3 palmRight, palmLeft;  // where each hand's palm is (a ball sits just above it; a club
                                // handle or ring rim passes through it)
+    BodyMotion body;           // lookAt is in the juggler's own coordinates too
+};
+
+// Everything at a moment. Props and trails are in world coordinates.
+struct JugglerScene {
     PropType prop = PropType::Ball;
-    BodyMotion body;
+    std::vector<JugglerState> jugglers;
     std::vector<BallState> balls;
     std::vector<Trail> trails;
 };
@@ -113,15 +142,20 @@ struct JugglerScene {
 struct SceneExtents {
     float lowestHandY = 0.0f;    // bottom of the hands at the lowest point of their scoop
     float highestPropY = 0.0f;   // top of the highest ball at the top of its flight
-    float halfWidth = 0.0f;      // largest |x| of hands or balls
+    float halfWidth = 0.0f;      // half the width (along X) of hands and balls, about centerX
+    float centerX = 0.0f;        // middle of that width
+    float centerZ = 0.0f;        // depth of the hands' throw points (where the camera aims)
 };
-SceneExtents computeSceneExtents(const std::vector<int>& loop, const JuggleParams& params);
+// World extents of the whole pattern, or (with onlyJuggler >= 0) of one juggler: their hands,
+// what they hold and their selfs (passes leave them, so they're left out).
+SceneExtents computeSceneExtents(const JugglingLoop& loop, const JuggleParams& params,
+                                 int onlyJuggler = -1);
 
 // How fervent the pattern looks, 0..1: grows with how high the throws are (relative to the
 // highest a person can really drive a throw, about 3.7 m) and how much the heights vary.
-float patternIntensity(const std::vector<int>& loop, const JuggleParams& params);
+float patternIntensity(const JugglingLoop& loop, const JuggleParams& params);
 
 // Evaluates the scene at `beat` (fractional; beat 0 is the right hand's first throw) for the
-// repeating loop `loop` (Pattern-mode loop values). orbits must be computeBallOrbits(loop).
-JugglerScene evaluateScene(const std::vector<int>& loop, const BallOrbits& orbits,
+// repeating loop `loop` (every juggler's throws). orbits must be computeBallOrbits(loop).
+JugglerScene evaluateScene(const JugglingLoop& loop, const BallOrbits& orbits,
                            const JuggleParams& params, double beat);

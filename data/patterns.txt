@@ -4,6 +4,7 @@
 #   - name is optional (the siteswap is used when it's empty or missing).
 #   - settings are optional "key=value" pairs separated by spaces:
 #       props=balls|clubs|rings   tempo=<beats per minute>   dwell=<beats>
+#       distance=<meters between passing jugglers, 1-5>|auto
 #     A pattern without a setting leaves the current one alone when it's loaded.
 #   - Blank lines and lines starting with # are ignored.
 #
@@ -83,3 +84,15 @@ b97531   ;
 9        ; Cascade
 a        ; Fountain
 b        ; Cascade
+
+# --- 2 jugglers (passing) ---
+# Juggling Lab's passing notation: <juggler 1's throws|juggler 2's throws>; "p" is a pass.
+<3p|3p>                                 ; Ultimates          ; props=clubs
+<3p 3|3p 3>                             ; 2-count            ; props=clubs
+<3p 3 3|3p 3 3>                         ; 3-count            ; props=clubs
+<3p 3 3 3|3p 3 3 3>                     ; 4-count            ; props=clubs
+<3p 3 3 3 3 3|3p 3 3 3 3 3>             ; 6-count            ; props=clubs
+<4p 3|3 4p>                             ;                    ; props=clubs
+<4p 3 3 3|3p 2 3 3>                     ; R2R Double         ; props=clubs
+<3p 3 3 4p 2 3 3 3|3p 3 3 3 3p 3 3 3>   ; L2L Double         ; props=clubs
+

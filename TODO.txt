@@ -16,6 +16,10 @@
   of course.
 * DETECT COLLISIONS. Eventually, we'll want to feed JS a pattern and find out if there are
   airspace contention issues.
+* When spin rates differ, have the Juggler pane call this out!
+  * when paused, hovering over a club will tell you it's spin rate.
+* Provide the option to set the # of spins for different heights. I'd make this pattern-
+  global. So, ALL 8s in the pattern are 2s, for example.
 
 * The period extend/contract can operate several ways;
   * - can do what it currently does - which I don't understand.

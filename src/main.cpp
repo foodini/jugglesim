@@ -122,9 +122,10 @@ std::string loadBuiltInPatternText() {
 
 // Undo/redo history of the pattern, kept as siteswap text (which also records the loop
 // period: 531 and 531531 are different entries). One step per closed edit chain, period
-// change, siteswap committed in the text box, or pattern loaded from the library. Loading
-// from the library can also change the props, tempo and dwell, so those steps carry the
-// settings from before and after too (other changes to those settings aren't undoable).
+// change, siteswap committed in the text box, or pattern loaded from the library. Steps can
+// also carry the settings (props, tempo, dwell, distance) from before and after: loading from
+// the library changes both, and changing a setting by itself is a step of its own once the
+// user has stopped adjusting it for a moment.
 struct HistoryStep {
     std::string before, after;
     bool settingsChanged = false;
@@ -176,13 +177,16 @@ struct GLRect {
 // are kept as offsets from the automatic framing, so changing patterns re-frames from wherever
 // the user is looking. Home (over the juggler) or View > Reset Camera clears them.
 //
+// With several jugglers the automatic framing takes in all of them (Frame All), or just the
+// selected one (Frame Selected: their hands, what they hold and their selfs). Either way the
+// camera keeps the user's orbit; it only moves what it looks at and how far away it is.
+//
 // Zooming in keeps the bottom of the view where it is (just below the lowest point the hands
 // reach) and crops from the top, so the juggler stays in view and the flights are what get cut
 // off. Zoomed in further than the juggler's own height (from that low point to the top of the
 // head), the view stays centered on the juggler.
 
 constexpr float kCameraFovY = 35.0f * kPi / 180.0f;
-constexpr float kHandPlaneZ = 0.36f;  // the hands and most flights are in this plane
 constexpr float kJugglerTopY = 1.80f;  // a little above the top of the juggler's head
 
 struct CameraControl {
@@ -192,7 +196,9 @@ struct CameraControl {
     float zoom = 1.0f;   // distance multiplier; < 1 is closer
     // Automatic framing, eased toward the pattern's extents so changes glide instead of jumping.
     bool framed = false;
+    float centerX = 0.0f;
     float centerY = 1.4f;
+    float centerZ = 0.36f;
     float bottomY = 0.8f;  // bottom edge of the full framing
     float distance = 3.0f;
 };
@@ -219,13 +225,17 @@ CameraView updateCamera(CameraControl& c, const SceneExtents& extents, float asp
     const float wantDistance = std::max(fitHeight, fitWidth);
     const float wantCenterY = 0.5f * (bottom + top);
     if (!c.framed) {
+        c.centerX = extents.centerX;
         c.centerY = wantCenterY;
+        c.centerZ = extents.centerZ;
         c.bottomY = bottom;
         c.distance = wantDistance;
         c.framed = true;
     } else {
         const float ease = 1.0f - std::exp(-dt * 5.0f);
+        c.centerX += (extents.centerX - c.centerX) * ease;
         c.centerY += (wantCenterY - c.centerY) * ease;
+        c.centerZ += (extents.centerZ - c.centerZ) * ease;
         c.bottomY += (bottom - c.bottomY) * ease;
         c.distance += (wantDistance - c.distance) * ease;
     }
@@ -240,7 +250,7 @@ CameraView updateCamera(CameraControl& c, const SceneExtents& extents, float asp
         const float jugglerMiddle = 0.5f * (c.bottomY + kJugglerTopY);
         targetY = std::min(std::max(c.bottomY + halfHeight, jugglerMiddle), c.centerY);
     }
-    v.target = Vec3(0.0f, targetY, kHandPlaneZ);
+    v.target = Vec3(c.centerX, targetY, c.centerZ);
     const Vec3 dir(std::sin(c.yaw) * std::cos(c.pitch), std::sin(c.pitch),
                    std::cos(c.yaw) * std::cos(c.pitch));
     v.position = v.target + dir * d;
@@ -248,9 +258,117 @@ CameraView updateCamera(CameraControl& c, const SceneExtents& extents, float asp
     return v;
 }
 
-// ---- Tempo and dwell panel ----------------------------------------------------------------
+Mat4 cameraViewProj(const CameraView& camera, float aspect) {
+    const Mat4 proj = Mat4::perspective(kCameraFovY, aspect, 0.05f, camera.farPlane);
+    const Mat4 view = Mat4::lookAt(camera.position, camera.target, {0.0f, 1.0f, 0.0f});
+    return proj * view;
+}
+
+// Where a world point lands in a screen rectangle (ImGui pixels, origin top-left), and how
+// many pixels a meter covers there. False if the point is behind the camera.
+bool projectToScreen(const Mat4& viewProj, Vec3 p, ImVec2 rectMin, ImVec2 rectSize, ImVec2* screen,
+                     float* pixelsPerMeter = nullptr) {
+    const float x = viewProj.at(0, 0) * p.x + viewProj.at(0, 1) * p.y + viewProj.at(0, 2) * p.z + viewProj.at(0, 3);
+    const float y = viewProj.at(1, 0) * p.x + viewProj.at(1, 1) * p.y + viewProj.at(1, 2) * p.z + viewProj.at(1, 3);
+    const float w = viewProj.at(3, 0) * p.x + viewProj.at(3, 1) * p.y + viewProj.at(3, 2) * p.z + viewProj.at(3, 3);
+    if (w < 0.05f) return false;
+    screen->x = rectMin.x + (x / w * 0.5f + 0.5f) * rectSize.x;
+    screen->y = rectMin.y + (0.5f - y / w * 0.5f) * rectSize.y;
+    if (pixelsPerMeter) *pixelsPerMeter = 0.5f * rectSize.y / (std::tan(kCameraFovY * 0.5f) * w);
+    return true;
+}
+
+// ---- Jugglers in the 3D view --------------------------------------------------------------
+
+Mat4 jugglerMatrix(const JugglerState& juggler) {
+    return Mat4::translation(juggler.position) * Mat4::rotationY(juggler.yaw);
+}
+
+JugglerPose posedJuggler(const JugglerState& juggler, PropType prop) {
+    JugglerPose pose = makeNeutralPose();
+    poseBody(pose, juggler.body);
+    poseArmsForPalms(pose, juggler.palmRight, juggler.palmLeft, juggler.body.intensity, prop != PropType::Ball);
+    return pose;
+}
+
+float distanceToSegment(ImVec2 p, ImVec2 a, ImVec2 b) {
+    const float abx = b.x - a.x, aby = b.y - a.y;
+    const float lengthSq = abx * abx + aby * aby;
+    float t = lengthSq > 0.0f ? ((p.x - a.x) * abx + (p.y - a.y) * aby) / lengthSq : 0.0f;
+    t = std::clamp(t, 0.0f, 1.0f);
+    const float dx = a.x + abx * t - p.x, dy = a.y + aby * t - p.y;
+    return std::sqrt(dx * dx + dy * dy);
+}
+
+// The juggler under the mouse (the body parts as seen on screen, a little generously), or -1.
+int pickJuggler(const JugglerScene& scene, const Mat4& viewProj, ImVec2 rectMin, ImVec2 rectSize, ImVec2 mouse) {
+    int best = -1;
+    float bestMiss = 0.0f;  // how far inside the part's outline the mouse is, relative (smaller is better)
+    for (size_t j = 0; j < scene.jugglers.size(); ++j) {
+        const JugglerPose pose = posedJuggler(scene.jugglers[j], scene.prop);
+        const Mat4 placement = jugglerMatrix(scene.jugglers[j]);
+        struct Part { Vec3 a, b; float radius; };
+        const Part parts[] = {
+            {pose.head, pose.head, pose.headRadius},
+            {pose.neckBase, pose.waist, 0.13f},
+            {pose.shoulderR, pose.shoulderL, 0.06f},
+            {pose.shoulderR, pose.elbowR, 0.05f}, {pose.elbowR, pose.wristR, 0.05f},
+            {pose.shoulderL, pose.elbowL, 0.05f}, {pose.elbowL, pose.wristL, 0.05f},
+            {pose.hipR, pose.hipL, 0.07f},
+            {pose.hipR, pose.kneeR, 0.06f}, {pose.kneeR, pose.ankleR, 0.05f},
+            {pose.hipL, pose.kneeL, 0.06f}, {pose.kneeL, pose.ankleL, 0.05f},
+        };
+        for (const Part& part : parts) {
+            ImVec2 a, b;
+            float ppm = 0.0f;
+            if (!projectToScreen(viewProj, transformPoint(placement, part.a), rectMin, rectSize, &a, &ppm)) continue;
+            if (!projectToScreen(viewProj, transformPoint(placement, part.b), rectMin, rectSize, &b)) continue;
+            const float reach = std::max(part.radius * ppm, 0.0f) + 6.0f;  // a few pixels of slack
+            const float miss = distanceToSegment(mouse, a, b) / reach;
+            if (miss <= 1.0f && (best < 0 || miss < bestMiss)) {
+                best = static_cast<int>(j);
+                bestMiss = miss;
+            }
+        }
+    }
+    return best;
+}
+
+// Juggler numbers over their heads (only drawn with two or more jugglers). The selected
+// juggler's number is inverted (dark on light), so selection doesn't depend on color.
+void drawJugglerLabels(ImDrawList* dl, const JugglerScene& scene, const Mat4& viewProj, ImVec2 rectMin,
+                       ImVec2 rectSize, int selected) {
+    if (scene.jugglers.size() < 2) return;
+    dl->PushClipRect(rectMin, ImVec2(rectMin.x + rectSize.x, rectMin.y + rectSize.y), true);
+    const float em = ImGui::GetFontSize();
+    for (size_t j = 0; j < scene.jugglers.size(); ++j) {
+        const JugglerPose pose = posedJuggler(scene.jugglers[j], scene.prop);
+        const Vec3 above = transformPoint(jugglerMatrix(scene.jugglers[j]), pose.head) +
+                           Vec3(0.0f, pose.headRadius + 0.08f, 0.0f);
+        ImVec2 anchor;
+        if (!projectToScreen(viewProj, above, rectMin, rectSize, &anchor)) continue;
+        char text[8];
+        std::snprintf(text, sizeof(text), "%d", static_cast<int>(j) + 1);
+        const ImVec2 textSize = ImGui::CalcTextSize(text);
+        const float padX = em * 0.45f, padY = em * 0.15f;
+        const float boxWidth = std::max(textSize.x + 2.0f * padX, textSize.y + 2.0f * padY);
+        const ImVec2 boxMin(anchor.x - boxWidth * 0.5f, anchor.y - textSize.y - 2.0f * padY);
+        const ImVec2 boxMax(anchor.x + boxWidth * 0.5f, anchor.y);
+        const bool isSelected = static_cast<int>(j) == selected;
+        const float rounding = em * 0.3f;
+        dl->AddRectFilled(boxMin, boxMax, isSelected ? IM_COL32(236, 238, 244, 255) : IM_COL32(28, 30, 36, 210),
+                          rounding);
+        dl->AddRect(boxMin, boxMax, IM_COL32(210, 214, 224, 230), rounding, 0, isSelected ? 2.0f : 1.0f);
+        dl->AddText(ImVec2(anchor.x - textSize.x * 0.5f, boxMin.y + padY),
+                    isSelected ? IM_COL32(16, 16, 20, 255) : IM_COL32(232, 234, 240, 255), text);
+    }
+    dl->PopClipRect();
+}
+
+// ---- Tweakables panel ---------------------------------------------------------------------
 //
-// A small panel in the top-right corner of the juggler pane. Each setting has a slider with
+// ("Tweakables" is a working name.) A small panel in the top-right corner of the juggler pane:
+// tempo, dwell and, for passing patterns, the distance between the jugglers. Each has a slider with
 // -/+ buttons for fine steps (Shift: bigger steps; hold a button to repeat), the mouse wheel
 // over the slider for one step, and Ctrl+click or double-click on the slider to type a value.
 // The panel collapses to a one-line readout.
@@ -314,13 +432,23 @@ bool fineSlider(const char* id, double* value, double minValue, double maxValue,
     return changed;
 }
 
-struct TempoPanelState {
-    FineSliderState tempo, dwell;
+struct TweakablesPanelState {
+    FineSliderState tempo, dwell, distance;
 };
 
-// Draws the panel with its top-right corner at `topRight`. Returns true if the user collapsed
-// or expanded it (so the caller can remember that).
-bool drawTempoPanel(JuggleParams& params, bool& collapsed, ImVec2 topRight, TempoPanelState& state) {
+void resetTweakables(JuggleParams& params) {
+    const JuggleParams defaults;
+    params.bpm = defaults.bpm;
+    params.dwellBeats = defaults.dwellBeats;
+    params.distance = defaults.distance;
+}
+
+// Draws the panel with its top-right corner at `topRight`. `loop` is the pattern being shown
+// (the distance row appears for passing patterns). Returns true if the user collapsed or
+// expanded it (so the caller can remember that).
+bool drawTweakablesPanel(JuggleParams& params, const JugglingLoop& loop, bool& collapsed, ImVec2 topRight,
+                         TweakablesPanelState& state) {
+    const bool passing = loop.jugglers > 1;
     const float em = ImGui::GetFontSize();
     ImGui::SetNextWindowPos(topRight, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
     ImGui::SetNextWindowBgAlpha(0.8f);
@@ -328,29 +456,32 @@ bool drawTempoPanel(JuggleParams& params, bool& collapsed, ImVec2 topRight, Temp
                                    ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
     bool toggled = false;
-    if (ImGui::Begin("Tempo and dwell", nullptr, flags)) {
+    if (ImGui::Begin("Tweakables", nullptr, flags)) {
         if (collapsed) {
             if (ImGui::ArrowButton("##expand", ImGuiDir_Down)) toggled = true;
             ImGui::SameLine();
             ImGui::AlignTextToFramePadding();
-            ImGui::Text("%.0f BPM, dwell %.2f", params.bpm, params.dwellBeats);
+            if (passing)
+                ImGui::Text("%.0f BPM, dwell %.2f, %.2f m apart", params.bpm, params.dwellBeats,
+                            passingDistance(loop, params));
+            else
+                ImGui::Text("%.0f BPM, dwell %.2f", params.bpm, params.dwellBeats);
             if (ImGui::IsItemClicked()) toggled = true;
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) ImGui::SetTooltip("Show the tempo and dwell controls");
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) ImGui::SetTooltip("Show the tweakables");
         } else {
             if (ImGui::ArrowButton("##collapse", ImGuiDir_Up)) toggled = true;
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) ImGui::SetTooltip("Hide the controls");
             ImGui::SameLine();
             ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted("Tempo and dwell");
+            ImGui::TextUnformatted("Tweakables");
             ImGui::SameLine();
-            if (ImGui::SmallButton("Reset")) {
-                const JuggleParams defaults;
-                params.bpm = defaults.bpm;
-                params.dwellBeats = defaults.dwellBeats;
-            }
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) ImGui::SetTooltip("150 BPM, dwell 1.40 beats");
+            if (ImGui::SmallButton("Reset")) resetTweakables(params);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+                ImGui::SetTooltip("150 BPM, dwell 1.40 beats, automatic distance");
 
-            const float labelWidth = em * 3.5f;
+            const float labelWidth =
+                std::max(em * 3.5f, ImGui::CalcTextSize(passing ? "Distance" : "Dwell").x +
+                                        ImGui::GetStyle().ItemSpacing.x * 2.0f);
             const float sliderWidth = em * 14.0f;
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted("Tempo");
@@ -371,6 +502,29 @@ bool drawTempoPanel(JuggleParams& params, bool& collapsed, ImVec2 topRight, Temp
                        "automatically get a shorter dwell so they still have some flight.\n"
                        "-/+ or the mouse wheel: 0.05 (Shift: 0.1).\n"
                        "Double-click or Ctrl+click to type a value.");
+            if (passing) {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted("Distance");
+                ImGui::SameLine(labelWidth);
+                double distance = passingDistance(loop, params);
+                const float autoWidth = ImGui::GetFrameHeight() + ImGui::CalcTextSize("Auto").x +
+                                        ImGui::GetStyle().ItemInnerSpacing.x + ImGui::GetStyle().ItemSpacing.x;
+                if (fineSlider("distance", &distance, kMinPassingDistance, kMaxPassingDistance, 0.05, 0.25,
+                               "%.2f m", sliderWidth - autoWidth, state.distance,
+                               "How far apart the jugglers stand (body to body), in meters.\n"
+                               "Automatic: farther for higher passes (about 1.8 m for 3s,\n"
+                               "2.2 m for 4s).\n"
+                               "-/+ or the mouse wheel: 0.05 m (Shift: 0.25 m).\n"
+                               "Double-click or Ctrl+click to type a value."))
+                    params.distance = std::clamp(distance, kMinPassingDistance, kMaxPassingDistance);
+                ImGui::SameLine();
+                bool automatic = params.distance <= 0.0;
+                if (ImGui::Checkbox("Auto", &automatic))
+                    params.distance = automatic ? 0.0 : defaultPassingDistance(loop);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+                    ImGui::SetTooltip("Pick the distance from the pattern's highest throw.\n"
+                                      "Moving the slider turns this off.");
+            }
         }
     }
     ImGui::End();
@@ -383,8 +537,10 @@ Vec3 colorToVec3(ImU32 c) {
     return Vec3(f.x, f.y, f.z);
 }
 
+// `selected` is the selected juggler (-1 for none): drawn in gold (lighter than the others,
+// so it shows without color vision too), on a lighter disc on the floor.
 void renderJugglerView(Renderer& renderer, const Primitives& prims, const PropMeshes& propMeshes,
-                       const JugglerScene& scene, const CameraView& camera,
+                       const JugglerScene& scene, const CameraView& camera, int selected,
                        ColorVisionMode colorVision, const GLRect& rect) {
     if (rect.w <= 0 || rect.h <= 0) return;
 
@@ -395,24 +551,35 @@ void renderJugglerView(Renderer& renderer, const Primitives& prims, const PropMe
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glDisable(GL_SCISSOR_TEST);
 
-    // Camera in front of the juggler (who faces +Z), looking back at them.
     const float aspect = static_cast<float>(rect.w) / static_cast<float>(rect.h);
-    const Mat4 proj = Mat4::perspective(kCameraFovY, aspect, 0.05f, camera.farPlane);
-    const Mat4 view = Mat4::lookAt(camera.position, camera.target, {0.0f, 1.0f, 0.0f});
-    const Mat4 viewProj = proj * view;
+    const Mat4 viewProj = cameraViewProj(camera, aspect);
 
     renderer.beginScene(viewProj, {-0.4f, -1.0f, -0.6f});
 
-    // Floor disc.
+    // Floor disc, under all the jugglers.
+    Vec3 middle;
+    for (const JugglerState& j : scene.jugglers) middle = middle + j.position;
+    if (!scene.jugglers.empty()) middle = middle * (1.0f / static_cast<float>(scene.jugglers.size()));
+    float floorRadius = 1.2f;
+    for (const JugglerState& j : scene.jugglers)
+        floorRadius = std::max(floorRadius, length(j.position - middle) + 0.8f);
     renderer.drawMesh(prims.cylinder,
-                      Mat4::translation({0.0f, -0.01f, 0.0f}) * Mat4::scaling({1.2f, 0.01f, 1.2f}),
+                      Mat4::translation({middle.x, -0.01f, middle.z}) *
+                          Mat4::scaling({floorRadius, 0.01f, floorRadius}),
                       {0.30f, 0.32f, 0.36f});
 
-    JugglerPose pose = makeNeutralPose();
-    poseBody(pose, scene.body);
-    poseArmsForPalms(pose, scene.palmRight, scene.palmLeft, scene.body.intensity,
-                     scene.prop != PropType::Ball);
-    drawJuggler(renderer, prims, pose, Mat4::identity(), JugglerStyle{});
+    for (size_t j = 0; j < scene.jugglers.size(); ++j) {
+        const JugglerState& juggler = scene.jugglers[j];
+        if (static_cast<int>(j) == selected) {
+            renderer.drawMesh(prims.cylinder,
+                              Mat4::translation({juggler.position.x, -0.008f, juggler.position.z}) *
+                                  Mat4::scaling({0.42f, 0.0105f, 0.42f}),
+                              {0.58f, 0.62f, 0.70f});
+        }
+        JugglerStyle style;
+        if (static_cast<int>(j) == selected) style.bodyColor = Vec3(0.94f, 0.85f, 0.56f);
+        drawJuggler(renderer, prims, posedJuggler(juggler, scene.prop), jugglerMatrix(juggler), style);
+    }
 
     // Props, in the same colors (and, on rings, dash patterns) as the ladder.
     for (const BallState& b : scene.balls) {
@@ -554,10 +721,11 @@ int main() {
     // The settings a library pattern can carry, as they are now (all of them).
     auto currentPatternSettings = [&]() -> PatternSettings {
         PatternSettings current;
-        current.hasProp = current.hasTempo = current.hasDwell = true;
+        current.hasProp = current.hasTempo = current.hasDwell = current.hasDistance = true;
         current.prop = juggleParams.prop;
         current.tempo = juggleParams.bpm;
         current.dwell = juggleParams.dwellBeats;
+        current.distance = juggleParams.distance;
         return current;
     };
     // Applies the settings a library pattern (or an undo step) carries; leaves the rest alone.
@@ -569,6 +737,37 @@ int main() {
         juggleParams.prop = settings.prop;
         if (apply.hasTempo) juggleParams.bpm = apply.tempo;
         if (apply.hasDwell) juggleParams.dwellBeats = apply.dwell;
+        if (apply.hasDistance) juggleParams.distance = apply.distance;
+    };
+
+    // Settings changes become undo steps by polling: once the settings differ from the last
+    // recorded ones and nothing has changed (and no control is held) for kSettingsSettleSeconds,
+    // the change is recorded. Anything else that records a step records a pending settings
+    // change first, so the steps stay in order.
+    constexpr double kSettingsSettleSeconds = 0.6;
+    PatternSettings recordedSettings = currentPatternSettings();
+    PatternSettings lastSeenSettings = recordedSettings;
+    double settingsChangedAt = 0.0;
+    auto recordSettingsChange = [&]() {
+        const PatternSettings now = currentPatternSettings();
+        if (now != recordedSettings) history.recordWithSettings(history.current, recordedSettings, now);
+        recordedSettings = lastSeenSettings = now;
+    };
+    auto pollSettingsChange = [&]() {
+        const PatternSettings now = currentPatternSettings();
+        if (now != lastSeenSettings) {
+            lastSeenSettings = now;
+            settingsChangedAt = ImGui::GetTime();
+        }
+        if (ImGui::IsAnyItemActive()) settingsChangedAt = ImGui::GetTime();
+        if (now != recordedSettings && ImGui::GetTime() - settingsChangedAt >= kSettingsSettleSeconds)
+            recordSettingsChange();
+    };
+    // After undo/redo or a library load: what's showing is what's recorded.
+    auto settingsRecorded = [&]() { recordedSettings = lastSeenSettings = currentPatternSettings(); };
+    auto recordPattern = [&](const std::string& text) {
+        recordSettingsChange();
+        history.record(text);
     };
 
     // Replaces the pattern with the one written in `text` (used by undo/redo).
@@ -584,23 +783,27 @@ int main() {
             cancelLadderEdit(ladderEdit);
             return;
         }
+        recordSettingsChange();  // a change still settling is the one to undo
         if (history.undo.empty()) return;
         const HistoryStep step = history.undo.back();
         history.undo.pop_back();
         history.redo.push_back(step);
         history.current = step.before;
-        showPatternText(step.before);
+        if (step.before != step.after) showPatternText(step.before);
         if (step.settingsChanged) applyPatternSettings(step.settingsBefore);
+        settingsRecorded();
     };
     auto redo = [&]() {
+        recordSettingsChange();  // a change still settling is a new step, which ends redo
         if (history.redo.empty()) return;
         cancelLadderEdit(ladderEdit);
         const HistoryStep step = history.redo.back();
         history.redo.pop_back();
         history.undo.push_back(step);
         history.current = step.after;
-        showPatternText(step.after);
+        if (step.before != step.after) showPatternText(step.after);
         if (step.settingsChanged) applyPatternSettings(step.settingsAfter);
+        settingsRecorded();
     };
     // The pattern library: built-in patterns, the user's own (saved, renamed and deleted from
     // the File menu), and the recently loaded ones.
@@ -612,10 +815,12 @@ int main() {
     // Loads a pattern from the library: its siteswap, and whatever settings it carries. One
     // undo step, which also puts the settings back. It goes to the top of Recent.
     auto loadLibraryPattern = [&](const LibraryPattern& chosen, bool mine) {
+        recordSettingsChange();
         const PatternSettings before = currentPatternSettings();
         showPatternText(chosen.siteswap);
         applyPatternSettings(chosen.settings);
         history.recordWithSettings(siteswapText, before, currentPatternSettings());
+        settingsRecorded();
         addRecentPattern(&recentPatterns, chosen, mine);
         saveRecentPatterns(recentPatterns);  // not worth bothering the user if this fails
     };
@@ -629,15 +834,22 @@ int main() {
                         "The change is kept until JuggleSim closes.";
     };
 
-    TempoPanelState tempoPanel;
+    TweakablesPanelState tweakablesPanel;
     bool showImGuiDemo = false;
     bool showColorPreview = false;
     Playback playback;
     CameraControl camera;
-    // Pattern extents depend only on the loop and timing, so they're cached.
-    std::vector<int> extentsLoop;
+    // Selection in the 3D view (passing patterns): the selected juggler, or -1. With
+    // frameSelected the camera frames just that juggler.
+    int selectedJuggler = -1;
+    bool frameSelected = false;
+    Mat4 lastViewProj = Mat4::identity();  // the 3D view's camera as last drawn (for picking)
+    // Pattern extents depend only on the loop, timing and framing, so they're cached.
+    JugglingLoop extentsLoop;
     JuggleParams extentsParams{-1.0, -1.0};
+    int extentsJuggler = -2;
     SceneExtents extents;
+
     auto stepPlayback = [&](double beats) {
         playback.playing = false;
         playback.beat += beats;
@@ -673,6 +885,7 @@ int main() {
             if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) playback.playing = !playback.playing;
             if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) stepPlayback(io.KeyShift ? 1.0 : kStepBeats);
             if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) stepPlayback(io.KeyShift ? -1.0 : -kStepBeats);
+            if (ImGui::IsKeyPressed(ImGuiKey_F, false)) frameSelected = selectedJuggler >= 0;
         }
 
         // --- Main menu bar ---
@@ -724,11 +937,9 @@ int main() {
                 if (ImGui::MenuItem("Step Forward One Beat", "Shift+Right")) stepPlayback(1.0);
                 if (ImGui::MenuItem("Step Back One Beat", "Shift+Left")) stepPlayback(-1.0);
                 ImGui::Separator();
-                if (ImGui::MenuItem("Reset Tempo and Dwell")) {
-                    const JuggleParams defaults;
-                    juggleParams.bpm = defaults.bpm;
-                    juggleParams.dwellBeats = defaults.dwellBeats;
-                }
+                if (ImGui::MenuItem("Reset Tweakables")) resetTweakables(juggleParams);
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+                    ImGui::SetTooltip("Tempo 150 BPM, dwell 1.40 beats, automatic distance");
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Props")) {
@@ -746,7 +957,13 @@ int main() {
             if (ImGui::BeginMenu("View")) {
                 if (ImGui::MenuItem("Reset Ladder View", "Home over ladder", false, !ladderViewIsDefault(ladderEdit)))
                     resetLadderView(ladderEdit);
-                if (ImGui::MenuItem("Reset Camera", "Home over juggler")) resetCamera(camera);
+                if (ImGui::MenuItem("Reset Camera", "Home over juggler")) {
+                    resetCamera(camera);
+                    frameSelected = false;
+                }
+                if (ImGui::MenuItem("Frame All", nullptr, false, frameSelected)) frameSelected = false;
+                if (ImGui::MenuItem("Frame Selected", "F", false, selectedJuggler >= 0))
+                    frameSelected = true;
                 ImGui::Separator();
                 if (ImGui::BeginMenu("Color Vision")) {
                     for (int i = 0; i < static_cast<int>(ColorVisionMode::Count); ++i) {
@@ -787,31 +1004,42 @@ int main() {
         ImGui::SetNextWindowSize(ImVec2(leftWidth, H - top - entryHeight));
         // The ladder handles the mouse wheel itself (pan/zoom), so the pane mustn't scroll.
         if (ImGui::Begin("Ladder", nullptr, paneFlags | ImGuiWindowFlags_NoScrollWithMouse)) {
-            const LadderToolbarRequest request = drawLadderToolbar(pattern, patternValid, ladderEdit);
-            if (request.resetView) resetLadderView(ladderEdit);
-            if (request.newPeriodBeats > 0) {
-                cancelLadderEdit(ladderEdit);
-                pattern = withPeriod(pattern, request.newPeriodBeats);
-                std::string text;
-                if (patternToSiteswap(pattern, &text)) {
-                    std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
-                    parsed = parseSiteswap(siteswapText);
-                    history.record(text);
+            if (pattern.jugglers > 1) {
+                // Passing patterns get their own ladder in the next update.
+                ImGui::Dummy(ImVec2(0.0f, ImGui::GetFontSize()));
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextUnformatted("The ladder for passing patterns is coming in the next update.");
+                ImGui::Spacing();
+                ImGui::TextDisabled("For now, edit passing patterns by typing them below, or load one from "
+                                    "File > JuggleSim Patterns > 2 Jugglers.");
+                ImGui::PopTextWrapPos();
+            } else {
+                const LadderToolbarRequest request = drawLadderToolbar(pattern, patternValid, ladderEdit);
+                if (request.resetView) resetLadderView(ladderEdit);
+                if (request.newPeriodBeats > 0) {
+                    cancelLadderEdit(ladderEdit);
+                    pattern = withPeriod(pattern, request.newPeriodBeats);
+                    std::string text;
+                    if (patternToSiteswap(pattern, &text)) {
+                        std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
+                        parsed = parseSiteswap(siteswapText);
+                        recordPattern(text);
+                    }
                 }
-            }
-            const LadderEditResult edited =
-                drawLadderDiagram(pattern, patternValid, settings.colorVision, ladderEdit, playback.beat);
-            if (edited.startedChain) playback.playing = false;  // don't confuse the juggler mid-edit
-            if (edited.committed) {
-                // A closed edit chain is always a valid siteswap; double-check before using it.
-                Pattern editedPattern = patternFromLoopValues(edited.loop);
-                editedPattern = withPeriod(editedPattern, shortestPeriodBeats(editedPattern));
-                std::string text;
-                if (patternToSiteswap(editedPattern, &text) && parseSiteswap(text).valid) {
-                    pattern = editedPattern;
-                    std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
-                    parsed = parseSiteswap(siteswapText);
-                    history.record(text);
+                const LadderEditResult edited =
+                    drawLadderDiagram(pattern, patternValid, settings.colorVision, ladderEdit, playback.beat);
+                if (edited.startedChain) playback.playing = false;  // don't confuse the juggler mid-edit
+                if (edited.committed) {
+                    // A closed edit chain is always a valid siteswap; double-check before using it.
+                    Pattern editedPattern = patternFromLoopValues(edited.loop);
+                    editedPattern = withPeriod(editedPattern, shortestPeriodBeats(editedPattern));
+                    std::string text;
+                    if (patternToSiteswap(editedPattern, &text) && parseSiteswap(text).valid) {
+                        pattern = editedPattern;
+                        std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
+                        parsed = parseSiteswap(siteswapText);
+                        recordPattern(text);
+                    }
                 }
             }
         }
@@ -833,8 +1061,11 @@ int main() {
             }
             // Typing is one undo step, recorded when you press Enter or leave the box (so
             // undoing "531" doesn't step back through "53" and "5").
-            if (ImGui::IsItemDeactivatedAfterEdit() && parsed.valid) history.record(siteswapText);
-            if (patternValid)
+            if (ImGui::IsItemDeactivatedAfterEdit() && parsed.valid) recordPattern(siteswapText);
+            if (patternValid && pattern.jugglers > 1)
+                ImGui::TextDisabled("%d jugglers, %d objects, period %d", pattern.jugglers, ballCount(pattern),
+                                    loopPeriodBeats(pattern));
+            else if (patternValid)
                 ImGui::TextDisabled("%d objects, period %d", ballCount(pattern),
                                     loopPeriodBeats(pattern));
             else if (!parsed.error.empty())
@@ -845,11 +1076,36 @@ int main() {
         }
         ImGui::End();
 
+        // --- The scene at this moment ---
+        const JugglingLoop loop = patternValid ? patternLoop(pattern) : JugglingLoop();
+        if (selectedJuggler >= pattern.jugglers || pattern.jugglers < 2) {  // (kept while retyping)
+            selectedJuggler = -1;
+            frameSelected = false;
+        }
+        JugglerScene scene;
+        if (patternValid) {
+            scene = evaluateScene(loop, computeBallOrbits(loop), juggleParams, playback.beat);
+            const int framedJuggler = frameSelected ? selectedJuggler : -1;
+            if (loop != extentsLoop || juggleParams.bpm != extentsParams.bpm ||
+                juggleParams.dwellBeats != extentsParams.dwellBeats ||
+                juggleParams.prop != extentsParams.prop || juggleParams.distance != extentsParams.distance ||
+                framedJuggler != extentsJuggler) {
+                extents = computeSceneExtents(loop, juggleParams, framedJuggler);
+                extentsLoop = loop;
+                extentsParams = juggleParams;
+                extentsJuggler = framedJuggler;
+            }
+        }
+
         // Mouse input for the 3D view: an invisible window over the juggler pane (the 3D view
-        // itself is drawn straight to OpenGL, not by ImGui).
+        // itself is drawn straight to OpenGL, not by ImGui). Drag to orbit, wheel to zoom; with
+        // passing patterns, click a juggler to select them (click empty space to deselect) and
+        // double-click to frame them (double-click empty space to frame everyone).
         const float transportHeightForInput = ImGui::GetFrameHeight() + style.WindowPadding.y * 2.0f;
-        ImGui::SetNextWindowPos(ImVec2(leftWidth, top));
-        ImGui::SetNextWindowSize(ImVec2(W - leftWidth, H - top - transportHeightForInput));
+        const ImVec2 viewMin(leftWidth, top);
+        const ImVec2 viewSize(W - leftWidth, H - top - transportHeightForInput);
+        ImGui::SetNextWindowPos(viewMin);
+        ImGui::SetNextWindowSize(viewSize);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
         if (ImGui::Begin("Juggler view input", nullptr,
                          paneFlags | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse)) {
@@ -861,24 +1117,49 @@ int main() {
                     camera.yaw -= d.x * 0.008f;
                     camera.pitch = std::clamp(camera.pitch + d.y * 0.008f, -1.45f, 1.45f);
                 }
+                const bool canSelect = scene.jugglers.size() > 1;
+                const int underMouse =
+                    canSelect && ImGui::IsItemHovered() ? pickJuggler(scene, lastViewProj, viewMin, viewSize, io.MousePos)
+                                                        : -1;
+                // A click is a press and release without dragging (dragging orbits).
+                const float clickSlop = io.MouseDragThreshold;
+                if (canSelect && ImGui::IsItemDeactivated() &&
+                    io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] < clickSlop * clickSlop) {
+                    selectedJuggler = underMouse;
+                    if (underMouse < 0) frameSelected = false;
+                }
+                if (canSelect && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    selectedJuggler = underMouse;
+                    frameSelected = underMouse >= 0;
+                }
                 if (ImGui::IsItemHovered()) {
                     if (io.MouseWheel != 0.0f)
                         camera.zoom = std::clamp(camera.zoom * std::pow(0.88f, io.MouseWheel), 0.15f, 6.0f);
-                    if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Home)) resetCamera(camera);
+                    if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Home)) {
+                        resetCamera(camera);
+                        frameSelected = false;
+                    }
                     // A hint, only after the mouse has rested here a moment.
-                    if (!ImGui::IsItemActive() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-                        ImGui::SetTooltip("Drag to orbit, wheel to zoom, Home to reset");
+                    if (!ImGui::IsItemActive() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
+                        if (underMouse >= 0)
+                            ImGui::SetTooltip("Juggler %d\nClick to select, double-click to frame", underMouse + 1);
+                        else if (canSelect)
+                            ImGui::SetTooltip("Drag to orbit, wheel to zoom, Home to reset\n"
+                                              "Click a juggler to select them, double-click to frame them");
+                        else
+                            ImGui::SetTooltip("Drag to orbit, wheel to zoom, Home to reset");
+                    }
                 }
             }
         }
         ImGui::End();
         ImGui::PopStyleVar();
 
-        // Tempo and dwell, in the top-right corner of the juggler pane (over the input window,
-        // which never comes to the front).
+        // Tweakables, in the top-right corner of the juggler pane (over the input window, which
+        // never comes to the front).
         const float panelMargin = style.WindowPadding.x;
-        if (drawTempoPanel(juggleParams, settings.tempoPanelCollapsed,
-                           ImVec2(W - panelMargin, top + panelMargin), tempoPanel))
+        if (drawTweakablesPanel(juggleParams, loop, settings.tempoPanelCollapsed,
+                                ImVec2(W - panelMargin, top + panelMargin), tweakablesPanel))
             saveSettings(settings);
 
         // Transport bar along the bottom of the juggler pane (right half).
@@ -914,6 +1195,7 @@ int main() {
             saved.siteswap = siteswapText;
             saved.name = saveRequest.name;
             saved.settings = currentPatternSettings();
+            saved.settings.hasDistance = pattern.jugglers > 1;  // only passing patterns have one
             classifyPattern(&saved);
             bool replaced = false;
             if (saveRequest.replace) {
@@ -956,6 +1238,15 @@ int main() {
         }
         if (showImGuiDemo) ImGui::ShowDemoWindow(&showImGuiDemo);
 
+        pollSettingsChange();
+
+        // The camera (after this frame's orbit and zoom), and the juggler numbers, drawn by ImGui
+        // behind its windows but over the 3D view.
+        const float jugglerAspect = viewSize.y > 0.0f ? viewSize.x / viewSize.y : 1.0f;
+        const CameraView cameraView = updateCamera(camera, extents, jugglerAspect, io.DeltaTime);
+        lastViewProj = cameraViewProj(cameraView, jugglerAspect);
+        drawJugglerLabels(ImGui::GetBackgroundDrawList(), scene, lastViewProj, viewMin, viewSize, selectedJuggler);
+
         ImGui::Render();
 
         // --- Draw ---
@@ -968,22 +1259,8 @@ int main() {
         const int transportPixels = static_cast<int>(transportHeight);
         const GLRect jugglerRect{viewX, transportPixels, g_width - viewX,
                                  g_height - static_cast<int>(top) - transportPixels};
-        JugglerScene scene;
-        if (patternValid) {
-            const std::vector<int> loop = loopThrowValues(pattern);
-            scene = evaluateScene(loop, computeBallOrbits(loop), juggleParams, playback.beat);
-            if (loop != extentsLoop || juggleParams.bpm != extentsParams.bpm ||
-                juggleParams.dwellBeats != extentsParams.dwellBeats ||
-                juggleParams.prop != extentsParams.prop) {
-                extents = computeSceneExtents(loop, juggleParams);
-                extentsLoop = loop;
-                extentsParams = juggleParams;
-            }
-        }
-        const float jugglerAspect =
-            jugglerRect.h > 0 ? static_cast<float>(jugglerRect.w) / static_cast<float>(jugglerRect.h) : 1.0f;
-        const CameraView cameraView = updateCamera(camera, extents, jugglerAspect, io.DeltaTime);
-        renderJugglerView(renderer, prims, propMeshes, scene, cameraView, settings.colorVision, jugglerRect);
+        renderJugglerView(renderer, prims, propMeshes, scene, cameraView, selectedJuggler, settings.colorVision,
+                          jugglerRect);
 
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         ::SwapBuffers(g_hdc);

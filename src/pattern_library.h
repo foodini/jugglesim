@@ -24,10 +24,14 @@ struct PatternSettings {
     double tempo = 150.0;  // beats per minute
     bool hasDwell = false;
     double dwell = 1.4;  // beats
+    // Distance between passing jugglers (m); 0 = automatic. Only saved for passing patterns.
+    bool hasDistance = false;
+    double distance = 0.0;
 
     bool operator==(const PatternSettings& o) const {
         return hasProp == o.hasProp && prop == o.prop && hasTempo == o.hasTempo &&
-               tempo == o.tempo && hasDwell == o.hasDwell && dwell == o.dwell;
+               tempo == o.tempo && hasDwell == o.hasDwell && dwell == o.dwell &&
+               hasDistance == o.hasDistance && distance == o.distance;
     }
     bool operator!=(const PatternSettings& o) const { return !(*this == o); }
 };

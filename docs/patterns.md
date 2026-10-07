@@ -34,13 +34,15 @@ before, including the props, tempo and dwell if loading changed them. Where a pa
 name, its siteswap is shown beside it in grey. Hovering over a pattern that carries its own
 props, tempo or dwell shows them.
 
-*2 Jugglers* to *4 Jugglers* in *JuggleSim Patterns* are placeholders for now: they'll fill in
-when passing patterns are supported.
+*2 Jugglers* in *JuggleSim Patterns* has some common club-passing patterns (Ultimates, 2-count,
+3-count, 4-count, 6-count and a few more). *3 Jugglers* and *4 Jugglers* are placeholders for
+now.
 
 ## Saving your own patterns
 
 *File > Save to My Patterns...* saves the current pattern under a name you choose (the siteswap,
-unless you change it). It's saved together with the current props, tempo and dwell, and loading
+unless you change it). It's saved together with the current props, tempo and dwell (and, for a
+passing pattern, the distance between the jugglers), and loading
 it later sets all of them again. If you already have a pattern with that name, you're asked
 whether to replace it.
 
@@ -65,7 +67,8 @@ siteswap ; name ; settings
 
 It's plain text, so you can back it up, copy it to another computer, or edit it by hand
 (JuggleSim reads it when it starts). The settings are optional:
-`props=balls|clubs|rings`, `tempo=` (beats per minute) and `dwell=` (beats).
+`props=balls|clubs|rings`, `tempo=` (beats per minute), `dwell=` (beats) and, for passing
+patterns, `distance=` (meters, 1 to 5, or `auto`).
 
 A pattern written in notation this version of JuggleSim can't read yet (for example sync
 notation, before it's supported) is kept in the file and shown in *Manage My Patterns* (greyed

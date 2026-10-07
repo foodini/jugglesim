@@ -49,17 +49,38 @@ To look around:
 Your angle and zoom are kept relative to the automatic framing, so if you switch patterns while
 looking from the side, you stay at the side and the new pattern is still framed.
 
-## Tempo and dwell
+## Two jugglers
 
-Both are set in the panel in the top-right corner of the juggler pane:
+A passing pattern (see the siteswap box in [the ladder notes](ladder.md)) shows both jugglers
+facing each other, juggler 1 on the left as seen from the default camera, each with their
+number over their head. They look at their partner when nothing needs watching and follow the
+high throws when it does.
+
+- Balls passed to a juggler are caught where they catch their own throws. Clubs and rings are
+  caught further out, about 20 cm outside the shoulder and 20 cm in front, and higher passes
+  are caught higher, the way club passers reach for a pass.
+- **Click** a juggler to select them: their number turns dark-on-light and they're drawn in
+  gold. Click empty space to deselect.
+- **Double-click** a juggler (or select one and press **F**, or use *View > Frame Selected*) to
+  frame just them: their hands, what they hold and their own throws (passes leave the frame).
+  Double-click empty space, or use *View > Frame All*, to frame everyone again. *Home* and
+  *View > Reset Camera* also frame everyone.
+
+## Tweakables
+
+Tempo, dwell and, for passing patterns, the distance between the jugglers are set in the panel
+in the top-right corner of the juggler pane ("Tweakables" is a working name):
 
 - Drag a slider, or use its **-** and **+** buttons (or the mouse wheel over the slider) for
   fine steps: 1 BPM and 0.05 beats, or 10 BPM and 0.1 beats with **Shift**. Hold a button down
   to keep stepping.
 - **Double-click** (or **Ctrl+click**) a slider to type an exact value; **Enter** sets it.
-- **Reset** (or *Playback > Reset Tempo and Dwell*) goes back to 150 BPM and a dwell of 1.4.
+- **Reset** (or *Playback > Reset Tweakables*) goes back to 150 BPM, a dwell of 1.4 and the
+  automatic distance.
 - The arrow at the top left collapses the panel to a one-line readout ("150 BPM, dwell 1.40");
   click it again to bring the controls back. JuggleSim remembers which way you left it.
+- Changes can be undone (**Ctrl+Z**): each adjustment is one step, recorded once you've stopped
+  changing it for a moment.
 
 - **Tempo** is in beats per minute: one beat is one throw, alternating hands. It goes from 40 to
   420 (7 throws a second, about the fastest anyone throws accurately). The default is 150,
@@ -74,6 +95,12 @@ half a beat. A **2** is a hold: the ball simply stays in the hand.
 
 Throw heights follow from the tempo: every throw is timed to land exactly when it's due, so a
 faster tempo means lower throws.
+
+- **Distance** (passing patterns only) is how far apart the jugglers stand, body to body, from
+  1 to 5 m, in steps of 0.05 m (0.25 m with **Shift**). With **Auto** checked, it follows the
+  pattern's highest throw: 1 m plus 0.4 m for each step of throw height above 1, so about 1.8 m
+  for a pattern of 3s and 2.2 m with 4s. Moving the slider turns Auto off; checking it again
+  goes back to the automatic distance. Library patterns can carry a distance.
 
 ## Props
 

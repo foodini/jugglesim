@@ -164,7 +164,7 @@ void drawTreeLevel(const std::vector<const LibraryPattern*>& patterns, int level
             std::snprintf(label, sizeof(label), "%d Jugglers", jugglers);
             if (ImGui::BeginMenu(label, false)) ImGui::EndMenu();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("Coming with passing support");
+                ImGui::SetTooltip("Coming later");
         }
     }
 }
@@ -283,6 +283,13 @@ std::string describePatternSettings(const PatternSettings& s) {
     }
     if (s.hasDwell) {
         std::snprintf(buffer, sizeof(buffer), "%sdwell %.2f beats", text.empty() ? "" : ", ", s.dwell);
+        text += buffer;
+    }
+    if (s.hasDistance) {
+        if (s.distance > 0.0)
+            std::snprintf(buffer, sizeof(buffer), "%s%.2f m apart", text.empty() ? "" : ", ", s.distance);
+        else
+            std::snprintf(buffer, sizeof(buffer), "%sautomatic distance", text.empty() ? "" : ", ");
         text += buffer;
     }
     return text;

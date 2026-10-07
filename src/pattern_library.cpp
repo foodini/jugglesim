@@ -78,6 +78,15 @@ void parseSettings(const std::string& text, LibraryPattern* pattern) {
                 s.hasDwell = true;
                 s.dwell = number;
             }
+        } else if (key == "distance") {
+            if (value == "auto") {
+                s.hasDistance = true;
+                s.distance = 0.0;
+            } else if (parseNumber(value, &number) && number >= kMinPassingDistance &&
+                       number <= kMaxPassingDistance) {
+                s.hasDistance = true;
+                s.distance = number;
+            }
         } else {
             pattern->otherSettings.emplace_back(key, value);
         }
@@ -91,8 +100,8 @@ void classifyPattern(LibraryPattern* pattern) {
     const Siteswap parsed = parseSiteswap(pattern->siteswap);
     if (!parsed.valid) return;
     const Pattern p = patternFromSiteswap(parsed);
-    pattern->jugglers = 1;  // vanilla siteswap only, so far
-    pattern->props = ballCount(p);
+    pattern->jugglers = parsed.jugglers();
+    pattern->props = parsed.ballCount;
     pattern->period = shortestPeriodBeats(p);
 }
 
@@ -126,6 +135,7 @@ std::string formatPatternLine(const LibraryPattern& pattern) {
     if (s.hasProp) add("props", propTypeKey(s.prop));
     if (s.hasTempo) add("tempo", formatNumber(s.tempo));
     if (s.hasDwell) add("dwell", formatNumber(s.dwell));
+    if (s.hasDistance) add("distance", s.distance > 0.0 ? formatNumber(s.distance) : std::string("auto"));
     for (const std::pair<std::string, std::string>& other : pattern.otherSettings)
         add(other.first, other.second);
     if (!settings.empty()) line += " ; " + settings;

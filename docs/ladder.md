@@ -112,15 +112,27 @@ passing and synchronous throws in siteswap notation.
 ## Undo and redo
 
 **Ctrl+Z** undoes and **Ctrl+Y** (or **Ctrl+Shift+Z**) redoes, also under the *Edit* menu.
-Each of these is one step: a finished edit chain on the ladder, a change of period, or a
+Each of these is one step: a finished edit chain on the ladder, a change of period, a
 siteswap typed into the text box (recorded when you press Enter or click away, so undoing
-`531` doesn't step back through `53` and `5`). While you're typing in the text box, Ctrl+Z
+`531` doesn't step back through `53` and `5`), a pattern loaded from the library, or a change
+to the props, tempo, dwell or passing distance (recorded once you've stopped adjusting it for
+a moment, so dragging a slider is one step). While you're typing in the text box, Ctrl+Z
 undoes typing instead.
 
 ## The siteswap box
 
 Below the ladder is a text box for siteswap notation. Typing a valid siteswap replaces the
 pattern. When the pattern is changed some other way (for example with the period control), the
-text is rewritten to match. Only vanilla (asynchronous, one juggler, no multiplexes)
-siteswap is supported so far; sync, multiplex and passing notation are recognized and reported
-as not yet supported.
+text is rewritten to match. Vanilla siteswap (asynchronous, one juggler, no multiplexes) and
+two-person passing are supported so far; sync and multiplex notation, and passing for three or
+more jugglers, are recognized and reported as not yet supported.
+
+Passing patterns use [Juggling Lab's notation](https://jugglinglab.org/html/ssnotation.html):
+each juggler's throws between `<` and `>`, separated by `|`, with `p` marking a pass to the
+other juggler. `<3p 3|3p 3>` is a 2-count: each juggler passes every other throw. Both jugglers
+throw with the right hand on beat 1, and which hand catches a pass follows from its timing, as
+in any siteswap: a `3p` from the right lands in the partner's left, a `4p` in their right. The
+box below the text shows the number of jugglers along with the props and period.
+
+The ladder for passing patterns is coming in the next update. Until then the ladder pane says so,
+and passing patterns are edited by typing.
