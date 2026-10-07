@@ -3,7 +3,8 @@
 // Both are plain text in the same format, one pattern per line (see data/patterns.txt):
 //     siteswap ; name ; settings
 // The built-in library is compiled into the executable. The user's patterns live in
-// %APPDATA%\JuggleSim\my_patterns.txt and are rewritten whenever they change.
+// my_patterns.txt in the user data folder (see userDataPath in settings.h) and are rewritten
+// whenever they change.
 //
 // Patterns are grouped in the menu by juggler count, number of props and period, all worked
 // out from the siteswap.
@@ -79,12 +80,12 @@ constexpr int kMaxRecentPatterns = 8;
 // trims the list to kMaxRecentPatterns.
 void addRecentPattern(std::vector<RecentPattern>* recent, const LibraryPattern& pattern, bool mine);
 
-// The recent list (%APPDATA%\JuggleSim\recent_patterns.txt, most recent first). Each line is
+// The recent list (recent_patterns.txt in the user data folder, most recent first). Each line is
 // "mine" or "jugglesim", a space, then a library line.
 std::vector<RecentPattern> loadRecentPatterns();
 bool saveRecentPatterns(const std::vector<RecentPattern>& recent);
 
-// The user's patterns (%APPDATA%\JuggleSim\my_patterns.txt). A missing file is an empty list.
+// The user's patterns (my_patterns.txt in the user data folder). A missing file is an empty list.
 std::vector<LibraryPattern> loadUserPatterns();
 // Writes them (to a temporary file first, then swaps it in, so a failed write can't leave a
 // half-written file). Returns false if the file couldn't be written.

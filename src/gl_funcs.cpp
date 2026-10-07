@@ -1,6 +1,8 @@
 // gl_funcs.cpp - see gl_funcs.h.
 #include "gl_funcs.h"
 
+#include "platform.h"
+
 #include <cstdint>
 
 namespace gl {
@@ -11,6 +13,7 @@ JS_GL_FUNCTIONS(JS_GL_DEFINE)
 
 namespace {
 
+#if defined(_WIN32)
 // wglGetProcAddress only returns extension / post-1.1 functions, and some drivers signal failure
 // with small sentinel values instead of nullptr. Fall back to opengl32.dll for anything it exports.
 PROC getProc(const char* name) {
@@ -22,6 +25,9 @@ PROC getProc(const char* name) {
     }
     return p;
 }
+#else
+void* getProc(const char* name) { return platformGetProcAddress(name); }
+#endif
 
 }  // namespace
 

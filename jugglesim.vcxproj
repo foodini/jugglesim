@@ -76,6 +76,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="src\app.cpp" />
     <ClCompile Include="src\color_vision.cpp" />
     <ClCompile Include="src\draw_helpers.cpp" />
     <ClCompile Include="src\gl_funcs.cpp" />
@@ -102,6 +103,7 @@
     <ClCompile Include="third_party\imgui\backends\imgui_impl_win32.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\app.h" />
     <ClInclude Include="src\color_vision.h" />
     <ClInclude Include="src\draw_helpers.h" />
     <ClInclude Include="src\gl_funcs.h" />
@@ -115,6 +117,7 @@
     <ClInclude Include="src\pattern.h" />
     <ClInclude Include="src\pattern_library.h" />
     <ClInclude Include="src\pattern_library_ui.h" />
+    <ClInclude Include="src\platform.h" />
     <ClInclude Include="src\prop_figure.h" />
     <ClInclude Include="src\renderer.h" />
     <ClInclude Include="src\resource.h" />

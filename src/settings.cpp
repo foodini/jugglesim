@@ -22,9 +22,24 @@ std::string trim(const std::string& s) {
 }  // namespace
 
 std::filesystem::path userDataPath(const wchar_t* fileName) {
+#if defined(_WIN32)
     const wchar_t* appData = _wgetenv(L"APPDATA");
     if (!appData || !*appData) return std::filesystem::path(fileName);
     return std::filesystem::path(appData) / L"JuggleSim" / fileName;
+#else
+    // macOS: ~/Library/Application Support/JuggleSim. (Elsewhere: ~/.config/JuggleSim, or
+    // $XDG_CONFIG_HOME/JuggleSim.)
+    const char* home = std::getenv("HOME");
+    if (!home || !*home) return std::filesystem::path(fileName);
+#if defined(__APPLE__)
+    return std::filesystem::path(home) / "Library" / "Application Support" / "JuggleSim" / fileName;
+#else
+    const char* config = std::getenv("XDG_CONFIG_HOME");
+    const std::filesystem::path base = (config && *config) ? std::filesystem::path(config)
+                                                           : std::filesystem::path(home) / ".config";
+    return base / "JuggleSim" / fileName;
+#endif
+#endif
 }
 
 AppSettings loadSettings() {

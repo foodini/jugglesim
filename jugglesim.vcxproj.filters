@@ -15,6 +15,9 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\app.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
     <ClCompile Include="src\color_vision.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -89,6 +92,9 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="src\app.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClInclude Include="src\color_vision.h">
       <Filter>src</Filter>
     </ClInclude>
@@ -126,6 +132,9 @@
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\pattern_library_ui.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\platform.h">
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\prop_figure.h">
