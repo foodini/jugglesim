@@ -2,12 +2,14 @@
 //
 // Windows' opengl32.lib only exports OpenGL 1.1. Everything newer has to be fetched at runtime
 // with wglGetProcAddress after a context is current. Rather than pull in GLAD/GLEW, we load
-// only the handful of functions we actually use. Add new ones to JS_GL_FUNCTIONS below.
+// only the handful of functions we actually use. Add new ones to JS_GL_FUNCTIONS below. Other
+// platforms load them the same way, through platformGetProcAddress (platform.h).
 //
 // Usage: gl::CreateShader(...), gl::BindVertexArray(...), etc.
 // OpenGL 1.1 functions (glClear, glViewport, glDrawElements, ...) are called directly.
 #pragma once
 
+#if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -16,12 +18,25 @@
 #endif
 #include <windows.h>
 #include <GL/gl.h>
+#elif defined(__APPLE__)
+#define GL_SILENCE_DEPRECATION  // OpenGL is deprecated on macOS, but still works
+#include <OpenGL/gl3.h>
+#else
+#define GL_GLEXT_PROTOTYPES  // (for the OpenGL 1.1 functions, which libGL exports)
+#include <GL/glcorearb.h>
+#endif
 
 #include <cstddef>
 #include <string>
 
+#ifndef APIENTRY
+#define APIENTRY
+#endif
+
+#if defined(_WIN32)
 typedef char GLchar;
 typedef std::ptrdiff_t GLsizeiptr;
+#endif
 
 #ifndef GL_ARRAY_BUFFER
 #define GL_ARRAY_BUFFER 0x8892

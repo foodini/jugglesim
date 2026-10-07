@@ -167,7 +167,7 @@ std::string sanitizePatternName(const std::string& name) {
 
 namespace {
 
-// Writes `text` to %APPDATA%\JuggleSim\<fileName>: to a temporary file first, then swapped in,
+// Writes `text` to the user data folder (userDataPath, settings.h): to a temporary file first, then swapped in,
 // so a failed write can't leave a half-written file.
 bool writeUserFile(const wchar_t* fileName, const std::string& text) {
     const std::filesystem::path path = userDataPath(fileName);

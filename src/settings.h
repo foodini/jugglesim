@@ -24,6 +24,7 @@ AppSettings loadSettings();
 // Returns false if the file couldn't be written (the app keeps running either way).
 bool saveSettings(const AppSettings& settings);
 
-// Where per-user files live: %APPDATA%\JuggleSim\<fileName>, or the working directory if
-// APPDATA is unset. (The folder may not exist yet; writers create it.)
+// Where per-user files live: %APPDATA%\JuggleSim\<fileName> on Windows,
+// ~/Library/Application Support/JuggleSim/<fileName> on macOS, or the working directory if
+// that can't be found. (The folder may not exist yet; writers create it.)
 std::filesystem::path userDataPath(const wchar_t* fileName);

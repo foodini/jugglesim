@@ -57,14 +57,55 @@ errors and warnings to `build_issues.log`. Output goes to
 `bin\x64\<Configuration>\jugglesim.exe`. Debug builds use the console subsystem so `printf`
 output is visible; Release builds are a plain windowed app.
 
+## Building on macOS
+
+The Mac build uses [GLFW](https://www.glfw.org/) for its window, as a second git submodule
+(Windows doesn't need it). Once, from the repository root:
+
+```
+git submodule add https://github.com/glfw/glfw.git third_party/glfw
+cd third_party/glfw
+git checkout 3.4
+cd ../..
+git add third_party/glfw .gitmodules
+```
+
+(After that, a fresh clone gets it with `git clone --recurse-submodules` or
+`git submodule update --init`, as with ImGui.)
+
+You need Apple's Command Line Tools, not the whole of Xcode: `xcode-select --install`. Then:
+
+```
+./build_mac.sh              JuggleSim.app for this Mac (bin/mac/JuggleSim.app)
+./build_mac.sh run          build and start it, with its messages in the terminal
+./build_mac.sh universal    one app for Apple Silicon and Intel Macs, zipped to hand out
+                            (bin/mac/JuggleSim-mac.zip)
+./build_mac.sh debug        unoptimized, with debug info
+./build_mac.sh clean
+```
+
+`build_mac.sh` runs `make -f mac.mk` (see `mac.mk`). The app runs on macOS 11 (Big Sur) and later.
+
+Handing the app to someone else: it isn't signed with an Apple developer ID, so the first time
+they open it, macOS warns that it can't check it. Right-click (or Control-click) the app,
+choose **Open**, and confirm; after that it opens normally.
+
+On a Mac, the shortcuts written with **Ctrl** in these docs use **Cmd** instead (Cmd+Z, Cmd+wheel
+to zoom the ladder, and so on). Settings and your patterns live in
+`~/Library/Application Support/JuggleSim`.
+
 ## Layout
 
 ```
 jugglesim.sln / jugglesim.vcxproj
 jugglesim.rc          resources compiled into the exe (the pattern library)
-build.bat             command-line build (see above)
+build.bat             command-line build on Windows (see above)
+mac.mk, build_mac.sh  the macOS build (see above)
 src/
-  main.cpp            Win32 window, WGL context, ImGui setup, pane layout, main loop
+  app.h/.cpp          the app itself: panes, menus, editing, playback, drawing (every platform)
+  platform.h          what each platform provides to the app (window, input, OpenGL, files)
+  main.cpp            Windows: Win32 window, WGL context, ImGui's Win32 backend
+  main_glfw.cpp       macOS: GLFW window and OpenGL 3.3 core context, ImGui's GLFW backend
   gl_funcs.h/.cpp     tiny loader for the OpenGL 3.3 functions we use (no GLAD/GLEW)
   math3d.h            Vec3 / Mat4 (no GLM)
   mesh.h/.cpp         procedural meshes: sphere, cylinder, frustum, cube, lathe, ring sectors
@@ -88,6 +129,7 @@ data/patterns.txt     the built-in pattern library (compiled into the exe by jug
 docs/                 user documentation: ladder.md, juggler.md, patterns.md
 docs/design/          design notes (multi_juggler.md: passing, linking, choreography)
 third_party/imgui/    git submodule
+third_party/glfw/     git submodule (macOS build only)
 ```
 
 Adding a new OpenGL 2.0+ function: add one line to `JS_GL_FUNCTIONS` in `gl_funcs.h`, then call
