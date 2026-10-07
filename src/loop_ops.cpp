@@ -340,7 +340,7 @@ bool rethrowFrom(const JugglingLoop& loop, Slot from, Slot landing, JugglingLoop
     const int fromSlot = slotIndex(loop, from.juggler, from.beat);
     const LoopThrow old = loop.throws[static_cast<size_t>(fromSlot)];
     JugglingLoop out = loop;
-    if (old.value != kOpenThrow) {
+    if (old.value > 0) {  // (an empty hand, 0, just gives way: there's no prop to re-home)
         if (displacedAny) *displacedAny = true;
         if (displacedLanding) *displacedLanding = Slot{old.dest, from.beat + old.value};
     }

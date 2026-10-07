@@ -1,3 +1,7 @@
+* I'm occasionally seeing a pass line that intersects a beat/hand line as it crosses over
+  it. We should think about how to avoid this without breaking the crossing-path info that
+  we get - like when you do a 97531, the crossing point of the props illustrates that they
+  all peak at the same time. Something to think about for the long run.
 * add a config to choose between straight and spline lines in the ladder.
 * add a config to choose a prop (clubs, balls, rings, bowling balls, and we really need
   some completely ridiculous prop.) 

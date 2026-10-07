@@ -583,13 +583,16 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
     Slot hoverZeroSlot;      // ...here
     bool hoverOpen = false;  // a sketch's open throw ("?") under the mouse...
     Slot hoverOpenSlot;      // ...here
+    bool hoverInbound = false;  // a sketch spot that throws but that nothing lands in, under the mouse...
+    Slot hoverInboundSlot;      // ...here
     // Holding (or drawing): which slot would a click drop the held end on?
     bool haveTarget = false;
     Slot target;
 
     if (canvasHovered && inBody && !chain.active && !edit.drawing) {
-        // Empty beats (0s) can be picked up too (they "land" on their own beat), and in a
-        // sketch, open throws ("?") are where drawing starts. Right on one of those points, it
+        // Empty beats (0s) can be picked up too (they "land" on their own beat). In a sketch,
+        // open throws ("?") are where drawing starts, and a spot that throws something but that
+        // nothing lands in is where a catch can be drawn into. Right on one of those points, it
         // wins over the curves passing by.
         {
             float bestD = fontSize * 0.6f;
@@ -597,21 +600,23 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
                 for (int j = 0; j < jugglers; ++j) {
                     const Slot s{j, b};
                     const int v = throwAt(s).value;
-                    if (v != 0 && !(sketch && v == kOpenThrow)) continue;
+                    const bool inbound = sketch && v > 0 && nothingLandsIn(s);
+                    if (v != 0 && !(sketch && v == kOpenThrow) && !inbound) continue;
                     const ImVec2 p = slotPoint(s);
                     const float d = std::hypot(p.x - mouse.x, p.y - mouse.y);
                     if (d < bestD) {
                         bestD = d;
                         hoverZero = v == 0;
                         hoverOpen = v == kOpenThrow;
-                        hoverZeroSlot = hoverOpenSlot = s;
+                        hoverInbound = inbound;
+                        hoverZeroSlot = hoverOpenSlot = hoverInboundSlot = s;
                     }
                 }
             }
         }
         // The half of a throw nearest the mouse is the end a click picks up: its catch, or its
         // throw (where it leaves from).
-        const HitResult hit = (hoverZero || hoverOpen) ? HitResult() : pickThrow([&](const DrawnThrow& d, float t) {
+        const HitResult hit = (hoverZero || hoverOpen || hoverInbound) ? HitResult() : pickThrow([&](const DrawnThrow& d, float t) {
             const HeldEnd e = t >= 0.5f ? HeldEnd::Arrival : HeldEnd::Departure;
             return edit.hovering && d.from == edit.hoverSlot && e == edit.hoverEnd;
         }, [](float) { return true; });
@@ -641,6 +646,12 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
             edit.drawEnd = (hoverIndex >= 0 && hoverEnd == HeldEnd::Departure) ? HeldEnd::Departure : HeldEnd::Arrival;
             edit.drawFrom = from;
             edit.drawTo = landingSlot(from, t);
+        } else if (leftClicked && hoverInbound) {
+            // Draw a catch into this spot: pick the spot the prop is thrown from.
+            result.startedDrawing = true;
+            edit.drawing = true;
+            edit.drawEnd = HeldEnd::Departure;
+            edit.drawTo = hoverInboundSlot;
         } else if (leftClicked && hoverOpen) {
             result.startedDrawing = true;
             edit.drawing = true;
@@ -825,7 +836,7 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         drawBezierHalfHighlight(dl, c.p0, c.c1, c.c2, c.p1, hoverEnd == HeldEnd::Departure,
                                 ballStyle(colorVision, h.ball).color, 1.0f);
     }
-    if (hoverZero || hoverOpen)
+    if (hoverZero || hoverOpen || hoverInbound)
         dl->AddCircle(slotPoint(hoverZeroSlot), 9.0f, mixColor(ghostColor, white, 0.5f, 0.9f), 0, 2.0f);
 
     // Holding: the empty spot(s), the rubber band and its repeats.
@@ -1138,6 +1149,9 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
             ImGui::SetTooltip("%s Then click where it goes next (Esc stops).", what.c_str());
         else
             ImGui::SetTooltip("%s Joins the path that carries on from here: done.", what.c_str());
+    } else if (hoverInbound && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        ImGui::SetTooltip("Nothing lands here yet. Click to draw a throw that's caught here,\n"
+                          "then click where it's thrown from.");
     } else if (hoverOpen && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         ImGui::SetTooltip("Not decided yet. Click to draw a throw from here.");
     } else if (sketch && hoverIndex >= 0 && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {

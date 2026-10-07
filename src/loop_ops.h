@@ -86,7 +86,7 @@ bool drawThrow(const JugglingLoop& loop, Slot from, Slot target, JugglingLoop* r
                Slot* displaced);
 
 // The other way round: a throw that lands in `landing` (absolute beats; nothing else lands
-// there) is given `from` as the spot it's thrown from. If `from` already threw something, that
+// there) is given `from` as the spot it's thrown from. If `from` already threw a prop, that
 // throw is displaced: *displacedAny is set, and *displacedLanding is where it lands (absolute),
 // so the user can give it a new spot to be thrown from; its spot is now this throw's.
 bool rethrowFrom(const JugglingLoop& loop, Slot from, Slot landing, JugglingLoop* result, bool* displacedAny,

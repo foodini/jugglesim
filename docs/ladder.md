@@ -174,6 +174,11 @@ While drawing, faint rings mark the spots nothing lands in yet. If you click a s
 already lands in, your throw takes it, and the throw that landed there is picked up instead:
 find it a new home the same way (as when editing a finished pattern).
 
+A spot that throws something but that nothing lands in yet (the one with the notch over it):
+click right on it to draw a catch into it. The rubber band runs from the mouse to that spot;
+click where the prop is thrown from, with the same rules as holding a throw by its start
+(below).
+
 Picking up a throw that's already drawn works as when editing a finished pattern: the half of
 the curve nearest the mouse lights up, and that's the end you get. The throw is taken out (its
 spot becomes a ?) to be placed again:
