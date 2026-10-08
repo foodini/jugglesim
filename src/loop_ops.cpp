@@ -293,6 +293,18 @@ bool deleteBeats(const JugglingLoop& loop, int firstBeat, int count, JugglingLoo
     return true;
 }
 
+int propCyclePeriod(const JugglingLoop& loop) {
+    if (loop.empty() || openThrowCount(loop) > 0) return loop.period;
+    const LoopOrbits orbits = computeLoopOrbits(loop);
+    long long cycle = 1;
+    for (const int props : orbits.propsOfOrbit) {
+        if (props <= 0) continue;
+        cycle = cycle / std::gcd(cycle, static_cast<long long>(props)) * props;
+        if (cycle * loop.period > kMaxLoopBeats) return loop.period;
+    }
+    return static_cast<int>(cycle) * loop.period;
+}
+
 JugglingLoop deleteThrow(const JugglingLoop& loop, int slot) {
     JugglingLoop out = loop;
     if (slot >= 0 && slot < static_cast<int>(out.throws.size()))

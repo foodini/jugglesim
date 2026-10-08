@@ -882,6 +882,13 @@ int runApp() {
         recordSettingsChange();
         history.record(text);
     };
+    // Typing in the siteswap box becomes an undo step when the box loses focus, but a change
+    // made some other way (on the ladder, the period buttons, the library) can come first. Each
+    // of those calls this, so what was typed is a step of its own and undoing the change goes
+    // back to it rather than to whatever was there before the typing.
+    auto commitTyping = [&]() {
+        if ((parsed.valid || parsed.sketch) && history.current != siteswapText) recordPattern(siteswapText);
+    };
 
     // Replaces the pattern with the one written in `text` (used by undo/redo).
     auto showPatternText = [&](const std::string& text) {
@@ -896,6 +903,7 @@ int runApp() {
     // Makes a loop from the ladder the pattern (an edit, a throw drawn or deleted, beats added or
     // deleted): a complete one written at its shortest period, a sketch as it is. One undo step.
     auto applyLoop = [&](const JugglingLoop& changed) {
+        commitTyping();
         JugglingLoop l = changed;
         if (openThrowCount(l) == 0) l = loopWithPeriod(l, loopShortestPeriod(l));
         std::string text;
@@ -948,6 +956,7 @@ int runApp() {
     // Loads a pattern from the library: its siteswap, and whatever settings it carries. One
     // undo step, which also puts the settings back. It goes to the top of Recent.
     auto loadLibraryPattern = [&](const LibraryPattern& chosen, bool mine) {
+        commitTyping();
         recordSettingsChange();
         const PatternSettings before = currentPatternSettings();
         showPatternText(chosen.siteswap);
@@ -1225,10 +1234,11 @@ int runApp() {
             }
             if (request.newPeriodBeats > 0) {
                 cancelLadderEdit(ladderEdit);
+                commitTyping();
                 const JugglingLoop longer = loopWithPeriod(ladderLoop, request.newPeriodBeats);
                 // (Written as it is: a period chosen on purpose isn't shortened again.)
                 std::string text;
-                if (loopToText(longer, &text)) {
+                if (loopToText(longer, &text, &parsed.passStyle)) {
                     const Siteswap check = parseSiteswap(text);
                     if (check.valid || check.sketch) {
                         std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
@@ -1659,6 +1669,7 @@ int runApp() {
                     for (int b = 0; b < blank.period; ++b) blank.throws.push_back({kOpenThrow, j});
                 std::string text;
                 if (loopToText(blank, &text)) {
+                    commitTyping();
                     recordSettingsChange();
                     showPatternText(text);
                     recordPattern(text);

@@ -53,7 +53,8 @@ struct LadderEditState {
     Context context = Context::None;
     int contextBeat = 0;            // Beat: the beat line clicked
     Slot contextSlot;               // Throw: where the throw clicked is thrown from
-    std::vector<int> pathHighlight; // loop slots to highlight (hovering "Delete path")
+    std::vector<int> pathHighlight; // slots to highlight (hovering "Delete path"): juggler * period + beat,
+    int pathHighlightPeriod = 1;    // with this period (the props' cycle, which may be longer than the loop's)
 
     // View: pan and zoom.
     float firstBeat = 0.0f;        // beat drawn at the top of the ladder (may be negative)

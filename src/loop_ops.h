@@ -75,6 +75,13 @@ bool deleteBeats(const JugglingLoop& loop, int firstBeat, int count, JugglingLoo
 
 // ---- Sketching
 
+// The period after which every prop is back where it started: the loop's period times the
+// least common multiple of the props in each orbit (3 for the cascade "3", 6 for "531"). The
+// ladder deletes throws at this period, so deleting a throw takes out just that prop's throw
+// (and its copies, where the same prop throws it again), not every prop's. The loop's own
+// period for a sketch, or if the result would be longer than kMaxLoopBeats.
+int propCyclePeriod(const JugglingLoop& loop);
+
 // The loop with one throw (the one made from `slot`), or a whole path, made open.
 JugglingLoop deleteThrow(const JugglingLoop& loop, int slot);
 JugglingLoop deletePath(const JugglingLoop& loop, int slot);

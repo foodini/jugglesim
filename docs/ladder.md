@@ -167,7 +167,10 @@ on paper.
 - **Right-click a throw** for **Delete throw** (it becomes a ?) or **Delete path**, which does
   that to every throw on its path: the round a prop (or group of props) travels. Hovering over
   *Delete path* lights the path up first. Deleting from a finished pattern turns it into a
-  sketch.
+  sketch, written out as long as it takes every prop to get back where it started: deleting
+  one throw of the cascade `3` gives `?33`, taking out just that prop's throw (and its copies,
+  where the same prop throws it again), not every prop's. Likewise *Delete path* takes out one
+  prop's route.
 
 **Drawing.** Click a **?** to start a throw from there, then click where the prop is caught: any
 juggler's hand on any later beat (the same spot for a 0). The value, and whether it's a pass,

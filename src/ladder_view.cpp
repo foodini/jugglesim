@@ -905,8 +905,9 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
     // A path picked out (hovering "Delete path" in the menu): every throw on it glows.
     if (!edit.pathHighlight.empty()) {
         for (const DrawnThrow& d : drawn) {
-            if (std::find(edit.pathHighlight.begin(), edit.pathHighlight.end(), loopSlot(d.from)) ==
-                edit.pathHighlight.end())
+            const int hp = std::max(1, edit.pathHighlightPeriod);
+            if (std::find(edit.pathHighlight.begin(), edit.pathHighlight.end(),
+                          d.from.juggler * hp + positiveMod(d.from.beat, hp)) == edit.pathHighlight.end())
                 continue;
             const Curve& c = d.curve;
             const float pulse = 0.6f + 0.4f * std::sin(time * 5.0f);
@@ -1278,20 +1279,27 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         if (edit.context == LadderEditState::Context::Throw) {
             const int slot = loopSlot(edit.contextSlot);
             const LoopThrow t = loop.throws[static_cast<size_t>(slot)];
+            // Deleting works at the props' cycle, so it takes out just this prop's throw (and
+            // its copies, where the same prop throws it again): in the cascade "3", one throw in
+            // three, not all of them. (A sketch's paths are already its props.)
+            const int cyclePeriod = propCyclePeriod(loop);
+            const JugglingLoop cycleLoop = cyclePeriod == period ? loop : loopWithPeriod(loop, cyclePeriod);
+            const int cycleSlot = edit.contextSlot.juggler * cyclePeriod + positiveMod(edit.contextSlot.beat, cyclePeriod);
             ImGui::TextDisabled("J%d's %s on beat %d", edit.contextSlot.juggler + 1,
                                 throwLabel(t, edit.contextSlot.juggler, jugglers, options.relativeTargets).c_str(), edit.contextSlot.beat + 1);
             ImGui::Separator();
             if (ImGui::MenuItem("Delete throw")) {
                 result.committed = true;
-                result.loop = deleteThrow(loop, slot);
+                result.loop = deleteThrow(cycleLoop, cycleSlot);
             }
             reasonTooltip("Leaves the throw undecided (?), to be drawn again.");
             if (ImGui::MenuItem("Delete path")) {
                 result.committed = true;
-                result.loop = deletePath(loop, slot);
+                result.loop = deletePath(cycleLoop, cycleSlot);
             }
             if (ImGui::IsItemHovered()) {
-                highlight = loopPathSlots(loop, slot);
+                highlight = loopPathSlots(cycleLoop, cycleSlot);
+                edit.pathHighlightPeriod = cyclePeriod;
                 ImGui::SetTooltip("Leaves every throw on this path undecided (%d throw%s).",
                                   static_cast<int>(highlight.size()), highlight.size() == 1 ? "" : "s");
             }
