@@ -10,17 +10,23 @@ can trace any point on a throw straight across to its beat number.
   right (R), as the juggler sees them, like reading a score. Beat 1 is thrown by the right hand,
   and hands alternate every beat. Right-hand beats have the brighter beat lines.
 - **Jugglers.** In a passing pattern each juggler has a strip of their own (an L and an R
-  column), side by side: J1, J2. Every juggler throws with the right hand on beat 1. Click a
-  juggler's number over their strip to select them (the same selection as in the 3D view; see
-  [juggler.md](juggler.md)); click it again to deselect.
+  column), side by side: J1, J2, ... up to J6. Every juggler throws with the right hand on beat
+  1. Click a juggler's number over their strip to select them (the same selection as in the 3D
+  view; see [juggler.md](juggler.md)); click it again to deselect.
+- **Collapsing strips.** With several jugglers it gets busy. The triangle beside a juggler's
+  number collapses their strip to a narrow one (or expands it again); their throws are still
+  drawn, so passes to and from them still show, but without value labels. The toolbar's arrows
+  button, **C** or *View > Collapse All Jugglers* collapses every strip, or expands them all if they're all collapsed
+  already.
 - **Throws.** Each throw is drawn from the beat it's thrown on to the beat it lands on, with an
   arrowhead at the landing.
   - **Odd throws** (1, 3, 5, ...) change hands, so they cross between the juggler's columns.
   - **Even throws** (2, 4, 6, ...) return to the same hand, so they arch *outside* the juggler's
     columns: the right hand's to the right, the left hand's to the left. Higher throws arch
     wider.
-  - **Passes** run from one juggler's strip to the other's. A 3p from the right hand lands in
-    the partner's left; a 4p in their right.
+  - **Passes** run from one juggler's strip to another's. A 3p from the right hand lands in
+    the partner's left; a 4p in their right. With three or more jugglers, a pass's label says
+    who it goes to (`3p2`, or `3p+1`; see *The siteswap box*).
   - **Empty beats** (0) are shown as a small hollow circle in the column.
 - **Throw values.** The **3p** button on the toolbar, the **V** key or *View > Throw Values*
   labels every throw with its value, a little way along it from where it's thrown: `3`, `4p`
@@ -155,7 +161,7 @@ A **sketch** is a pattern with throws not decided yet, shown as **?** (in the te
 `<3p 3p 3p ? ? ?|? ? ? ? ? ?>`). It's how you build a pattern up from nothing, the way you might
 on paper.
 
-- *File > New Pattern...* starts one: choose 1 or 2 jugglers and the period, and every throw is
+- *File > New Pattern...* starts one: choose 1 to 6 jugglers and the period, and every throw is
   a ?. If the pattern you have has changed since you loaded, saved or started it, you're asked
   first whether to save it (changes to tempo, dwell or distance alone don't count).
 - **Right-click a throw** for **Delete throw** (it becomes a ?) or **Delete path**, which does
@@ -229,8 +235,8 @@ undoes typing instead.
 Below the ladder is a text box for siteswap notation. Typing a valid siteswap replaces the
 pattern. When the pattern is changed some other way (for example with the period control), the
 text is rewritten to match. Vanilla siteswap (asynchronous, one juggler, no multiplexes) and
-two-person passing are supported so far; sync and multiplex notation, and passing for three or
-more jugglers, are recognized and reported as not yet supported.
+passing for up to 6 jugglers are supported so far; sync and multiplex notation are recognized
+and reported as not yet supported.
 
 Passing patterns use [Juggling Lab's notation](https://jugglinglab.org/html/ssnotation.html):
 each juggler's throws between `<` and `>`, separated by `|`, with `p` marking a pass to the
@@ -238,6 +244,25 @@ other juggler. `<3p 3|3p 3>` is a 2-count: each juggler passes every other throw
 throw with the right hand on beat 1, and which hand catches a pass follows from its timing, as
 in any siteswap: a `3p` from the right lands in the partner's left, a `4p` in their right. The
 box below the text shows the number of jugglers along with the props and period.
+
+With three or more jugglers, a pass says who it goes to, right after the `p`:
+
+- **Juggling Lab's way, by number:** `3p2` is a pass to J2. `<3p2 3|3p3 3|3p1 3>` is a
+  2-count around a triangle: J1 passes to J2, J2 to J3, J3 to J1.
+- **Relative (as passist.org writes them):** `3p+1` is a pass to the next juggler, `3p-1` to the
+  one before, wrapping round (in a 5-person pattern, J4's `3p+4` goes to J3). The same triangle
+  is `<3p+1 3|3p+1 3|3p+1 3>`. Relative targets work with two jugglers too.
+- `3p+0` (or `3p+5` with five jugglers, or `3p1` from J1) is a pass to yourself, which is just
+  a self. It's allowed so the columns of a pattern can line up in a file; programs other than
+  JuggleSim may not accept it.
+
+The target has to follow the `p` directly: `3p2 3` is a pass to J2 and then a 3, while `3p 2`
+is a pass with no target (an error, with three or more jugglers) followed by a 2.
+
+When the ladder rewrites the text (after an edit there), passes are written the way the pattern
+already writes them: if it uses any relative targets, every pass is written relative (and a
+`+0` you wrote on a self is kept); otherwise they're written by number, as Juggling Lab does.
+The ladder's throw labels and the labels over the props follow the same style.
 
 Passing patterns are drawn and edited on the ladder like any other (see above).
 
@@ -259,6 +284,10 @@ above). Other programs won't read it.
   bars.
 - **Up/Down** change the throw at the cursor: `?`, then 0, 1, 2, … up to 35 (z), skipping 25 and
   33 (whose letters, p and x, mean other things). A 0 can't be a pass, so it loses its `p`.
+- **Shift+Up/Down** change where the throw at the cursor goes: a self becomes a pass to the
+  next juggler (Up) or the one before (Down), then the one after that, and so on round to a self
+  again. It's written in the pattern's style (`3p2`, or `3p+1` if the pattern uses relative
+  targets; a bare `p` with two jugglers).
 - **Ctrl+T** (**Cmd+T** on a Mac) swaps where two throws land — the *siteswap* operation that
   turns one pattern into another. Select two throws in one juggler's part, or just put the
   cursor after them: `531` with `31` selected becomes `522`. (Throws `d` beats apart swap

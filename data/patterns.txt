@@ -98,3 +98,15 @@ b        ; Cascade
 <3p 3 3 3|3p 4 4 1>                     ; 441 in 4-count        ; props=clubs
 <3p 3p 3p 6 6 6 | 6 6 6 3p 3p 3p>       ; 9-club W
 
+# --- 3 to 6 jugglers ---
+# With three or more jugglers, the target follows the "p": 3p2 is a pass to juggler 2.
+# (JuggleSim also reads relative targets, 3p+1 for the next juggler, but these are written as
+# Juggling Lab writes them.) Jugglers stand around a ring, J1 nearest the camera and the
+# numbers going clockwise (J2 on J1's left).
+<3p2 3|3p3 3|3p1 3>                                             ;          ; props=clubs
+<3p2 3p3|3p3 3p1|3p1 3p2>                                       ;          ; props=clubs
+<3p2 3 3p3 3|3p1 3 3 3|3 3 3p1 3>                               ; Feed     ; props=clubs
+<3p2 3 3 3|3p3 3 3 3|3p4 3 3 3|3p1 3 3 3>                       ;          ; props=clubs
+<3p2 3 3p3 3 3p4 3|3p1 3 3 3 3 3|3 3 3p1 3 3 3|3 3 3 3 3p1 3>   ; Feed     ; props=clubs
+<3p+3 3 3 3|3p+3 3 3 3|3p+3 3 3 3|3p+3 3 3 3|3p+3 3 3 3>         ; Star     ; props=clubs
+<3p2 3|3p3 3|3p4 3|3p5 3|3p6 3|3p1 3>                           ;          ; props=clubs

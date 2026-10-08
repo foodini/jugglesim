@@ -163,13 +163,13 @@ void drawTreeLevel(const std::vector<const LibraryPattern*>& patterns, int level
         }
     }
     if (jugglerPlaceholders) {
-        for (int jugglers = 2; jugglers <= 4; ++jugglers) {
+        for (int jugglers = 2; jugglers <= kMaxJugglers; ++jugglers) {
             if (groups.count(jugglers)) continue;
             char label[32];
             std::snprintf(label, sizeof(label), "%d Jugglers", jugglers);
             if (ImGui::BeginMenu(label, false)) ImGui::EndMenu();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                ImGui::SetTooltip("Coming later");
+                ImGui::SetTooltip("No patterns here yet: type one in the siteswap box and save it.");
         }
     }
 }

@@ -74,12 +74,22 @@ to do circle empty. While you draw, they show what the pattern would be if you c
 the rubber band is. See *Sketching* in [ladder.md](ladder.md). With color by orbit (**O**), the
 props are colored by orbit, as on the ladder.
 
-## Two jugglers
+## Several jugglers
 
-A passing pattern (see the siteswap box in [the ladder notes](ladder.md)) shows both jugglers
-facing each other, juggler 1 on the left as seen from the default camera, each with their
-number over their head (J1, J2, as on the ladder). They look at their partner when nothing needs watching and follow the
-high throws when it does.
+A passing pattern (see the siteswap box in [the ladder notes](ladder.md)) shows every juggler,
+each with their number over their head (J1, J2, ..., as on the ladder). Two jugglers face each
+other, juggler 1 on the left as seen from the default camera. Three to six stand at the corners
+of a regular polygon (a triangle, a square, ... a hexagon), facing the middle, neighbors the
+passing distance apart. The camera starts behind and above J1, so you see the pattern from
+J1's side (a feed from the feeder's, say), and the numbers go clockwise seen from above: J2 on
+J1's left, the last juggler on J1's right. Looking down a little keeps the near jugglers from
+hiding the far ones, and the whole formation is framed, feet and all. Other formations will come with choreography.
+
+They look at their partners when nothing needs watching and follow the high throws when it
+does. A juggler passing to (or catching from) someone who isn't straight ahead, as around a
+ring, reaches toward them: the hands throw and catch most of the way round toward that juggler
+(with a club's spin turned to match), and the upper body twists part of the way, easing in and
+out around the pass.
 
 - Balls passed to a juggler are caught where they catch their own throws. Clubs and rings are
   caught further out, about 20 cm outside the shoulder and 20 cm in front, and higher passes

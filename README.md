@@ -118,7 +118,8 @@ src/
   pattern_library.*   pattern library: file format, built-in and user patterns
   pattern_library_ui.* pattern menus (adaptive tree, Find, Recent), Save and Manage dialogs
   resource.h          resource IDs (see jugglesim.rc)
-  siteswap.h/.cpp     siteswap parsing/validation (vanilla and two-person passing, for now)
+  siteswap.h/.cpp     siteswap parsing/validation (vanilla, and passing for up to 6 jugglers)
+  siteswap_edit.*     help typing in the siteswap box: autofill, Up/Down, swap, rotate, tidy
   ladder_view.h/.cpp  ladder diagram + its toolbar + drag editing, drawn with ImGui
   ladder_edit.h/.cpp  the edit chain behind ladder editing (pure logic, no drawing)
   loop_ops.h/.cpp     loop operations: ? sketches, beat insert/delete, paths and orbits, drawing
@@ -140,7 +141,9 @@ it as `gl::FunctionName(...)`.
 - World units are meters, +Y is up.
 - A juggler faces +Z in their local space, so the juggler's own right hand is at -X.
 - Two passing jugglers face each other along X: juggler 1 at -X facing +X, juggler 2 at +X
-  facing -X. Each juggler's hands and body are worked out in their own local space and placed
-  with translation(position) * rotationY(yaw).
+  facing -X. Three to six stand at the corners of a regular polygon facing its center, J1 at +Z
+  (nearest the default camera, which looks over J1's shoulders) and the rest clockwise seen
+  from above, so J2 is at J1's left (-X). Each juggler's hands and body are worked out in
+  their own local space and placed with translation(position) * rotationY(yaw).
 - Ladder diagram: vertical, time running down; per juggler a strip with the left hand's column
   on the left and the right hand's on the right; beat 1 thrown by the right hand.

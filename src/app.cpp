@@ -113,6 +113,9 @@ struct GLRect {
 
 constexpr float kCameraFovY = 35.0f * kPi / 180.0f;
 constexpr float kJugglerTopY = 1.80f;  // a little above the top of the juggler's head
+// A ring of 3+ jugglers is seen from a little above, so the near ones don't hide the far ones.
+constexpr float kRingPitch = 0.50f;   // radians (about 29 degrees)
+constexpr float kRingMargin = 1.15f;  // extra distance, so the nearest jugglers fit
 
 struct CameraControl {
     // User offsets.
@@ -126,6 +129,7 @@ struct CameraControl {
     float centerZ = 0.36f;
     float bottomY = 0.8f;  // bottom edge of the full framing
     float distance = 3.0f;
+    float basePitch = 0.0f;  // looking down a little at a ring of 3+ jugglers (eased)
 };
 
 struct CameraView {
@@ -142,19 +146,28 @@ void resetCamera(CameraControl& c) {
 
 // Advances the automatic framing toward `extents` and returns the camera to render with.
 CameraView updateCamera(CameraControl& c, const SceneExtents& extents, float aspect, float dt) {
-    const float bottom = extents.lowestHandY - 0.04f;
+    // A ring of jugglers is framed down to the floor (the whole formation); otherwise from the
+    // lowest the hands go.
+    const float bottom = extents.ring ? 0.0f : extents.lowestHandY - 0.04f;
     const float top = extents.highestPropY + 0.06f;
     const float tanHalf = std::tan(kCameraFovY * 0.5f);
     const float fitHeight = 0.5f * (top - bottom) / tanHalf;
     const float fitWidth = (extents.halfWidth + 0.05f) / (tanHalf * aspect);
-    const float wantDistance = std::max(fitHeight, fitWidth);
+    // Fitted where the jugglers come nearest the camera (for a ring, well in front of where it
+    // aims), so the near ones aren't cut off.
+    // (Seen from above, the near jugglers are also lower and nearer than the depth the fit is
+    // worked out at; kRingMargin covers that.)
+    const float wantDistance = extents.ring ? kRingMargin * std::max(fitHeight, fitWidth) + (extents.nearZ - extents.centerZ)
+                                            : std::max(fitHeight, fitWidth);
     const float wantCenterY = 0.5f * (bottom + top);
+    const float wantPitch = extents.ring ? kRingPitch : 0.0f;
     if (!c.framed) {
         c.centerX = extents.centerX;
         c.centerY = wantCenterY;
         c.centerZ = extents.centerZ;
         c.bottomY = bottom;
         c.distance = wantDistance;
+        c.basePitch = wantPitch;
         c.framed = true;
     } else {
         const float ease = 1.0f - std::exp(-dt * 5.0f);
@@ -163,6 +176,7 @@ CameraView updateCamera(CameraControl& c, const SceneExtents& extents, float asp
         c.centerZ += (extents.centerZ - c.centerZ) * ease;
         c.bottomY += (bottom - c.bottomY) * ease;
         c.distance += (wantDistance - c.distance) * ease;
+        c.basePitch += (wantPitch - c.basePitch) * ease;
     }
     CameraView v;
     const float d = c.distance * c.zoom;
@@ -176,8 +190,8 @@ CameraView updateCamera(CameraControl& c, const SceneExtents& extents, float asp
         targetY = std::min(std::max(c.bottomY + halfHeight, jugglerMiddle), c.centerY);
     }
     v.target = Vec3(c.centerX, targetY, c.centerZ);
-    const Vec3 dir(std::sin(c.yaw) * std::cos(c.pitch), std::sin(c.pitch),
-                   std::cos(c.yaw) * std::cos(c.pitch));
+    const float pitch = std::clamp(c.pitch + c.basePitch, -1.45f, 1.45f);
+    const Vec3 dir(std::sin(c.yaw) * std::cos(pitch), std::sin(pitch), std::cos(c.yaw) * std::cos(pitch));
     v.position = v.target + dir * d;
     v.farPlane = d * 3.0f + 50.0f;
     return v;
@@ -300,7 +314,8 @@ int propStyle(const std::vector<int>& styleOfBall, int ball) {
 }
 
 void drawPropValueLabels(ImDrawList* dl, const JugglerScene& scene, const Mat4& viewProj, ImVec2 rectMin,
-                         ImVec2 rectSize, ColorVisionMode colorVision, const std::vector<int>& styleOfBall) {
+                         ImVec2 rectSize, ColorVisionMode colorVision, const std::vector<int>& styleOfBall,
+                         bool relativeTargets) {
     dl->PushClipRect(rectMin, ImVec2(rectMin.x + rectSize.x, rectMin.y + rectSize.y), true);
     const float em = ImGui::GetFontSize();
     const int jugglers = static_cast<int>(scene.jugglers.size());
@@ -313,7 +328,7 @@ void drawPropValueLabels(ImDrawList* dl, const JugglerScene& scene, const Mat4& 
         LoopThrow t;
         t.value = b.throwValue;
         t.dest = b.catcher;
-        const std::string label = throwLabel(t, b.thrower, jugglers);
+        const std::string label = throwLabel(t, b.thrower, jugglers, relativeTargets);
         const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
         const ImVec2 pad(em * 0.25f, em * 0.08f);
         const ImVec2 a(anchor.x - ts.x * 0.5f - pad.x, anchor.y - ts.y - 2.0f * pad.y);
@@ -665,7 +680,18 @@ int siteswapBoxCallback(ImGuiInputTextCallbackData* data) {
         apply = autofillSiteswap(box->before, text, data->CursorPos, &edit, &box->memory);
     } else if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
         box->memory.forget();
-        apply = bumpThrowAtCursor(text, data->CursorPos, data->EventKey == ImGuiKey_UpArrow ? 1 : -1, &edit);
+        const int delta = data->EventKey == ImGuiKey_UpArrow ? 1 : -1;
+        if (ImGui::GetIO().KeyShift) {
+            // Shift+Up/Down: where the throw goes (self, then a pass to each juggler in turn).
+            std::string why;
+            apply = stepPassTarget(text, data->CursorPos, delta, &edit, &why);
+            if (!apply && !why.empty()) {
+                box->note = why;
+                box->noteUntil = ImGui::GetTime() + 4.0;
+            }
+        } else {
+            apply = bumpThrowAtCursor(text, data->CursorPos, delta, &edit);
+        }
     }
     // Moving the cursor away means the deletion wasn't the start of a replacement.
     if (data->EventFlag == ImGuiInputTextFlags_CallbackAlways && box->memory.armed &&
@@ -873,7 +899,8 @@ int runApp() {
         JugglingLoop l = changed;
         if (openThrowCount(l) == 0) l = loopWithPeriod(l, loopShortestPeriod(l));
         std::string text;
-        if (!loopToText(l, &text)) return;
+        // Written the way the pattern's passes were (relative targets if it used them).
+        if (!loopToText(l, &text, &parsed.passStyle)) return;
         const Siteswap check = parseSiteswap(text);
         if (!check.valid && !check.sketch) return;  // shouldn't happen; keep what we have
         std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
@@ -1020,6 +1047,11 @@ int runApp() {
                 settings.colorByOrbit = !settings.colorByOrbit;
                 saveSettings(settings);
             }
+            // C: collapse all the jugglers' ladder strips (or expand them, if all are collapsed).
+            if (ImGui::IsKeyPressed(ImGuiKey_C, false)) {
+                const int jugglers = sketching ? sketchLoop.jugglers : (patternValid ? pattern.jugglers : 0);
+                if (jugglers > 1) toggleCollapseAll(ladderEdit, jugglers);
+            }
             if (ImGui::IsKeyPressed(ImGuiKey_V, false)) {
                 settings.showThrowValues = !settings.showThrowValues;
                 saveSettings(settings);
@@ -1125,6 +1157,15 @@ int runApp() {
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
                     ImGui::SetTooltip("One color per orbit (the throws a group of props travel round)\n"
                                       "instead of one per prop. Sketches are always colored by path.");
+                {
+                    const int jugglers = sketching ? sketchLoop.jugglers : (patternValid ? pattern.jugglers : 0);
+                    const bool expand = allStripsCollapsed(ladderEdit, jugglers);
+                    if (ImGui::MenuItem(expand ? "Expand All Jugglers" : "Collapse All Jugglers", "C", false, jugglers > 1))
+                        toggleCollapseAll(ladderEdit, jugglers);
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
+                        ImGui::SetTooltip("Narrows every juggler's strip on the ladder (their throws still show),\n"
+                                          "or widens them all again if they're all narrow.");
+                }
                 if (ImGui::BeginMenu("Color Vision")) {
                     for (int i = 0; i < static_cast<int>(ColorVisionMode::Count); ++i) {
                         const ColorVisionMode mode = static_cast<ColorVisionMode>(i);
@@ -1176,6 +1217,7 @@ int runApp() {
                 settings.colorByOrbit = !settings.colorByOrbit;
                 saveSettings(settings);
             }
+            if (request.toggleCollapseAll) toggleCollapseAll(ladderEdit, ladderLoop.jugglers);
             if (request.resetView) resetLadderView(ladderEdit);
             if (request.toggleValues) {
                 settings.showThrowValues = !settings.showThrowValues;
@@ -1204,6 +1246,7 @@ int runApp() {
             ladderOptions.colorByOrbit = settings.colorByOrbit;
             ladderOptions.selectedJuggler = selectedJuggler;
             ladderOptions.highlightThrow = siteswapHoverThrow;
+            ladderOptions.relativeTargets = parsed.passStyle.relative;
             const LadderEditResult edited =
                 drawLadderDiagram(sketching ? sketchLoop : (patternValid ? patternLoop(pattern) : JugglingLoop()),
                                   settings.colorVision, ladderEdit, playback.beat, ladderOptions);
@@ -1593,9 +1636,12 @@ int runApp() {
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted("Jugglers");
             ImGui::SameLine(em * 5.0f);
-            ImGui::RadioButton("1", &newPatternDialog.jugglers, 1);
-            ImGui::SameLine();
-            ImGui::RadioButton("2", &newPatternDialog.jugglers, 2);
+            for (int n = 1; n <= kMaxJugglers; ++n) {
+                if (n > 1) ImGui::SameLine();
+                char label[8];
+                std::snprintf(label, sizeof(label), "%d", n);
+                ImGui::RadioButton(label, &newPatternDialog.jugglers, n);
+            }
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted("Period");
             ImGui::SameLine(em * 5.0f);
@@ -1639,7 +1685,7 @@ int runApp() {
         drawJugglerLabels(ImGui::GetBackgroundDrawList(), scene, lastViewProj, viewMin, viewSize, selectedJuggler);
         if (settings.showThrowValues)
             drawPropValueLabels(ImGui::GetBackgroundDrawList(), scene, lastViewProj, viewMin, viewSize,
-                                settings.colorVision, styleOfBall);
+                                settings.colorVision, styleOfBall, parsed.passStyle.relative);
         // The pattern's name, if it has one, in the top-left corner of the juggler pane.
         if (patternValid) {
             const std::map<std::string, std::string>::const_iterator named =

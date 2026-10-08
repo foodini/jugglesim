@@ -59,6 +59,34 @@ void drawOrbitGlyph(ImDrawList* dl, ImVec2 min, ImVec2 max, ImU32 color) {
     dl->AddCircleFilled(ImVec2(c.x + rx * 0.7071f, c.y - ry * 0.7071f), std::max(2.0f, (max.y - min.y) * 0.12f), color);
 }
 
+bool allStripsCollapsed(const LadderEditState& edit, int jugglers) {
+    for (int j = 0; j < jugglers && j < kMaxJugglers; ++j)
+        if (!edit.collapsed[static_cast<size_t>(j)]) return false;
+    return jugglers > 0;
+}
+
+void toggleCollapseAll(LadderEditState& edit, int jugglers) {
+    const bool collapse = !allStripsCollapsed(edit, jugglers);
+    for (bool& c : edit.collapsed) c = collapse;
+}
+
+// Arrows for the collapse/expand-all button: two triangles pointing at each other (collapse),
+// or away from each other (expand).
+static void drawCollapseGlyph(ImDrawList* dl, ImVec2 min, ImVec2 max, ImU32 color, bool expand) {
+    const float cx = 0.5f * (min.x + max.x), cy = 0.5f * (min.y + max.y);
+    const float h = (max.y - min.y) * 0.22f;
+    const float w = h * 1.1f;
+    const float gap = h * 0.35f;
+    for (int side = -1; side <= 1; side += 2) {
+        const float s = static_cast<float>(side);
+        const float base = cx + s * (gap + w), tip = cx + s * gap;  // pointing in
+        if (expand)
+            dl->AddTriangleFilled(ImVec2(cx + s * gap, cy - h), ImVec2(cx + s * gap, cy + h), ImVec2(cx + s * (gap + w), cy), color);
+        else
+            dl->AddTriangleFilled(ImVec2(base, cy - h), ImVec2(base, cy + h), ImVec2(tip, cy), color);
+    }
+}
+
 LadderToolbarRequest drawLadderToolbar(const JugglingLoop& loop, const LadderEditState& edit, bool showValues,
                                        bool colorByOrbit) {
     const bool patternValid = !loop.empty();
@@ -97,6 +125,20 @@ LadderToolbarRequest drawLadderToolbar(const JugglingLoop& loop, const LadderEdi
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Color by orbit (O)\n\nOne color per orbit (the throws a group of props travels\n"
                           "round) instead of one per prop. Sketches are always colored by path.");
+
+    // Collapse/expand all jugglers' strips (with several jugglers). The arrows show what a click
+    // does: pointing in to collapse, out to expand.
+    if (loop.jugglers > 1) {
+        ImGui::SameLine();
+        const bool expand = allStripsCollapsed(edit, loop.jugglers);
+        if (ImGui::Button("##collapse_all", ImVec2(h * 1.6f, h))) request.toggleCollapseAll = true;
+        drawCollapseGlyph(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
+                          ImGui::GetColorU32(ImGuiCol_Text), expand);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip(expand ? "Expand all jugglers (C)\n\nEvery juggler's strip back to full width."
+                                     : "Collapse all jugglers (C)\n\nEvery juggler's strip narrow (their throws still show).\n"
+                                       "The triangle by each juggler's number collapses or expands just that one.");
+    }
 
     // Period control: write the loop out at a multiple of its shortest period.
     const int period = loop.period;
@@ -178,11 +220,14 @@ char valueChar(int value) {
 
 }  // namespace
 
-std::string throwLabel(const LoopThrow& t, int thrower, int jugglers) {
+std::string throwLabel(const LoopThrow& t, int thrower, int jugglers, bool relative) {
     std::string label(1, valueChar(t.value));
     if (t.dest != thrower) {
         label += 'p';
-        if (jugglers > 2) label += std::to_string(t.dest + 1);
+        if (relative && jugglers > 0)
+            label += '+' + std::to_string(((t.dest - thrower) % jugglers + jugglers) % jugglers);
+        else if (jugglers > 2)
+            label += std::to_string(t.dest + 1);
     }
     return label;
 }
@@ -252,18 +297,37 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
     const float areaLeft = origin.x + gutterWidth;
     const float areaWidth = std::max(1.0f, maxPt.x - margin * 0.5f - areaLeft);
     // Strips are kept apart by a gap (where the passes cross), shrinking when space is short.
+    // A collapsed strip is narrow (the same layout, smaller); the others share what's left.
     const float jugglerCount = static_cast<float>(jugglers);
-    const float stripGap = jugglers > 1 ? std::clamp((areaWidth - jugglerCount * fontSize * 12.0f) / (jugglerCount - 1.0f),
-                                                     0.0f, fontSize * 5.0f)
-                                        : 0.0f;
-    const float stripWidth = std::min((areaWidth - stripGap * (jugglerCount - 1.0f)) / jugglerCount, fontSize * 22.0f);
-    const float stripsWidth = stripWidth * jugglerCount + stripGap * (jugglerCount - 1.0f);
+    auto isCollapsed = [&](int j) { return jugglers > 1 && j < kMaxJugglers && edit.collapsed[static_cast<size_t>(j)]; };
+    int collapsedCount = 0;
+    for (int j = 0; j < jugglers; ++j)
+        if (isCollapsed(j)) ++collapsedCount;
+    const int expandedCount = jugglers - collapsedCount;
+    const float collapsedWidth = fontSize * 4.0f;
+    const float collapsedTotal = collapsedWidth * static_cast<float>(collapsedCount);
+    const float stripGap =
+        jugglers > 1 ? std::clamp((areaWidth - static_cast<float>(expandedCount) * fontSize * 12.0f - collapsedTotal) / (jugglerCount - 1.0f),
+                                  0.0f, fontSize * 5.0f)
+                     : 0.0f;
+    const float stripWidth =
+        expandedCount > 0 ? std::max(fontSize * 3.0f, std::min((areaWidth - stripGap * (jugglerCount - 1.0f) - collapsedTotal) /
+                                                                   static_cast<float>(expandedCount),
+                                                               fontSize * 22.0f))
+                          : 0.0f;
+    auto widthOf = [&](int j) { return isCollapsed(j) ? collapsedWidth : stripWidth; };
+    float stripsWidth = stripGap * (jugglerCount - 1.0f);
+    for (int j = 0; j < jugglers; ++j) stripsWidth += widthOf(j);
     const float stripsLeft = areaLeft + (areaWidth - stripsWidth) * 0.5f;
     const float stripsRight = stripsLeft + stripsWidth;
-    const float outsideRoom = stripWidth * 0.25f;  // beside each column, for same-hand arches
-    auto stripLeft = [&](int j) { return stripsLeft + (stripWidth + stripGap) * static_cast<float>(j); };
+    std::vector<float> stripLefts(static_cast<size_t>(jugglers));
+    for (int j = 0; j < jugglers; ++j) {
+        stripLefts[static_cast<size_t>(j)] = j == 0 ? stripsLeft : stripLefts[static_cast<size_t>(j - 1)] + widthOf(j - 1) + stripGap;
+    }
+    auto stripLeft = [&](int j) { return stripLefts[static_cast<size_t>(j)]; };
+    auto outsideRoomOf = [&](int j) { return widthOf(j) * 0.25f; };  // beside each column, for same-hand arches
     auto columnX = [&](int j, bool right) {
-        return stripLeft(j) + outsideRoom + (right ? stripWidth * 0.5f : 0.0f);
+        return stripLeft(j) + outsideRoomOf(j) + (right ? widthOf(j) * 0.5f : 0.0f);
     };
     // About 24 beats on screen at zoom 1, within sensible limits for the markers.
     const float baseSpacing = std::clamp(bodyHeight / 24.0f, fontSize * 1.25f, fontSize * 3.0f);
@@ -313,7 +377,7 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         if (to.juggler == from.juggler && t.value % 2 == 0) {
             // Same hand: arch outside the juggler's columns (right hand to the right, left
             // hand to the left), wider for higher throws, reaching the edge of the room at 8.
-            const float bulge = outsideRoom * 0.9f * std::min(1.0f, static_cast<float>(t.value) / 8.0f);
+            const float bulge = outsideRoomOf(from.juggler) * 0.9f * std::min(1.0f, static_cast<float>(t.value) / 8.0f);
             const float dir = rightHandBeat(from.beat) ? 1.0f : -1.0f;
             const float cx = c.p0.x + dir * bulge * (4.0f / 3.0f);  // cubic peak ~= bulge
             c.c1 = ImVec2(cx, c.p0.y + dy * 0.1f);
@@ -370,7 +434,7 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         const float y = beatY(b);
         for (int j = 0; j < jugglers; ++j) {
             const bool right = rightHandBeat(b);
-            dl->AddLine(ImVec2(stripLeft(j) + fontSize * 0.2f, y), ImVec2(stripLeft(j) + stripWidth - fontSize * 0.2f, y),
+            dl->AddLine(ImVec2(stripLeft(j) + fontSize * 0.2f, y), ImVec2(stripLeft(j) + widthOf(j) - fontSize * 0.2f, y),
                         right ? rungRightCol : rungLeftCol, right ? 2.0f : 1.0f);
         }
         if (positiveMod(b, labelStep) != 0) continue;
@@ -556,23 +620,32 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
     }
 
     // Strip headers: with several jugglers, clicking one selects that juggler (clicking the
-    // selected one deselects).
+    // selected one deselects). The triangle at its left collapses or expands the strip.
+    const float toggleWidth = fontSize * 1.1f;
     auto jugglerHeaderRect = [&](int j, ImVec2* min, ImVec2* max) {
-        const float cx = stripLeft(j) + stripWidth * 0.5f;
-        const float w = ImGui::CalcTextSize("J00").x + fontSize * 0.9f;
+        const float cx = stripLeft(j) + widthOf(j) * 0.5f;
+        const float w = ImGui::CalcTextSize("J00").x + fontSize * 0.9f + toggleWidth;
         const float top = origin.y + headerHeight + fontSize * 0.15f;
         *min = ImVec2(cx - w * 0.5f, top);
         *max = ImVec2(cx + w * 0.5f, top + fontSize * 1.3f);
     };
     int hoverHeader = -1;
+    bool hoverToggle = false;  // over the header's collapse triangle
     if (jugglers > 1 && canvasHovered && !chain.active && !edit.drawing) {
         for (int j = 0; j < jugglers; ++j) {
             ImVec2 a, b;
             jugglerHeaderRect(j, &a, &b);
-            if (mouse.x >= a.x && mouse.x <= b.x && mouse.y >= a.y && mouse.y <= b.y) hoverHeader = j;
+            if (mouse.x >= a.x && mouse.x <= b.x && mouse.y >= a.y && mouse.y <= b.y) {
+                hoverHeader = j;
+                hoverToggle = mouse.x < a.x + toggleWidth;
+            }
         }
-        if (hoverHeader >= 0 && leftClicked)
-            result.selectJuggler = hoverHeader == options.selectedJuggler ? -1 : hoverHeader;
+        if (hoverHeader >= 0 && leftClicked) {
+            if (hoverToggle && hoverHeader < kMaxJugglers)
+                edit.collapsed[static_cast<size_t>(hoverHeader)] = !edit.collapsed[static_cast<size_t>(hoverHeader)];
+            else
+                result.selectJuggler = hoverHeader == options.selectedJuggler ? -1 : hoverHeader;
+        }
     }
     const bool inBody = mouse.y >= bodyTop;
 
@@ -1107,13 +1180,14 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         };
         for (const DrawnThrow& d : drawn) {
             if (d.from.beat < bFirst - 1) continue;  // its label is above the top edge anyway
-            drawValueLabel(d.curve, throwLabel(d.t, d.from.juggler, jugglers), ballStyle(colorVision, d.ball).color);
+            if (isCollapsed(d.from.juggler)) continue;  // no room in a collapsed strip
+            drawValueLabel(d.curve, throwLabel(d.t, d.from.juggler, jugglers, options.relativeTargets), ballStyle(colorVision, d.ball).color);
         }
     }
 
     // Tooltip describing what a click would do.
     auto describeThrow = [&](const LoopThrow& t, int thrower) {
-        std::string what = "Becomes a " + throwLabel(t, thrower, jugglers);
+        std::string what = "Becomes a " + throwLabel(t, thrower, jugglers, options.relativeTargets);
         if (t.dest != thrower) what += " (a pass to J" + std::to_string(t.dest + 1) + ")";
         return what + ".";
     };
@@ -1192,7 +1266,7 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
             const int slot = loopSlot(edit.contextSlot);
             const LoopThrow t = loop.throws[static_cast<size_t>(slot)];
             ImGui::TextDisabled("J%d's %s on beat %d", edit.contextSlot.juggler + 1,
-                                throwLabel(t, edit.contextSlot.juggler, jugglers).c_str(), edit.contextSlot.beat + 1);
+                                throwLabel(t, edit.contextSlot.juggler, jugglers, options.relativeTargets).c_str(), edit.contextSlot.beat + 1);
             ImGui::Separator();
             if (ImGui::MenuItem("Delete throw")) {
                 result.committed = true;
@@ -1344,18 +1418,35 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
                                                  : (hovered ? IM_COL32(52, 56, 68, 255) : IM_COL32(28, 30, 36, 255)),
                                   rounding);
                 dl->AddRect(a, b, IM_COL32(210, 214, 224, 230), rounding, 0, selected ? 2.0f : 1.0f);
+                const ImU32 ink = selected ? IM_COL32(16, 16, 20, 255) : IM_COL32(232, 234, 240, 255);
+                // The collapse triangle: pointing down while expanded, right while collapsed.
+                {
+                    const float tx = a.x + toggleWidth * 0.55f, ty = 0.5f * (a.y + b.y);
+                    const float r = fontSize * 0.28f;
+                    if (hovered && hoverToggle)
+                        dl->AddRectFilled(ImVec2(a.x + 1.0f, a.y + 1.0f), ImVec2(a.x + toggleWidth, b.y - 1.0f),
+                                          selected ? IM_COL32(200, 204, 214, 255) : IM_COL32(80, 86, 102, 255), rounding);
+                    if (isCollapsed(j))
+                        dl->AddTriangleFilled(ImVec2(tx - r * 0.6f, ty - r), ImVec2(tx - r * 0.6f, ty + r), ImVec2(tx + r * 0.8f, ty), ink);
+                    else
+                        dl->AddTriangleFilled(ImVec2(tx - r, ty - r * 0.6f), ImVec2(tx + r, ty - r * 0.6f), ImVec2(tx, ty + r * 0.8f), ink);
+                }
                 const std::string label = "J" + std::to_string(j + 1);
                 const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
-                dl->AddText(ImVec2((a.x + b.x - ts.x) * 0.5f, (a.y + b.y - ts.y) * 0.5f),
-                            selected ? IM_COL32(16, 16, 20, 255) : IM_COL32(232, 234, 240, 255), label.c_str());
+                dl->AddText(ImVec2((a.x + toggleWidth + b.x - ts.x) * 0.5f, (a.y + b.y - ts.y) * 0.5f), ink, label.c_str());
             }
+            if (isCollapsed(j)) continue;  // no room for L and R
             for (int right = 0; right < 2; ++right) {
                 const char* label = right ? "R" : "L";
                 const float x = columnX(j, right != 0);
                 dl->AddText(ImVec2(x - ImGui::CalcTextSize(label).x * 0.5f, handY), textCol, label);
             }
         }
-        if (hoverHeader >= 0 && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+        if (hoverHeader >= 0 && hoverToggle && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            ImGui::SetTooltip(isCollapsed(hoverHeader) ? "Expand juggler %d's strip\n(C: expand or collapse all)"
+                                                       : "Collapse juggler %d's strip\n(C: expand or collapse all)",
+                              hoverHeader + 1);
+        else if (hoverHeader >= 0 && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
             ImGui::SetTooltip(hoverHeader == options.selectedJuggler ? "Juggler %d (selected): click to deselect"
                                                                      : "Juggler %d: click to select",
                               hoverHeader + 1);

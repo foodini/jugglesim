@@ -35,7 +35,7 @@ int openThrowCount(const JugglingLoop& loop) {
     return open;
 }
 
-bool loopToText(const JugglingLoop& loop, std::string* text) {
+bool loopToText(const JugglingLoop& loop, std::string* text, const PassStyle* style) {
     std::string out;
     if (loop.empty()) return false;
     for (const LoopThrow& t : loop.throws)
@@ -51,9 +51,16 @@ bool loopToText(const JugglingLoop& loop, std::string* text) {
                 const LoopThrow& t = loop.at(j, b);
                 if (b > 0) out += ' ';
                 out += valueChar(t.value);
+                const bool relative = style && style->relative;
                 if (t.value != kOpenThrow && t.dest != j) {
                     out += 'p';
-                    if (loop.jugglers > 2) out += std::to_string(t.dest + 1);
+                    if (relative)
+                        out += '+' + std::to_string(((t.dest - j) % loop.jugglers + loop.jugglers) % loop.jugglers);
+                    else if (loop.jugglers > 2)
+                        out += std::to_string(t.dest + 1);
+                } else if (t.value != kOpenThrow && style && style->marked(j, b, loop.jugglers, loop.period)) {
+                    // A self written as a pass to yourself (to line up columns), kept that way.
+                    out += relative ? "p+0" : "p" + std::to_string(j + 1);
                 }
             }
         }

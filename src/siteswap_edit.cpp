@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <utility>
 #include <vector>
 
@@ -10,14 +11,20 @@ namespace {
 
 constexpr int kOpen = -1;  // a "?" (matches kOpenThrow)
 
-// One throw as written: its characters, value (kOpen for "?"), and pass marker ("p", with a
-// target juggler number for 3+ jugglers, or -1).
+constexpr int kNoRelative = -100;
+
+// One throw as written: its characters, value (kOpen for "?"), and pass marker: "p", with a
+// target juggler number for 3+ jugglers ("3p2", or -1 for none) or a relative target ("3p+1",
+// "3p-1": steps along; kNoRelative for none).
 struct Token {
     int start = 0, end = 0;
     int value = 0;
     bool pass = false;
     int target = -1;
-    bool sameThrow(const Token& o) const { return value == o.value && pass == o.pass && target == o.target; }
+    int relative = kNoRelative;
+    bool sameThrow(const Token& o) const {
+        return value == o.value && pass == o.pass && target == o.target && relative == o.relative;
+    }
 };
 
 // The text read loosely as siteswap: each juggler's throws (one part for a solo pattern).
@@ -51,11 +58,11 @@ Parsed parse(const std::string& text) {
     if (p.passing) ++i;
     p.parts.emplace_back();
     p.partStarts.push_back(static_cast<int>(i));
-    // Passing with 3+ jugglers writes the target after the "p" (3p2); with two, a digit after
-    // "p" is the next throw.
-    int bars = 0;
-    for (const char c : text) if (c == '|') ++bars;
-    const bool targets = bars >= 2;
+    // A digit right after a "p" is read as its target (3p2), whatever the number of parts: with
+    // three or more jugglers it is one, and while the third juggler's part hasn't been typed
+    // yet it soon will be, so autofill mustn't pull "3p2" apart. (With exactly two jugglers,
+    // siteswap.cpp reads "3p2" as a pass then a 2; spacing it out is left to the writer.) A
+    // relative target (3p+1) can follow any "p".
     while (i < text.size()) {
         const unsigned char c = static_cast<unsigned char>(text[i]);
         if (std::isspace(c)) {
@@ -75,15 +82,13 @@ Parsed parse(const std::string& text) {
             if (p.passing && i < text.size() && std::tolower(static_cast<unsigned char>(text[i])) == 'p') {
                 t.pass = true;
                 ++i;
-                if (targets) {
-                    int target = 0;
-                    bool any = false;
-                    while (i < text.size() && std::isdigit(static_cast<unsigned char>(text[i]))) {
-                        target = target * 10 + (text[i] - '0');
-                        any = true;
-                        ++i;
-                    }
-                    if (any) t.target = target;
+                if (i + 1 < text.size() && (text[i] == '+' || text[i] == '-') &&
+                    std::isdigit(static_cast<unsigned char>(text[i + 1]))) {
+                    t.relative = (text[i + 1] - '0') * (text[i] == '-' ? -1 : 1);
+                    i += 2;
+                } else if (i < text.size() && std::isdigit(static_cast<unsigned char>(text[i]))) {
+                    t.target = text[i] - '0';
+                    ++i;
                 }
             }
             t.end = static_cast<int>(i);
@@ -100,7 +105,10 @@ std::string tokenText(const Token& t) {
     std::string s(1, charOf(t.value));
     if (t.pass) {
         s += 'p';
-        if (t.target >= 0) s += std::to_string(t.target);
+        if (t.relative != kNoRelative)
+            s += (t.relative < 0 ? "-" : "+") + std::to_string(t.relative < 0 ? -t.relative : t.relative);
+        else if (t.target >= 0)
+            s += std::to_string(t.target);
     }
     return s;
 }
@@ -395,6 +403,49 @@ bool bumpThrowAtCursor(const std::string& text, int cursor, int delta, SiteswapE
     if (changed.value == 0 || changed.value == kOpen) {
         changed.pass = false;  // an empty hand (or an undecided throw) isn't a pass
         changed.target = -1;
+        changed.relative = kNoRelative;
+    }
+    result->text = replaceTokens(text, {{t, changed}});
+    result->cursor = t.start + static_cast<int>(tokenText(changed).size());
+    return true;
+}
+
+// Which juggler a token's throw goes to (thrown by `juggler`, in a pattern of `jugglers`).
+int destinationOf(const Token& t, int juggler, int jugglers) {
+    if (!t.pass) return juggler;
+    if (t.relative != kNoRelative) return ((juggler + t.relative) % jugglers + jugglers) % jugglers;
+    if (t.target >= 1 && jugglers > 2 && t.target <= jugglers) return t.target - 1;
+    return jugglers == 2 ? 1 - juggler : juggler;  // (a bare "p" with 3+ jugglers is incomplete)
+}
+
+bool stepPassTarget(const std::string& text, int cursor, int delta, SiteswapEdit* result, std::string* why) {
+    const Parsed p = parse(text);
+    if (!p.ok || !p.passing || p.parts.size() < 2) {
+        if (why) *why = "Only a passing pattern's throws can go to another juggler.";
+        return false;
+    }
+    size_t part = 0, index = 0;
+    if (!tokenAtCursor(p, cursor, &part, &index)) return false;
+    const Token& t = p.parts[part][index];
+    if (t.value == kOpen || t.value == 0) {
+        if (why) *why = t.value == 0 ? "A 0 (an empty hand) can't be a pass." : "Decide the throw (?) first.";
+        return false;
+    }
+    const int jugglers = static_cast<int>(p.parts.size());
+    const int juggler = static_cast<int>(part);
+    bool relativeStyle = false;
+    for (const std::vector<Token>& f : p.parts)
+        for (const Token& k : f)
+            if (k.relative != kNoRelative) relativeStyle = true;
+    const int along = ((destinationOf(t, juggler, jugglers) - juggler) % jugglers + jugglers) % jugglers;
+    const int next = ((along + delta) % jugglers + jugglers) % jugglers;
+    Token changed = t;
+    changed.target = -1;
+    changed.relative = kNoRelative;
+    changed.pass = next != 0;
+    if (changed.pass) {
+        if (relativeStyle) changed.relative = next;
+        else if (jugglers > 2) changed.target = (juggler + next) % jugglers + 1;
     }
     result->text = replaceTokens(text, {{t, changed}});
     result->cursor = t.start + static_cast<int>(tokenText(changed).size());
@@ -493,7 +544,7 @@ bool swapThrows(const std::string& text, int selectionStart, int selectionEnd, i
                                       : ", which siteswap can't write (its letter means passing or sync).");
             return false;
         }
-        if (t->value == 0 && t->pass) {
+        if (t->value == 0 && t->pass && destinationOf(*t, static_cast<int>(part), static_cast<int>(p.parts.size())) != static_cast<int>(part)) {
             if (why) *why = "Can't swap: a pass would become a 0 (an empty hand can't be a pass).";
             return false;
         }
@@ -538,6 +589,19 @@ std::string tidySiteswap(const std::string& text) {
     Parsed p = parse(text);
     if (!p.ok || (p.parts.size() == 1 && p.parts[0].empty())) return text;
     p.closed = true;
+    // With two jugglers a digit right after a "p" is the next throw ("<3p3|3p3>" is 3p, 3), so
+    // the tidy text spaces it out.
+    if (p.passing && p.parts.size() == 2) {
+        for (std::vector<Token>& part : p.parts) {
+            for (size_t k = 0; k < part.size(); ++k) {
+                if (part[k].target < 0) continue;
+                Token next;
+                next.value = part[k].target;
+                part[k].target = -1;
+                part.insert(part.begin() + static_cast<std::ptrdiff_t>(k) + 1, next);
+            }
+        }
+    }
     return format(p);
 }
 

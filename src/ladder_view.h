@@ -22,6 +22,7 @@
 #include "ladder_edit.h"
 #include "pattern.h"
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -58,13 +59,23 @@ struct LadderEditState {
     float firstBeat = 0.0f;        // beat drawn at the top of the ladder (may be negative)
     float zoom = 1.0f;
     bool beatOneVisible = true;    // as of the last frame drawn
+
+    // Each juggler's strip can be collapsed to a narrow one (its throws still drawn, so passes
+    // to and from it still show), to make room when there are many jugglers.
+    std::array<bool, kMaxJugglers> collapsed{};
 };
+
+// True if every one of the first `jugglers` strips is collapsed.
+bool allStripsCollapsed(const LadderEditState& edit, int jugglers);
+// Collapse All, or Expand All if every strip is collapsed already (C, or the toolbar button).
+void toggleCollapseAll(LadderEditState& edit, int jugglers);
 
 struct LadderToolbarRequest {
     int newPeriodBeats = 0;  // 0 = no change
     bool resetView = false;
     bool toggleValues = false;  // the throw-values button was clicked
     bool toggleOrbits = false;  // the color-by-orbit button was clicked
+    bool toggleCollapseAll = false;  // the collapse/expand-all button was clicked
 };
 
 // Draws the toolbar row (mode toggle, throw values, color by orbit, period control, reset
@@ -80,6 +91,7 @@ struct LadderViewOptions {
     // A throw picked out from elsewhere (hovering it in the siteswap text box), at every repeat:
     // juggler * period + beat in the loop (-1: none).
     int highlightThrow = -1;
+    bool relativeTargets = false;  // label passes "3p+1" (the pattern's text does) rather than "3p2"
 };
 
 constexpr int kNoSelectionChange = -2;
@@ -108,7 +120,7 @@ bool ladderViewIsDefault(const LadderEditState& edit);
 
 // A throw as the ladder labels it: "3", "b", "4p" (for 3+ jugglers, "4p2": to juggler 2).
 // thrower is the juggler throwing it.
-std::string throwLabel(const LoopThrow& t, int thrower, int jugglers);
+std::string throwLabel(const LoopThrow& t, int thrower, int jugglers, bool relative = false);
 
 // Fills the remaining content region of the current ImGui window, and handles editing. `loop`
 // is the pattern (empty if there's nothing valid to show; it may be a sketch). playheadBeat is

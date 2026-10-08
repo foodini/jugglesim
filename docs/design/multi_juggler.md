@@ -160,7 +160,7 @@ The distance control goes with tempo and dwell in the juggler pane's panel, rena
   starter set of common 2-person patterns (2-count, 3-count, 4-count, `<4p 3|3 4p>`, ...).
 - Undo for pattern edits and distance changes.
 
-**Not in milestone 1:** 3+ jugglers, linking, relative notation, starting-hand UI, half-beat
+**Not in milestone 1:** 3+ jugglers (since done; see below), linking, relative notation, starting-hand UI, half-beat
 offsets, the 3D space-time ladder, the Floor view, juggler's-eye view, sequence mode, edit
 suggestions, color modes, layout presets.
 
@@ -180,6 +180,47 @@ for passing patterns. Part 2: the vertical ladder with editing across both juggl
 labels (toolbar button and V), and a draggable divider between the ladder and 3D panes.
 Same-hand throws bulge away from the middle of the juggler throwing them; a pass is identified
 only by running from one strip to the other (revisit if it gets noisy).
+
+## 3 to 6 jugglers (done after the text-box round)
+
+- Hard cap of 6 jugglers for now (choreography will be tangle enough). Ron's own "psychotic"
+  6-person pattern will be the test case for 6-person choreography.
+- Notation: Juggling Lab's absolute targets (`3p2`), plus passist-style relative targets
+  (`3p+1`, `3p-1`, modulo the juggler count) read now rather than waiting for linking. `3p+0`
+  (or `+n`, or an absolute target to yourself) is accepted as a self, so columns can line up in
+  files; Juggling Lab export must write it as a plain self. The target must follow the `p`
+  directly (single digit).
+- One style per pattern when the ladder rewrites the text: any relative target in the pattern
+  means every pass is written relative (and a self written with `+0` keeps it while it's still
+  a self, as long as the loop's shape hasn't changed); otherwise Juggling Lab's absolute form.
+  Typing and file round-trips keep exactly what was written. Ladder and prop labels follow the
+  same style.
+- Default formation: a regular n-gon facing the middle, neighbors the passing distance apart,
+  numbered clockwise seen from above (J2 on J1's left, the last juggler on J1's right). No automatic
+  feed detection: formations (a straight feed vs. feeder in the middle, say) belong to
+  choreography and probably won't be automatic.
+- Turning: hands throw and catch most of the way toward a partner who isn't straight ahead
+  (0.7 of the angle, at most ~50 degrees), clubs' spin planes with them; the upper body twists
+  half as far, eased over about a beat. Nothing changes for partners straight ahead.
+- Camera: for 3+ jugglers it starts behind and above J1 (about 29 degrees down), so a feed is
+  seen from the feeder's side; framed to the floor and sized for the nearest jugglers. (Two
+  jugglers keep the side view.)
+- Ladder: per-juggler collapse (the triangle by each number), plus a collapse/expand-all
+  toggle (toolbar button, C, View menu): if every strip is collapsed it expands all, otherwise it
+  collapses all. Collapsed strips keep their throws (so passes show) but drop value labels. No
+  horizontal scrolling yet; strips shrink to fit.
+- Text box: Shift+Up/Down step a throw's target (self, then each juggler in turn, back to self).
+- Pasting jugglers waits for linking (a Pandora's box of its own).
+
+### The Cuisinart (a choreography test case)
+
+A 4-person 4-count feast "put through the blender". Seen by floor spots it's an ordinary feast;
+in the beats where two jugglers would have nobody to pass to, those two step forward, turn and
+cross (the other pair's passes flying between them) and swap spots, so each juggler's own
+partner sequence changes (J1: J4, J4, J3, ...) and there's always one juggler you never pass
+to. Six people is worse. Decided: no per-spot target notation; the per-juggler siteswap plus
+where each juggler walks says it all. Choreography needs jugglers walking (and turning) while
+juggling, and clearance checks for clubs passing close to moving bodies.
 
 ## Sketching, beats and orbits (done after milestone 1)
 

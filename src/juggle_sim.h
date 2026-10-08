@@ -105,14 +105,19 @@ struct BodyMotion {
     Vec3 pelvisOffset;        // from the neutral waist; y < 0 when crouching
     float lean = 0.0f;
     float roll = 0.0f;
+    float twist = 0.0f;       // the upper body turned about the vertical (toward the juggler's left, +X)
     Vec3 lookAt{0.0f, 1.2f, 0.5f};  // what the head is looking at (mostly the highest balls)
     float intensity = 0.0f;   // 0..1: how fervent the juggling looks (see patternIntensity)
 };
 
 const Vec3 kNeutralWaist(0.0f, 0.98f, 0.0f);  // must match makeNeutralPose()
 
-// Rotates a direction by the upper body's lean and roll.
+// Rotates a direction by the upper body's twist, lean and roll.
 inline Vec3 bodyDirection(const BodyMotion& m, Vec3 d) {
+    if (m.twist != 0.0f) {
+        const float ct = std::cos(m.twist), st = std::sin(m.twist);
+        d = Vec3(d.x * ct + d.z * st, d.y, -d.x * st + d.z * ct);
+    }
     const float cl = std::cos(m.lean), sl = std::sin(m.lean);
     const Vec3 leaned(d.x, d.y * cl - d.z * sl, d.y * sl + d.z * cl);
     const float cr = std::cos(m.roll), sr = std::sin(m.roll);
@@ -163,6 +168,8 @@ struct SceneExtents {
     float halfWidth = 0.0f;      // half the width (along X) of hands and balls, about centerX
     float centerX = 0.0f;        // middle of that width
     float centerZ = 0.0f;        // depth of the hands' throw points (where the camera aims)
+    float nearZ = 0.0f;          // the nearest the jugglers come to the default camera (+Z)
+    bool ring = false;           // 3+ jugglers around a ring (seen from a little above)
 };
 // World extents of the whole pattern, or (with onlyJuggler >= 0) of one juggler: their hands,
 // what they hold and their selfs (passes leave them, so they're left out).

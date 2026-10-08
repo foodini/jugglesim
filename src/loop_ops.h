@@ -20,9 +20,11 @@
 // Number of open throws ("?"s). 0 for a complete pattern.
 int openThrowCount(const JugglingLoop& loop);
 
-// The loop as siteswap text, "?" for open throws: "531", "<3p 3|3p 3>", "<3p ? 3|...>".
-// Returns false if a value can't be written (25, 33 or over 35).
-bool loopToText(const JugglingLoop& loop, std::string* text);
+// The loop as siteswap text, "?" for open throws: "531", "<3p 3|3p 3>", "<3p ? 3|...>". Passes
+// are written in `style` if given (relative targets, "3p+1", if the pattern used them), else as
+// Juggling Lab does ("3p2" with 3+ jugglers). Returns false if a value can't be written (25, 33
+// or over 35).
+bool loopToText(const JugglingLoop& loop, std::string* text, const PassStyle* style = nullptr);
 
 // Shortest period the loop repeats at (open throws count as a value of their own).
 int loopShortestPeriod(const JugglingLoop& loop);

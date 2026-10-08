@@ -35,8 +35,8 @@ name, its siteswap is shown beside it in grey. Hovering over a pattern that carr
 props, tempo or dwell shows them.
 
 *2 Jugglers* in *JuggleSim Patterns* has some common club-passing patterns (Ultimates, 2-count,
-3-count, 4-count, 6-count and a few more). *3 Jugglers* and *4 Jugglers* are placeholders for
-now.
+3-count, 4-count, 6-count and a few more). *3 Jugglers* to *6 Jugglers* have a few to start
+with (feeds, the 5-person star, and 2-counts round the ring).
 
 ## Saving your own patterns
 

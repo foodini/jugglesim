@@ -142,13 +142,16 @@ Siteswap parseVanilla(const std::string& text) {
 }
 
 // <field|field|...>: each field is a juggler's throws, each a value optionally followed by
-// 'p' (a pass). With 2 jugglers 'p' passes to the other one; with more, Juggling Lab writes the
-// target's number after the 'p' (3p2), which is recognized but not supported yet.
+// 'p' (a pass) and its target: none with two jugglers (the other one), else the target's
+// number (3p2) or a relative one (3p+1, 3p-1; also allowed with two jugglers).
 Siteswap parsePassing(const std::string& text) {
     Siteswap s;
-    std::string body;
-    for (const char raw : text)
-        if (!std::isspace(static_cast<unsigned char>(raw))) body += raw;
+    // Spaces separate throws but are otherwise ignored; a pass's target has to follow its 'p'
+    // directly ("3p2 3" is a pass to J2 then a 3; "3p 2" is a pass with no target, then a 2).
+    size_t first = 0, last = text.size();
+    while (first < last && std::isspace(static_cast<unsigned char>(text[first]))) ++first;
+    while (last > first && std::isspace(static_cast<unsigned char>(text[last - 1]))) --last;
+    std::string body = text.substr(first, last - first);
     if (body.size() < 2 || body.front() != '<' || body.back() != '>') {
         s.error = "A passing pattern needs to end with '>'.";
         return s;
@@ -164,39 +167,88 @@ Siteswap parsePassing(const std::string& text) {
         s.error = "A passing pattern needs at least two jugglers, separated by '|'.";
         return s;
     }
-    if (jugglers > 2) {
-        s.error = "Passing patterns with " + std::to_string(jugglers) + " jugglers aren't supported yet (2 for now).";
+    if (jugglers > kMaxJugglers) {
+        s.error = "Patterns can have up to " + std::to_string(kMaxJugglers) + " jugglers (this one has " +
+                  std::to_string(jugglers) + ").";
         return s;
     }
     std::vector<std::vector<LoopThrow>> perJuggler(static_cast<size_t>(jugglers));
+    std::vector<std::vector<bool>> selfAsPass(static_cast<size_t>(jugglers));
+    bool relative = false;
     for (int j = 0; j < jugglers; ++j) {
         const std::string& f = fields[static_cast<size_t>(j)];
+        std::vector<LoopThrow>& throws = perJuggler[static_cast<size_t>(j)];
+        std::vector<bool>& marks = selfAsPass[static_cast<size_t>(j)];
+        bool lastHasP = false;
         for (size_t i = 0; i < f.size(); ++i) {
             const unsigned char ch = static_cast<unsigned char>(f[i]);
+            if (std::isspace(ch)) continue;
             const int v = throwValue(ch);
             if (v >= 0) {
-                perJuggler[static_cast<size_t>(j)].push_back({v, j});
+                throws.push_back({v, j});
+                marks.push_back(false);
+                lastHasP = false;
             } else if (ch == '?') {
-                perJuggler[static_cast<size_t>(j)].push_back({kOpenThrow, j});
+                throws.push_back({kOpenThrow, j});
+                marks.push_back(false);
+                lastHasP = false;
             } else if (std::tolower(ch) == 'p') {
-                if (perJuggler[static_cast<size_t>(j)].empty()) {
+                if (throws.empty()) {
                     s.error = "In " + jugglerName(j) + "'s part, 'p' has to follow a throw value (3p).";
                     return s;
                 }
-                LoopThrow& t = perJuggler[static_cast<size_t>(j)].back();
-                if (t.value == 0) {
-                    s.error = "In " + jugglerName(j) + "'s part, a 0 (an empty hand) can't be a pass.";
+                if (lastHasP) {
+                    s.error = "In " + jugglerName(j) + "'s part, a throw has two 'p's.";
                     return s;
                 }
+                lastHasP = true;
+                LoopThrow& t = throws.back();
                 if (t.value == kOpenThrow) {
                     s.error = "In " + jugglerName(j) + "'s part, a ? (a throw not decided yet) can't be a pass.";
                     return s;
                 }
-                if (t.dest != j) {
-                    s.error = "In " + jugglerName(j) + "'s part, a throw has two 'p's.";
+                // The target: relative (+1, -1), absolute (a juggler's number, 3+ jugglers), or
+                // none (two jugglers: the other one).
+                int dest = -1;
+                const char next = i + 1 < f.size() ? f[i + 1] : '\0';
+                if ((next == '+' || next == '-') && i + 2 < f.size() &&
+                    std::isdigit(static_cast<unsigned char>(f[i + 2]))) {
+                    const int steps = (f[i + 2] - '0') * (next == '-' ? -1 : 1);
+                    dest = ((j + steps) % jugglers + jugglers) % jugglers;
+                    relative = true;
+                    i += 2;
+                } else if (next == '+' || next == '-') {
+                    s.error = "In " + jugglerName(j) + "'s part, '" + std::string(1, next) +
+                              "' after a 'p' needs a number of jugglers along (3p+1).";
+                    return s;
+                } else if (jugglers > 2) {
+                    if (!std::isdigit(static_cast<unsigned char>(next))) {
+                        s.error = "With " + std::to_string(jugglers) + " jugglers, a pass needs its target: in " +
+                                  jugglerName(j) + "'s part, 3p2 passes to J2, 3p+1 to the next juggler.";
+                        return s;
+                    }
+                    const int target = next - '0';
+                    if (target < 1 || target > jugglers) {
+                        s.error = "In " + jugglerName(j) + "'s part, a pass goes to J" + std::to_string(target) +
+                                  ", but there are only " + std::to_string(jugglers) + " jugglers.";
+                        return s;
+                    }
+                    dest = target - 1;
+                    ++i;
+                } else {
+                    dest = 1 - j;
+                }
+                if (dest == j) {
+                    marks.back() = true;  // a pass to yourself: a self, written to line things up
+                } else if (t.value == 0) {
+                    s.error = "In " + jugglerName(j) + "'s part, a 0 (an empty hand) can't be a pass.";
                     return s;
                 }
-                t.dest = 1 - j;
+                t.dest = dest;
+            } else if (ch == '+' || ch == '-') {
+                s.error = "In " + jugglerName(j) + "'s part, '" + std::string(1, static_cast<char>(ch)) +
+                          "' only follows a 'p' (3p+1).";
+                return s;
             } else if (unsupported(ch, &s)) {
                 return s;
             } else if (ch == '<' || ch == '>') {
@@ -224,6 +276,10 @@ Siteswap parsePassing(const std::string& text) {
     s.loop.period = static_cast<int>(period);
     for (const std::vector<LoopThrow>& f : perJuggler) s.loop.throws.insert(s.loop.throws.end(), f.begin(), f.end());
     for (const LoopThrow& t : perJuggler[0]) s.throws.push_back(t.value);
+    s.passStyle.relative = relative;
+    s.passStyle.jugglers = jugglers;
+    s.passStyle.period = static_cast<int>(period);
+    for (const std::vector<bool>& m : selfAsPass) s.passStyle.selfAsPass.insert(s.passStyle.selfAsPass.end(), m.begin(), m.end());
     validate(&s);
     return s;
 }

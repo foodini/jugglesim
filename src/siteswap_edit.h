@@ -51,6 +51,13 @@ bool autofillSiteswap(const std::string& before, const std::string& after, int c
 // it can't go further.
 bool bumpThrowAtCursor(const std::string& text, int cursor, int delta, SiteswapEdit* result);
 
+// Changes where the throw at the cursor goes (Shift+Up/Down), by delta jugglers along: a self
+// becomes a pass to the next juggler (delta +1) or the one before (-1), and stepping on past the
+// last juggler comes back to a self. Written in the pattern's style: relative ("3p+1") if the
+// text already uses relative targets, else as Juggling Lab writes it ("3p2", or a bare "p" with
+// two jugglers). False (with *why) for a solo pattern, a 0 or a "?".
+bool stepPassTarget(const std::string& text, int cursor, int delta, SiteswapEdit* result, std::string* why);
+
 // Swaps where two throws in the same juggler's part land (a "siteswap"): the two selected
 // throws, or with no selection, the two throws just before the cursor. Throws at positions i < j
 // (d = j - i apart) become: position i gets throw j's value + d (and its destination), position
