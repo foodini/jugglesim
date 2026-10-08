@@ -13,11 +13,11 @@ can trace any point on a throw straight across to its beat number.
   column), side by side: J1, J2, ... up to J6. Every juggler throws with the right hand on beat
   1. Click a juggler's number over their strip to select them (the same selection as in the 3D
   view; see [juggler.md](juggler.md)); click it again to deselect.
-- **Collapsing strips.** With several jugglers it gets busy. The triangle beside a juggler's
-  number collapses their strip to a narrow one (or expands it again); their throws are still
-  drawn, so passes to and from them still show, but without value labels. The toolbar's arrows
-  button, **C** or *View > Collapse All Jugglers* collapses every strip, or expands them all if they're all collapsed
-  already.
+- **Collapsing strips.** With several jugglers it gets busy. The small triangle button just
+  left of a juggler's number collapses their strip to a narrow one (or expands it again); their
+  throws are still drawn, so passes to and from them still show, but without value labels. The
+  toolbar's arrows button, **C** or *View > Collapse All Jugglers* collapses every strip, or
+  expands them all if they're all collapsed already.
 - **Throws.** Each throw is drawn from the beat it's thrown on to the beat it lands on, with an
   arrowhead at the landing.
   - **Odd throws** (1, 3, 5, ...) change hands, so they cross between the juggler's columns.

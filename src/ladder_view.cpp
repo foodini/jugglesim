@@ -137,7 +137,7 @@ LadderToolbarRequest drawLadderToolbar(const JugglingLoop& loop, const LadderEdi
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip(expand ? "Expand all jugglers (C)\n\nEvery juggler's strip back to full width."
                                      : "Collapse all jugglers (C)\n\nEvery juggler's strip narrow (their throws still show).\n"
-                                       "The triangle by each juggler's number collapses or expands just that one.");
+                                       "The triangle button left of each juggler's number collapses or expands just that one.");
     }
 
     // Period control: write the loop out at a multiple of its shortest period.
@@ -304,7 +304,7 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
     for (int j = 0; j < jugglers; ++j)
         if (isCollapsed(j)) ++collapsedCount;
     const int expandedCount = jugglers - collapsedCount;
-    const float collapsedWidth = fontSize * 4.0f;
+    const float collapsedWidth = fontSize * 4.6f;
     const float collapsedTotal = collapsedWidth * static_cast<float>(collapsedCount);
     const float stripGap =
         jugglers > 1 ? std::clamp((areaWidth - static_cast<float>(expandedCount) * fontSize * 12.0f - collapsedTotal) / (jugglerCount - 1.0f),
@@ -619,25 +619,38 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         justStopped = true;
     }
 
-    // Strip headers: with several jugglers, clicking one selects that juggler (clicking the
-    // selected one deselects). The triangle at its left collapses or expands the strip.
-    const float toggleWidth = fontSize * 1.1f;
+    // Strip headers: with several jugglers, clicking one's number selects that juggler
+    // (clicking the selected one deselects). A separate small button to its left, with the
+    // triangle, collapses or expands the strip.
+    const float toggleWidth = fontSize * 1.3f;
+    const float toggleGap = fontSize * 0.35f;
     auto jugglerHeaderRect = [&](int j, ImVec2* min, ImVec2* max) {
-        const float cx = stripLeft(j) + widthOf(j) * 0.5f;
-        const float w = ImGui::CalcTextSize("J00").x + fontSize * 0.9f + toggleWidth;
+        const float labelWidth = ImGui::CalcTextSize("J00").x + fontSize * 0.9f;
+        const float groupLeft = stripLeft(j) + widthOf(j) * 0.5f - 0.5f * (toggleWidth + toggleGap + labelWidth);
         const float top = origin.y + headerHeight + fontSize * 0.15f;
-        *min = ImVec2(cx - w * 0.5f, top);
-        *max = ImVec2(cx + w * 0.5f, top + fontSize * 1.3f);
+        *min = ImVec2(groupLeft + toggleWidth + toggleGap, top);
+        *max = ImVec2(min->x + labelWidth, top + fontSize * 1.3f);
+    };
+    auto collapseToggleRect = [&](int j, ImVec2* min, ImVec2* max) {
+        ImVec2 a, b;
+        jugglerHeaderRect(j, &a, &b);
+        *min = ImVec2(a.x - toggleGap - toggleWidth, a.y);
+        *max = ImVec2(a.x - toggleGap, b.y);
     };
     int hoverHeader = -1;
-    bool hoverToggle = false;  // over the header's collapse triangle
+    bool hoverToggle = false;  // over the strip's collapse button rather than its number
     if (jugglers > 1 && canvasHovered && !chain.active && !edit.drawing) {
         for (int j = 0; j < jugglers; ++j) {
-            ImVec2 a, b;
+            ImVec2 a, b, ta, tb;
             jugglerHeaderRect(j, &a, &b);
-            if (mouse.x >= a.x && mouse.x <= b.x && mouse.y >= a.y && mouse.y <= b.y) {
+            collapseToggleRect(j, &ta, &tb);
+            if (mouse.y < a.y || mouse.y > b.y) continue;
+            if (mouse.x >= a.x && mouse.x <= b.x) {
                 hoverHeader = j;
-                hoverToggle = mouse.x < a.x + toggleWidth;
+                hoverToggle = false;
+            } else if (mouse.x >= ta.x && mouse.x <= tb.x) {
+                hoverHeader = j;
+                hoverToggle = true;
             }
         }
         if (hoverHeader >= 0 && leftClicked) {
@@ -1412,28 +1425,32 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
                 ImVec2 a, b;
                 jugglerHeaderRect(j, &a, &b);
                 const bool selected = j == options.selectedJuggler;
-                const bool hovered = j == hoverHeader;
+                const bool hovered = j == hoverHeader && !hoverToggle;
                 const float rounding = fontSize * 0.3f;
+                // The collapse button: its own small outlined box, the triangle pointing down
+                // while expanded and right while collapsed.
+                {
+                    ImVec2 ta, tb;
+                    collapseToggleRect(j, &ta, &tb);
+                    const bool toggleHovered = j == hoverHeader && hoverToggle;
+                    dl->AddRectFilled(ta, tb, toggleHovered ? IM_COL32(64, 70, 86, 255) : IM_COL32(22, 24, 30, 255), rounding);
+                    dl->AddRect(ta, tb, toggleHovered ? IM_COL32(200, 204, 214, 230) : IM_COL32(110, 116, 132, 200), rounding, 0, 1.0f);
+                    const float tx = 0.5f * (ta.x + tb.x), ty = 0.5f * (ta.y + tb.y);
+                    const float r = fontSize * 0.26f;
+                    const ImU32 arrow = toggleHovered ? IM_COL32(240, 242, 248, 255) : IM_COL32(170, 176, 190, 255);
+                    if (isCollapsed(j))
+                        dl->AddTriangleFilled(ImVec2(tx - r * 0.6f, ty - r), ImVec2(tx - r * 0.6f, ty + r), ImVec2(tx + r * 0.8f, ty), arrow);
+                    else
+                        dl->AddTriangleFilled(ImVec2(tx - r, ty - r * 0.6f), ImVec2(tx + r, ty - r * 0.6f), ImVec2(tx, ty + r * 0.8f), arrow);
+                }
                 dl->AddRectFilled(a, b, selected ? IM_COL32(236, 238, 244, 255)
                                                  : (hovered ? IM_COL32(52, 56, 68, 255) : IM_COL32(28, 30, 36, 255)),
                                   rounding);
                 dl->AddRect(a, b, IM_COL32(210, 214, 224, 230), rounding, 0, selected ? 2.0f : 1.0f);
                 const ImU32 ink = selected ? IM_COL32(16, 16, 20, 255) : IM_COL32(232, 234, 240, 255);
-                // The collapse triangle: pointing down while expanded, right while collapsed.
-                {
-                    const float tx = a.x + toggleWidth * 0.55f, ty = 0.5f * (a.y + b.y);
-                    const float r = fontSize * 0.28f;
-                    if (hovered && hoverToggle)
-                        dl->AddRectFilled(ImVec2(a.x + 1.0f, a.y + 1.0f), ImVec2(a.x + toggleWidth, b.y - 1.0f),
-                                          selected ? IM_COL32(200, 204, 214, 255) : IM_COL32(80, 86, 102, 255), rounding);
-                    if (isCollapsed(j))
-                        dl->AddTriangleFilled(ImVec2(tx - r * 0.6f, ty - r), ImVec2(tx - r * 0.6f, ty + r), ImVec2(tx + r * 0.8f, ty), ink);
-                    else
-                        dl->AddTriangleFilled(ImVec2(tx - r, ty - r * 0.6f), ImVec2(tx + r, ty - r * 0.6f), ImVec2(tx, ty + r * 0.8f), ink);
-                }
                 const std::string label = "J" + std::to_string(j + 1);
                 const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
-                dl->AddText(ImVec2((a.x + toggleWidth + b.x - ts.x) * 0.5f, (a.y + b.y - ts.y) * 0.5f), ink, label.c_str());
+                dl->AddText(ImVec2((a.x + b.x - ts.x) * 0.5f, (a.y + b.y - ts.y) * 0.5f), ink, label.c_str());
             }
             if (isCollapsed(j)) continue;  // no room for L and R
             for (int right = 0; right < 2; ++right) {
