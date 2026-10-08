@@ -6,6 +6,7 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <climits>
 #include <cmath>
 #include <cstdlib>
@@ -681,7 +682,7 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         // nothing lands in is where a catch can be drawn into. Right on one of those points, it
         // wins over the curves passing by.
         {
-            float bestD = fontSize * 0.6f;
+            float bestD = fontSize * 0.85f;  // (a "?" ring's radius is 0.8 em)
             for (int b = bFirst; b <= bLast; ++b) {
                 for (int j = 0; j < jugglers; ++j) {
                     const Slot s{j, b};
@@ -892,6 +893,11 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
     const float thickness = 2.5f;
     const float arrowSize = fontSize * 0.55f;
     const float markerRadius = fontSize * 0.36f;
+    // Things you can click to start or finish something stand out more than ordinary markers:
+    // a sketch's open throws ("?") and the spots a held or drawn throw can close on.
+    const float openRadius = fontSize * 0.8f;     // ring radius
+    const float targetRadius = fontSize * 1.1f;  // outside a "?" ring, which may sit inside it
+    const ImU32 brightText = IM_COL32(225, 229, 238, 255);
     const float dashUnit = fontSize * 0.35f;
 
     // Throws: curves and arrowheads.
@@ -961,12 +967,12 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
             const Slot s{chain.hole.juggler, b};
             const ImVec2 p = slotPoint(s);
             if (s == chain.hole) {
-                dl->AddCircle(p, markerRadius + 5.0f + 2.0f * pulse, mixColor(white, white, 0.0f, 0.95f), 0, 2.0f);
-                dl->AddCircle(p, markerRadius + 1.5f, mixColor(white, white, 0.0f, 0.57f), 0, 1.5f);
+                dl->AddCircle(p, targetRadius + 2.0f + 3.0f * pulse, mixColor(white, white, 0.0f, 0.95f), 0, 2.5f);
+                dl->AddCircle(p, targetRadius - 3.0f, mixColor(white, white, 0.0f, 0.6f), 0, 1.5f);
             } else if (editCloseLoopLength(chain, s, true) > 0) {
                 const float a = shiftHeld ? 0.95f : 0.35f;
-                const float outer = markerRadius + 4.0f + 2.0f * pulse;
-                const float inner = markerRadius + 1.5f;
+                const float outer = targetRadius + 1.0f + 3.0f * pulse;
+                const float inner = targetRadius - 3.0f;
                 dl->AddRect(ImVec2(p.x - outer, p.y - outer), ImVec2(p.x + outer, p.y + outer),
                             mixColor(white, white, 0.0f, a), 0.0f, 0, 2.0f);
                 dl->AddRect(ImVec2(p.x - inner, p.y - inner), ImVec2(p.x + inner, p.y + inner),
@@ -1062,8 +1068,7 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
                 const bool free = byStart ? (throwAt(s).value == kOpenThrow && drawnThrowFor(s, edit.drawTo, nullptr))
                                           : (nothingLandsIn(s) && drawnThrowFor(edit.drawFrom, s, nullptr));
                 if (!free) continue;
-                dl->AddCircle(slotPoint(s), markerRadius + 4.0f, mixColor(style.color, kCanvasBackground, 0.3f, 0.55f),
-                              0, 1.5f);
+                dl->AddCircle(slotPoint(s), targetRadius, mixColor(style.color, white, 0.25f, 0.9f), 0, 2.5f);
             }
         }
         Curve c;
@@ -1136,33 +1141,31 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
 
     // Departure markers on top, ringed in the background color so they stay readable where
     // curves cross them. Empty beats get a small hollow circle. In a sketch, an open throw is a
-    // "?" in a dashed ring, and a spot nothing lands in gets a notch above it (so the two kinds
-    // of open spot read without color).
+    // "?" in a large dashed ring.
     for (int b = bFirst; b <= bLast; ++b) {
         for (int j = 0; j < jugglers; ++j) {
             const Slot s{j, b};
             const LoopThrow t = throwAt(s);
             const ImVec2 p0 = slotPoint(s);
             if (t.value == kOpenThrow && sketch && !(edit.drawing && edit.drawEnd == HeldEnd::Arrival && s == edit.drawFrom)) {
-                const float r = markerRadius + 1.0f;
-                dl->AddCircleFilled(p0, r + 1.0f, kCanvasBackground);
-                for (int k = 0; k < 8; ++k) {  // dashed ring
-                    const float a0 = static_cast<float>(k) * 0.785398f, a1 = a0 + 0.45f;
+                const float r = openRadius;
+                dl->AddCircleFilled(p0, r + 1.0f, IM_COL32(38, 42, 54, 255));
+                for (int k = 0; k < 10; ++k) {  // dashed ring
+                    const float a0 = static_cast<float>(k) * 0.628319f, a1 = a0 + 0.38f;
                     dl->PathArcTo(p0, r, a0, a1, 4);
-                    dl->PathStroke(textCol, 0, 1.5f);
+                    dl->PathStroke(brightText, 0, 2.0f);
                 }
-                const ImVec2 qs = ImGui::CalcTextSize("?");
-                dl->AddText(ImVec2(p0.x - qs.x * 0.5f, p0.y - qs.y * 0.5f), textCol, "?");
+                // A larger "?", drawn twice half a pixel apart so it reads bold.
+                const float qSize = fontSize * 1.5f;
+                const ImVec2 qs = ImGui::GetFont()->CalcTextSizeA(qSize, FLT_MAX, 0.0f, "?");
+                const ImVec2 qp(p0.x - qs.x * 0.5f, p0.y - qs.y * 0.5f);
+                dl->AddText(ImGui::GetFont(), qSize, qp, brightText, "?");
+                dl->AddText(ImGui::GetFont(), qSize, ImVec2(qp.x + 0.6f, qp.y), brightText, "?");
             } else if (t.value == 0) {
                 dl->AddCircle(p0, fontSize * 0.25f, dimText, 0, 1.5f);
             } else if (t.value > 0) {
                 const BallStyle style = ballStyle(colorVision, styleAt(s));
                 drawMarker(dl, p0, markerRadius, style.shape, style.color, 2.0f, kCanvasBackground);
-            }
-            if (nothingLandsIn(s)) {
-                const float r = markerRadius + 3.0f;
-                dl->AddTriangle(ImVec2(p0.x - r * 0.45f, p0.y - r - 5.0f), ImVec2(p0.x + r * 0.45f, p0.y - r - 5.0f),
-                                ImVec2(p0.x, p0.y - r + 1.0f), textCol, 1.5f);
             }
         }
     }

@@ -183,7 +183,7 @@ While drawing, faint rings mark the spots nothing lands in yet. If you click a s
 already lands in, your throw takes it, and the throw that landed there is picked up instead:
 find it a new home the same way (as when editing a finished pattern).
 
-A spot that throws something but that nothing lands in yet (the one with the notch over it):
+A spot that throws something but that nothing lands in yet:
 click right on it to draw a catch into it. The rubber band runs from the mouse to that spot;
 click where the prop is thrown from, with the same rules as holding a throw by its start
 (below).
@@ -199,9 +199,9 @@ spot becomes a ?) to be placed again:
   that was there is picked up by its start in turn, to be given a new spot to be thrown from
   (Esc leaves it as a ?).
 
-Open spots are marked so you can see what's left without color: a **?** in a dashed ring for a
-throw not decided yet, and a small notch over a spot nothing lands in yet. When every throw is
-decided, the sketch is an ordinary pattern: it plays, and it's written at its shortest period.
+A throw not decided yet is a **?** in a large dashed ring, so you can see what's left without
+color. When every throw is decided, the sketch is an ordinary pattern: it plays, and it's
+written at its shortest period.
 
 The jugglers juggle the sketch as far as it goes: a prop thrown from a spot nothing lands in
 pops into the hand (with a puff of glowing smoke) when it would have been caught there, and a
