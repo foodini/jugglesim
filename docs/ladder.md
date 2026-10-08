@@ -243,3 +243,37 @@ Passing patterns are drawn and edited on the ladder like any other (see above).
 
 **?** is a throw not decided yet: JuggleSim's own extension, for sketches (see *Sketching*
 above). Other programs won't read it.
+
+### Help while typing
+
+- **Autofill.** Typing `<` in front of a solo pattern makes it a passing pattern with a second
+  juggler still to decide: `531` becomes `<5 3 1|? ? ?>`. `<3` becomes `<3|?>`, and each throw
+  you add to one juggler's part adds a `?` at the same place in the other's (`<5 3 1|5 3 1>`
+  with a `7` typed at the front becomes `<7 5 3 1|? 5 3 1>`). Deleting a throw deletes the one
+  at the same place in the other part if either of them is a `?` (a `?` holds nothing back; a
+  real throw does). If the very next thing you do is type a throw in the same place, though,
+  you were replacing it, and the column comes back: backspacing the `?` in `<7 5 3 1|? 5 3 1>`
+  and typing `7` gives `<7 5 3 1|7 5 3 1>`. (Moving the cursor first, or any other edit, keeps
+  the deletion.) A `|` typed at the end adds a juggler, all `?`. A missing `>` is added.
+  Passing patterns are written in the standard style: spaces between throws, none around the
+  bars.
+- **Up/Down** change the throw at the cursor: `?`, then 0, 1, 2, … up to 35 (z), skipping 25 and
+  33 (whose letters, p and x, mean other things). A 0 can't be a pass, so it loses its `p`.
+- **Ctrl+T** (**Cmd+T** on a Mac) swaps where two throws land — the *siteswap* operation that
+  turns one pattern into another. Select two throws in one juggler's part, or just put the
+  cursor after them: `531` with `31` selected becomes `522`. (Throws `d` beats apart swap
+  landings by trading `d` between them: the first becomes the second's value + `d`, the second
+  the first's − `d`.) Doing it again swaps them back. The pattern repeats, so with the cursor
+  just after a part's first throw, it swaps with the part's last throw (the one before it, in
+  the repeat before): `531` becomes `036`, and `<3p 3 3 3|3p 3 3 3>` becomes
+  `<2 3 3 4p|3p 3 3 3>`. At the very start of a part, the last two throws swap. If it can't be done (a `?`, or a throw that would go below 0), the line
+  under the box says why.
+- **Ctrl+R** and **Ctrl+L** (**Cmd+R** / **Cmd+L** on a Mac) rotate the pattern right or left:
+  the same pattern, started a beat earlier or later. `7531` becomes `1753` (right) or `5317`
+  (left). Every juggler's part rotates together: `<3p 5 3 1|3p 5 3 1>` becomes
+  `<1 3p 5 3|1 3p 5 3>`. Rotating by an odd number of beats swaps which hand starts.
+- **Pointing at a throw** describes it ("J1, beat 3, right hand: 4p, a pass to J2's right
+  hand, caught on beat 7") and picks it out on the ladder at every repeat.
+- **Mistakes are underlined**: when two throws land in the same hand at the same time, both
+  get a zigzag underline, along with the message below the box.
+- **Enter** (or clicking away) tidies the text into the standard form.

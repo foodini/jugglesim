@@ -58,6 +58,13 @@ struct Siteswap {
     bool sketch = false;
     int openThrows = 0;
     std::string error;  // empty when valid, for a sketch, or when the input was blank
+    // The throws the error is about, when it's about particular throws (two that land together),
+    // so the text box can underline them: {juggler, beat in the loop}.
+    struct ThrowRef {
+        int juggler = 0;
+        int beat = 0;
+    };
+    std::vector<ThrowRef> problemThrows;
 
     int period() const { return static_cast<int>(throws.size()); }
     int jugglers() const { return loop.jugglers; }

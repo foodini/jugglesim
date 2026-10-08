@@ -94,6 +94,7 @@
     <ClCompile Include="src\renderer.cpp" />
     <ClCompile Include="src\settings.cpp" />
     <ClCompile Include="src\siteswap.cpp" />
+    <ClCompile Include="src\siteswap_edit.cpp" />
     <ClCompile Include="third_party\imgui\imgui.cpp" />
     <ClCompile Include="third_party\imgui\imgui_demo.cpp" />
     <ClCompile Include="third_party\imgui\imgui_draw.cpp" />
@@ -123,6 +124,7 @@
     <ClInclude Include="src\resource.h" />
     <ClInclude Include="src\settings.h" />
     <ClInclude Include="src\siteswap.h" />
+    <ClInclude Include="src\siteswap_edit.h" />
     <ClInclude Include="src\timing.h" />
   </ItemGroup>
   <ItemGroup>

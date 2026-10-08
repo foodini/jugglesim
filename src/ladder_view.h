@@ -77,6 +77,9 @@ struct LadderViewOptions {
     bool showValues = false;    // label every throw with its value ("3", "4p")
     bool colorByOrbit = false;  // one color per orbit instead of per prop
     int selectedJuggler = -1;   // shown highlighted in the strip headers (-1: none)
+    // A throw picked out from elsewhere (hovering it in the siteswap text box), at every repeat:
+    // juggler * period + beat in the loop (-1: none).
+    int highlightThrow = -1;
 };
 
 constexpr int kNoSelectionChange = -2;

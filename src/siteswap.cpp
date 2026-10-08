@@ -79,6 +79,8 @@ void validate(Siteswap* s) {
                     s->error = "Invalid: " + jugglerName(pj) + "'s throw on beat " + std::to_string(pb + 1) +
                                " and " + jugglerName(j) + "'s throw on beat " + std::to_string(b + 1) +
                                " land in " + jugglerName(t.dest) + "'s hand at the same time.";
+                s->problemThrows.push_back({pj, pb});
+                s->problemThrows.push_back({j, b});
                 return;
             }
             landedFrom[static_cast<size_t>(slot)] = j * n + b;

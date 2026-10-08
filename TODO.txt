@@ -6,11 +6,10 @@
 * add a config to choose a prop (clubs, balls, rings, bowling balls, and we really need
   some completely ridiculous prop.) 
   * Birthday cake, salmon, dry ice, open 2L bottle of soda?
-* With short periods, the read head looks pretty twitchy. It should track all the way
-  across the ladder. Actually, there's a bug if it doesn't. With the pattern "3", having
-  the read head reset every beat causes the ladder to not match the position of the balls.
-  The read head is constantly showing the first ball (currently blue) coming out of the
-  right hand, but that's clearly not a valid juggle.
+* If the primary read head leaves the ladder view, scroll to follow it? Do we pop back to
+  beat1 when it fades? If so, we should do so in a way that doesn't appear to move the 
+  entire ladder. Rather, the ladder should bump back by exactly the cycle length. The only
+  thing you'd see on the sceen is the numbers suddenly changing.
 * Do a pass over "Recent." Should it move to the top level of File?
 * Add a trash icon next to a pattern in the menu to allow deletion? Ask for confirmation,
   of course.

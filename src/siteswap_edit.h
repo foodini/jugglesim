@@ -1,0 +1,77 @@
+// siteswap_edit.h - help for typing siteswap in the text box: autofill, changing a throw with
+// Up/Down, swapping two throws' landings, tidying, and finding which throw a character is in.
+//
+// Everything here works on the text itself (with a cursor and selection, as character offsets)
+// and draws nothing; app.cpp wires it to the text box.
+#pragma once
+
+#include <string>
+
+// What the text box shows when the user has just typed something that calls for more: the
+// text and where the cursor should go.
+struct SiteswapEdit {
+    std::string text;
+    int cursor = 0;
+};
+
+// Autofill after an edit took the text from `before` to `after` (cursor in `after`). Returns
+// true, with the filled-in text, when the edit calls for it:
+//   - "<" typed in an empty box gives "<|>"; "<" typed before a solo pattern ("531") makes it a
+//     passing pattern with a second juggler still to decide ("<5 3 1|? ? ?>").
+//   - A "|" typed at the end of a passing pattern adds a juggler, all "?".
+//   - A throw inserted into one juggler's part puts a "?" at the same position in the others
+//     (or, if a part was shorter, pads it with "?" at the end).
+//   - A throw deleted from one juggler's part deletes the throw at the same position in the
+//     others if either of them was a "?" (a "?" never holds anything back; a real throw does).
+// Passing patterns are rewritten in the standard style: spaces between throws, none around the
+// bars. A missing ">" is added.
+//
+// Deleting a "?" (or a throw across from one) deletes its whole column, but backspacing a "?" is
+// also how you'd start replacing it. So a column deletion is remembered for one step: if the
+// very next edit types a throw at the same spot, it was a replacement after all, and what the
+// deletion took from the other parts comes back ("<7 5 3 1|? 5 3 1>", backspace the "?", type
+// 7: "<7 5 3 1|7 5 3 1>"). Anything else (another edit, moving the cursor, leaving the box)
+// forgets it; the caller calls forget() for the last two.
+struct SiteswapAutofillMemory {
+    bool armed = false;
+    std::string text;          // the text just after the column was deleted
+    int cursor = 0;            // where the cursor was left
+    std::string beforeDelete;  // the text before it
+    int part = 0;              // the part the user deleted from, and the column
+    int column = 0;
+    void forget() { armed = false; }
+};
+
+bool autofillSiteswap(const std::string& before, const std::string& after, int cursor, SiteswapEdit* result,
+                      SiteswapAutofillMemory* memory = nullptr);
+
+// Changes the throw at the cursor (the one it's in or just after) by delta (+1 or -1): values
+// run ? (not decided), 0, 1, ... 35, skipping 25 and 33 (whose letters, p and x, mean passing and
+// sync). A 0 can't be a pass, so it loses its "p". Returns false if there's no throw there or
+// it can't go further.
+bool bumpThrowAtCursor(const std::string& text, int cursor, int delta, SiteswapEdit* result);
+
+// Swaps where two throws in the same juggler's part land (a "siteswap"): the two selected
+// throws, or with no selection, the two throws just before the cursor. Throws at positions i < j
+// (d = j - i apart) become: position i gets throw j's value + d (and its destination), position
+// j gets throw i's value - d. "531" with "31" selected becomes "522". Returns false, with the
+// reason in *why, if that's not possible.
+bool swapThrows(const std::string& text, int selectionStart, int selectionEnd, int cursor, SiteswapEdit* result,
+                std::string* why);
+
+// Rotates the pattern: steps > 0 moves throws right, the last one coming round to the front
+// (7531 becomes 1753), steps < 0 left. Every juggler's part rotates together, so it's the same
+// pattern started on a different beat. The text comes back in standard form, with the cursor
+// after the same number of throws in its part. False (with *why) if there's nothing to rotate.
+bool rotateThrows(const std::string& text, int steps, int cursor, SiteswapEdit* result, std::string* why);
+
+// The text in standard form (lower case; for passing, spaces between throws and none around the
+// bars, with the closing ">"). Text that isn't siteswap is returned unchanged.
+std::string tidySiteswap(const std::string& text);
+
+// Which throw the character at `index` belongs to: the juggler (0 for a solo pattern) and its
+// position in that juggler's part (the beat in the loop). False if it isn't part of a throw.
+bool throwAtCharacter(const std::string& text, int index, int* juggler, int* beat);
+
+// The characters [*start, *end) of a throw, by juggler and beat in the loop.
+bool charactersOfThrow(const std::string& text, int juggler, int beat, int* start, int* end);

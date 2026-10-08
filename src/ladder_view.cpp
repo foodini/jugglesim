@@ -829,6 +829,28 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         }
     }
 
+    // A throw hovered in the siteswap text box: it glows at every repeat (a 0 or a "?", which
+    // has no curve, gets a ring on its spot).
+    if (options.highlightThrow >= 0 && period > 0 && options.highlightThrow < loop.jugglers * period) {
+        const float pulse = 0.6f + 0.4f * std::sin(time * 5.0f);
+        bool curved = false;
+        for (const DrawnThrow& d : drawn) {
+            if (loopSlot(d.from) != options.highlightThrow) continue;
+            const Curve& c = d.curve;
+            dl->AddBezierCubic(c.p0, c.c1, c.c2, c.p1,
+                               mixColor(ballStyle(colorVision, d.ball).color, white, 0.5f, 0.45f * pulse), thickness + 6.0f);
+            curved = true;
+        }
+        if (!curved) {
+            const int juggler = options.highlightThrow / period;
+            const int beat = options.highlightThrow % period;
+            for (int b = bFirst; b <= bLast; ++b) {
+                if (positiveMod(b, period) != beat) continue;
+                dl->AddCircle(slotPoint(Slot{juggler, b}), 10.0f, mixColor(ghostColor, white, 0.5f, 0.6f + 0.4f * pulse), 0, 3.0f);
+            }
+        }
+    }
+
     // Idle hover highlight: just the throw under the mouse.
     if (hoverIndex >= 0) {
         const DrawnThrow& h = drawn[static_cast<size_t>(hoverIndex)];
