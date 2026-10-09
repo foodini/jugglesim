@@ -36,7 +36,7 @@ struct Parsed {
     bool closed = false;   // has its ">"
     std::vector<std::vector<Token>> parts;
     std::vector<int> partStarts;  // character where each part starts (after "<" or "|")
-    // Per part: a link instead of throws ("@2+3", as written without spaces), and options after
+    // Per part: a link instead of throws ("@2[3]", as written without spaces), and options after
     // commas (",LRswap"), both kept as they are when the text is rewritten.
     std::vector<std::string> links, options;
     std::vector<int> linkStart, linkEnd;  // the link's characters, if any
@@ -108,12 +108,12 @@ Parsed parse(const std::string& text) {
             i = stop == std::string::npos ? text.size() : stop;
         } else if (p.passing && !p.closed && c == '@' && p.parts.back().empty() && p.links.back().empty() &&
                    p.options.back().empty()) {
-            // A link: "@2", "@2+3", "@2 - 1" (written back without the spaces).
+            // A link: "@2", "@2[3]", "@2 [ -1 ]" (written back without the spaces).
             p.linkStart.back() = static_cast<int>(i);
             std::string link = "@";
             ++i;
-            while (i < text.size() && (std::isdigit(static_cast<unsigned char>(text[i])) || text[i] == '+' ||
-                                       text[i] == '-' || text[i] == ' ')) {
+            while (i < text.size() && (std::isdigit(static_cast<unsigned char>(text[i])) || text[i] == '[' ||
+                                       text[i] == ']' || text[i] == '-' || text[i] == ' ')) {
                 if (text[i] != ' ') link += text[i];
                 ++i;
             }
@@ -762,8 +762,8 @@ bool throwAtCharacter(const std::string& text, int index, int* juggler, int* bea
 
 namespace {
 
-// "@2+3" -> juggler 1 (0-based), offset 3. False if it isn't one.
-bool readLink(const std::string& link, int* to, int* offset) {
+// "@2[3]" -> juggler 1 (0-based), start 3 ("@2": 0). False if it isn't one (yet).
+bool readLink(const std::string& link, int* to, int* start) {
     if (link.size() < 2 || link[0] != '@') return false;
     size_t i = 1;
     int number = 0;
@@ -774,22 +774,26 @@ bool readLink(const std::string& link, int* to, int* offset) {
         ++i;
     }
     if (!any) return false;
-    int off = 0;
+    int value = 0;
     if (i < link.size()) {
-        const int sign = link[i] == '-' ? -1 : (link[i] == '+' ? 1 : 0);
-        if (sign == 0) return false;
+        if (link[i] != '[') return false;
         ++i;
+        int sign = 1;
+        if (i < link.size() && link[i] == '-') {
+            sign = -1;
+            ++i;
+        }
         bool digits = false;
         while (i < link.size() && std::isdigit(static_cast<unsigned char>(link[i]))) {
-            off = off * 10 + (link[i] - '0');
+            value = value * 10 + (link[i] - '0');
             digits = true;
             ++i;
         }
-        if (!digits || i != link.size()) return false;
-        off *= sign;
+        if (!digits || i + 1 != link.size() || link[i] != ']') return false;
+        value *= sign;
     }
     *to = number - 1;
-    *offset = off;
+    *start = value;
     return true;
 }
 
@@ -801,12 +805,12 @@ bool hasLrSwap(const std::string& options) {
 
 }  // namespace
 
-bool linkAtCharacter(const std::string& text, int index, int* juggler, int* to, int* offset, bool* lrSwap) {
+bool linkAtCharacter(const std::string& text, int index, int* juggler, int* to, int* start, bool* lrSwap) {
     const Parsed p = parse(text);
     if (!p.ok) return false;
     for (size_t f = 0; f < p.parts.size(); ++f) {
         if (p.links[f].empty() || index < p.linkStart[f] || index >= p.linkEnd[f]) continue;
-        if (!readLink(p.links[f], to, offset)) return false;
+        if (!readLink(p.links[f], to, start)) return false;
         *juggler = static_cast<int>(f);
         *lrSwap = hasLrSwap(p.options[f]);
         return true;
@@ -819,12 +823,12 @@ bool charactersOfThrow(const std::string& text, int juggler, int beat, int* star
     if (!p.ok || juggler < 0 || juggler >= static_cast<int>(p.parts.size())) return false;
     // A linked juggler's throw is written where the throw it copies is.
     for (size_t steps = 0; !p.links[static_cast<size_t>(juggler)].empty(); ++steps) {
-        int to = 0, offset = 0;
-        if (steps > p.parts.size() || !readLink(p.links[static_cast<size_t>(juggler)], &to, &offset) || to < 0 ||
+        int to = 0, linkStart = 0;
+        if (steps > p.parts.size() || !readLink(p.links[static_cast<size_t>(juggler)], &to, &linkStart) || to < 0 ||
             to >= static_cast<int>(p.parts.size()))
             return false;
         juggler = to;
-        beat -= offset;
+        beat += linkStart;
     }
     const std::vector<Token>& part = p.parts[static_cast<size_t>(juggler)];
     if (!part.empty()) beat = ((beat % static_cast<int>(part.size())) + static_cast<int>(part.size())) % static_cast<int>(part.size());
@@ -869,24 +873,16 @@ bool linkToClickedThrow(const std::string& text, int cursor, int clickIndex, Sit
             }
     const std::string me = "J" + std::to_string(mine + 1);
     if (other < 0) {
-        *why = "Ctrl+click a throw in another juggler's part: " + me + " copies them, starting on that beat";
+        *why = "Ctrl+click a throw in another juggler's part: " + me + " copies them, starting with that throw";
         return false;
     }
     if (other == static_cast<int>(mine)) {
         *why = "That's " + me + "'s own part: Ctrl+click a throw in another juggler's part";
         return false;
     }
-    // Written the way the text's other links are: negative if any of them is.
-    bool negative = false;
-    for (const std::string& link : p.links) {
-        int to = 0, off = 0;
-        if (!link.empty() && readLink(link, &to, &off) && off < 0) negative = true;
-    }
-    const int period = static_cast<int>(p.parts[static_cast<size_t>(other)].size());
-    int offset = position;
-    if (negative && offset > 0) offset -= period;
+    // The clicked throw's position in their part is where the copy starts: "@1[8]".
     std::string link = "@" + std::to_string(other + 1);
-    if (offset != 0) link += (offset < 0 ? "-" : "+") + std::to_string(std::abs(offset));
+    if (position != 0) link += "[" + std::to_string(position) + "]";
     // The part's characters: from just after its "<" or "|" up to the next "|" or ">".
     const size_t start = static_cast<size_t>(p.partStarts[mine]);
     size_t end = text.size();

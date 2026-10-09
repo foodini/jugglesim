@@ -13,7 +13,7 @@ can trace any point on a throw straight across to its beat number.
   column), side by side: J1, J2, ... up to J6. Every juggler throws with the right hand on beat
   1. Click a juggler's number over their strip to select them (the same selection as in the 3D
   view; see [juggler.md](juggler.md)); click it again to deselect.
-- **Linked jugglers** (`@2+3`, see *The siteswap box*) say what they copy under their number;
+- **Linked jugglers** (`@2[3]`, see *The siteswap box*) say what they copy under their number;
   right-click a juggler's number for *Same as* and *Unlink*. **L** dims linked jugglers' throws.
 - **Collapsing strips.** With several jugglers it gets busy. The small triangle button just
   left of a juggler's number collapses their strip to a narrow one (or expands it again); their
@@ -273,21 +273,32 @@ style too.
 
 ### Linked jugglers
 
-A juggler's part can be a **link** instead of throws: `@2+3` means "does exactly what J2 does, 3
-beats later" (`@2-3`: 3 beats earlier; `@2`: on the same beats). A one-count feast for five:
+A juggler's part can be a **link** instead of throws: `@2[3]` means "J2's throws, starting 3
+beats in". On beat 1 this juggler throws J2's 4th throw, on beat 2 J2's 5th, and so on round
+(after J2's last throw comes J2's first). The number in brackets is how many beats after J2's
+first throw the copy starts: `@2[0]`, written just `@2`, is the same as J2 on the same beats;
+`@2[1]` starts with J2's second throw. Programmers will recognize it as an array index counting
+from 0, and as in Python, a negative number counts back from the end: `@2[-1]` starts with J2's
+last throw. (It's written back counting from the start: with 5 throws, `[-1]` becomes `[4]`.)
 
-    <3p+1 3p+2 3p+3 3p+4 3|@1+2|@1+4|@1+1|@1+3>
+The line under the siteswap box shows the number to use: with the cursor at a throw it says, for
+example, "J1, beat 5 [4]", and **Ctrl+click** writes the link for you (see *Help while typing*).
 
-and turning every `+` into a `-` reverses it. A link keeps each throw's target the way it was
-written, which is what makes this work:
+A one-count feast for five, each juggler a copy of the one before, starting 3 beats in:
+
+    <3p+1 3p+2 3p+3 3p+4 3|@1[3]|@2[3]|@3[3]|@4[3]>
+
+and turning every `+` into a `-`, in the targets and in the brackets, reverses it:
+`<3p-1 3p-2 3p-3 3p-4 3|@1[-3]|@2[-3]|@3[-3]|@4[-3]>` (written `@1[2]|@2[2]|@3[2]|@4[2]`).
+A link keeps each throw's target the way it was written, which is what makes this work:
 
 - A **relative** target shifts with the copy: J1's `3p+1` goes to J2, and in J3 (a copy of J1)
   the same throw goes to J4.
 - An **absolute** target stays put: if J2's part has `4p1`, any juggler copying J2 passes to J1
   too (handy for feeds).
 
-Links can copy links (`@3` where J3 is `@1+1`), but not in a loop, and at least one juggler has
-to have their throws written out.
+Links can copy links (`@3[2]` where J3 is `@1[1]` starts with J1's throws[3]), but not in a
+loop, and at least one juggler has to have their throws written out.
 
 **Editing a linked juggler edits all of them.** Change a throw on the ladder, in the juggler
 written out or in any copy, and the change goes to the part written out and from there to every
@@ -295,9 +306,9 @@ copy. If a copy would then collide (two props in one hand at once), the edit is 
 line under the siteswap box says why. Adding or deleting beats isn't possible with links yet:
 unlink first.
 
-On the ladder, a linked juggler's strip says what it copies under their number (`= J1+3`).
-**Right-click a juggler's number** for **Same as** (pick a juggler and an offset; offsets that
-wouldn't make a pattern are greyed out, saying why) and **Unlink** (write their throws out in
+On the ladder, a linked juggler's strip says what it copies under their number (`= J1[3]`).
+**Right-click a juggler's number** for **Same as** (pick a juggler and the beat to start from;
+starts that wouldn't make a pattern are greyed out, saying why) and **Unlink** (write their throws out in
 full, to edit on their own). The toolbar's rings button, **L** or *View > Dim Linked Jugglers*
 mutes the linked jugglers' throws, so the parts written out stand out.
 
@@ -305,10 +316,10 @@ mutes the linked jugglers' throws, so the parts written out stand out.
 
 `,LRswap` after a part swaps that juggler's hands: their left hand throws on beat 1. It works on
 any part, linked or not, and on a solo pattern (`531,LRswap`). A link copies the hands of the
-juggler it copies, and `,LRswap` on the link swaps them again. An offset of an odd number of
-beats swaps hands by itself, since every throw moves onto the other hand's beat. So in the
-7-club 2-count, `<4p 3|@1+1>` has J2 pass from the left hand, and `<4p 3|@1+1,LRswap>` has both
-jugglers pass from the right.
+juggler it copies, and `,LRswap` on the link swaps them again. Starting an odd number of beats
+in swaps hands by itself, since every throw moves onto the other hand's beat. So in the
+7-club 2-count, `<4p 3|@1[1]>` has J2 pass from the left hand, and `<4p 3|@1[1],LRswap>` has
+both jugglers pass from the right.
 
 Passing patterns are drawn and edited on the ladder like any other (see above).
 
@@ -351,14 +362,14 @@ above). Other programs won't read it.
   (left). Every juggler's part rotates together: `<3p 5 3 1|3p 5 3 1>` becomes
   `<1 3p 5 3|1 3p 5 3>`. Rotating by an odd number of beats swaps which hand starts.
 - **Ctrl+click** (**Cmd+click** on a Mac) a throw in another juggler's part to make the part
-  the cursor is in a copy of that juggler, starting on the beat you clicked. With the cursor in
-  J2's part, clicking J1's throw on beat 9 makes J2 `@1+8`: J1's throws, 8 beats later, so J2
-  does J1's beat 1 on beat 9. Whatever J2's part held (throws, `?`s, another link) is replaced;
-  a `,LRswap` stays. Offsets are written negative (`@1-12`) if the pattern's links already are.
-  The cursor doesn't move, so you can click again to try another beat.
+  the cursor is in a copy of that juggler, starting with the throw you clicked. With the cursor
+  in J2's part, clicking J1's throw on beat 9 makes J2 `@1[8]`: on beat 1, J2 throws what J1
+  throws on beat 9. Whatever J2's part held (throws, `?`s, another link) is replaced; a
+  `,LRswap` stays. The cursor doesn't move, so you can click again to try another start.
 - **Where the cursor is** shows at the right of the line under the box while you type: the
-  juggler, beat and hand of the throw the cursor is in or just after ("J1, beat 5, right hand:
-  3p+2"), or what the link there means ("J2: J1's throws, 8 beats later").
+  juggler, beat (with the number a link to it would use) and hand of the throw the cursor is in
+  or just after ("J1, beat 5 [4], right hand: 3p+2"), or what the link there means ("J2: J1's
+  throws, starting 8 beats in (from J1's beat 9)").
 - **Pointing at a throw** describes it ("J1, beat 3, right hand: 4p, a pass to J2's right
   hand, caught on beat 7") and picks it out on the ladder at every repeat.
 - **Mistakes are underlined**: when two throws land in the same hand at the same time, both

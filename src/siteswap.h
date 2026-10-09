@@ -2,7 +2,7 @@
 //
 // Current scope: vanilla siteswap and asynchronous passing for 2 to 6 jugglers (Juggling Lab's
 // "<3p 3|3p 3>", "<3p2 3|3p3 3|3p1 3>"), plus relative pass targets ("3p+1": the next juggler),
-// links between jugglers ("@1+3"), swapped hands (",LRswap") and "?" for a throw not decided yet
+// links between jugglers ("@1[3]"), swapped hands (",LRswap") and "?" for a throw not decided yet
 // (a sketch). Throw values 0-9 and a-z (a = 10 ... z = 35),
 // except that 'p' and 'x' are reserved for the passing and sync extensions rather than meaning
 // 25 and 33. Whitespace is ignored. Sync "( , )" and multiplex "[ ]" are recognized and
@@ -80,11 +80,13 @@ int loopPropCount(const JugglingLoop& loop);
 // relative targets (with "-" if they were all written with "-"), else as Juggling Lab does ("3p2",
 // or a bare "p" with two jugglers).
 //
-// Links: "@2+3" is a juggler who does what J2 does, 3 beats later ("-3": earlier). A copy
+// Links: "@2[3]" is a juggler who does what J2 does, starting from J2's throws[3] (the throw 3
+// beats after J2's first; Python-style, so "[0]" is J2's first throw and "[-1]" the last): on
+// beat 1 they throw J2's 4th throw, on beat 2 the 5th, and so on round. "@2" is "@2[0]". A copy
 // keeps each throw's target form, so a relative target shifts with it ("+1" is the copy's next
 // juggler) and an absolute one stays put ("3p1" still goes to J1). A link copies the source's
 // hands too; ",LRswap" after a part swaps that juggler's hands relative to what they'd be (for a
-// plain part, the left hand throws on beat 1). An odd offset swaps hands by itself, since every
+// plain part, the left hand throws on beat 1). An odd start swaps hands by itself, since every
 // throw moves to the other hand's beat.
 struct ThrowForm {
     enum class Kind : unsigned char {
@@ -98,7 +100,8 @@ struct ThrowForm {
 };
 struct PartLink {
     int to = -1;      // the juggler this one copies (0-based), or -1 for a part written out
-    int offset = 0;   // beats later (negative: earlier)
+    int start = 0;    // starts from to's throws[start]: beat b is to's beat b + start (any integer;
+                      // taken round the period)
     bool lrSwap = false;  // ",LRswap": hands swapped relative to the juggler copied
 };
 struct PatternForm {
@@ -116,8 +119,9 @@ struct PatternForm {
     // pattern's style.
     ThrowForm formFor(int juggler, int beat, const LoopThrow& t) const;
     // Follows links from `juggler` to the part written out that it copies (itself if it isn't a
-    // link), adding up the offsets. False for a loop of links (not possible in a parsed form).
-    bool root(int juggler, int* rootJuggler, int* offset) const;
+    // link), adding up the starts: juggler's beat b is rootJuggler's beat b + start (taken round
+    // the period). False for a loop of links (not possible in a parsed form).
+    bool root(int juggler, int* rootJuggler, int* start) const;
 };
 
 // The throw `form` describes for juggler `to`, given the throw t it describes for juggler `from`
@@ -159,8 +163,14 @@ struct Siteswap {
 // with three or more, the target follows the 'p': its number ("3p2", as Juggling Lab writes it)
 // or, our extension (as passist.org writes them), how many jugglers along ("3p+1" is the next
 // juggler, "3p-1" the one before, wrapping around; "3p+0" is a self). A part may instead be a
-// link ("@2+3", see PatternForm), and any part may end with options after commas (",LRswap"; a
+// link ("@2[3]", see PatternForm), and any part may end with options after commas (",LRswap"; a
 // solo pattern too: "531,LRswap"). "?" is an open throw (JuggleSim's own extension, for
 // sketches). Up to kMaxJugglers jugglers. Sync and multiplex notation are reported as not
 // supported yet.
 Siteswap parseSiteswap(const std::string& text);
+
+// A link as written: "@2", "@2[3]" (to is 0-based; start is taken round the period).
+std::string linkText(int to, int start, int period);
+// A link in words, for menus and tooltips: "the same as J2", or "J2's throws, starting 3 beats
+// in (from J2's beat 4)".
+std::string linkWords(int to, int start, int period);

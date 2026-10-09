@@ -214,15 +214,18 @@ only by running from one strip to the other (revisit if it gets noisy).
 
 ## Linking (done)
 
-- Notation: a part `@k+d` / `@k-d` / `@k` is "does exactly what Jk does, d beats later
-  (earlier)". Integer offsets only (fractional/Prechac offsets tabled until there's user
-  feedback; so is a symmetric one-sequence shortcut). Chains allowed, loops refused.
+- Notation: a part `@k[i]` / `@k` is "Jk's throws, starting from Jk's throws[i]" (0-based, as an
+  array index; negative counts from the end, Python-style). This replaced an earlier `@k+d`
+  ("d beats later"), which read backwards to how patterns get designed ("J2 starts with that
+  throw") and caused mirrored feasts; the old form is gone, not kept for input. Integer starts
+  only (fractional/Prechac offsets tabled until there's user feedback; so is a symmetric
+  one-sequence shortcut). Chains allowed, loops refused.
 - Targets carry naturally: relative targets shift with the copy, absolute ones stay put, so no
   `$` lock is needed (absolute = locked).
 - Options after commas on any part: `LRswap` swaps the juggler's hands (the left hand throws on
   beat 1). Named for not implying a start point (patterns are infinite both ways); room for more
   later (`offset(1/2)`, `tomahawk`, `backcross`...). A link copies its source's hands; `LRswap`
-  on a link toggles relative to that. Odd offsets swap hands by themselves.
+  on a link toggles relative to that. Odd starts swap hands by themselves.
 - Storage is the shorthand everywhere (files included). Export to Juggling Lab will be a
   one-way write-out.
 - Editing any linked juggler edits all (peers, not source/copy): the change goes to the part

@@ -98,7 +98,7 @@ struct LadderViewOptions {
     // juggler * period + beat in the loop (-1: none).
     int highlightThrow = -1;
     bool relativeTargets = false;  // label passes "3p+1" (the pattern's text does) rather than "3p2"
-    // How the pattern was typed: which jugglers are links ("@2+3"), for their strip headers, the
+    // How the pattern was typed: which jugglers are links ("@2[3]"), for their strip headers, the
     // Same as.../Unlink menu and dimming. May be null.
     const PatternForm* form = nullptr;
     bool dimLinked = false;  // draw linked jugglers' throws muted, so the parts written out stand out
@@ -119,9 +119,10 @@ struct LadderEditResult {
     JugglingLoop preview;
     // A strip header was clicked: the juggler to select, or -1 to deselect.
     int selectJuggler = kNoSelectionChange;
-    // From a juggler's menu: make linkJuggler the same as linkTo, linkOffset beats later; or
+    // From a juggler's menu: make linkJuggler a copy of linkTo, starting from linkTo's
+    // throws[linkStart] ("@2[3]"); or
     // unlink unlinkJuggler (write their throws out). -1: nothing.
-    int linkJuggler = -1, linkTo = -1, linkOffset = 0;
+    int linkJuggler = -1, linkTo = -1, linkStart = 0;
     int unlinkJuggler = -1;
     // Clicking or dragging in the beat-number column: move the playhead to scrubBeat (fractional;
     // beat 0 is "beat 1"). scrubEnded: the drag just finished.

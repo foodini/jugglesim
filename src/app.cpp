@@ -796,7 +796,7 @@ float siteswapCharacterX(const char* text, int index, float textLeft) {
     return textLeft + ImGui::CalcTextSize(text, text + index).x;
 }
 
-// Where the text box's cursor is, for the line under it: "J1, beat 5, right hand: 3p+2" (the
+// Where the text box's cursor is, for the line under it: "J1, beat 5 [4], right hand: 3p+2" (the
 // throw it's in or just after, as typed), or what a link there means. Empty if neither.
 std::string cursorReadout(const char* text, int cursor, const JugglingLoop& loop) {
     const std::string s(text);
@@ -807,20 +807,18 @@ std::string cursorReadout(const char* text, int cursor, const JugglingLoop& loop
     if (throwAtCursor(s, cursor, &juggler, &beat)) {
         std::string out = passing ? "J" + std::to_string(juggler + 1) + ", " : std::string();
         out += "beat " + std::to_string(beat + 1);
+        if (passing) out += " [" + std::to_string(beat) + "]";  // (as a link to it would say: "@1[4]")
         if (!loop.empty() && juggler < loop.jugglers && beat < loop.period)
             out += loop.rightHandBeat(juggler, beat) ? ", right hand" : ", left hand";
         int start = 0, end = 0;
         if (charactersOfThrow(s, juggler, beat, &start, &end)) out += ": " + s.substr(static_cast<size_t>(start), static_cast<size_t>(end - start));
         return out;
     }
-    int to = 0, offset = 0;
+    int to = 0, start = 0;
     bool lrSwap = false;
-    if ((cursor > 0 && linkAtCharacter(s, cursor - 1, &juggler, &to, &offset, &lrSwap)) ||
-        linkAtCharacter(s, cursor, &juggler, &to, &offset, &lrSwap)) {
-        std::string out = "J" + std::to_string(juggler + 1) + ": J" + std::to_string(to + 1) + "'s throws";
-        if (offset != 0)
-            out += ", " + std::to_string(std::abs(offset)) + " beat" + (std::abs(offset) == 1 ? "" : "s") +
-                   (offset > 0 ? " later" : " earlier");
+    if ((cursor > 0 && linkAtCharacter(s, cursor - 1, &juggler, &to, &start, &lrSwap)) ||
+        linkAtCharacter(s, cursor, &juggler, &to, &start, &lrSwap)) {
+        std::string out = "J" + std::to_string(juggler + 1) + ": " + linkWords(to, start, loop.period);
         if (lrSwap) out += ", hands swapped";
         return out;
     }
@@ -1284,8 +1282,8 @@ int runApp() {
                     saveSettings(settings);
                 }
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
-                    ImGui::SetTooltip("Mutes the throws of jugglers who are links (@2+3: the same as another\n"
-                                      "juggler) on the ladder, so the parts written out stand out.");
+                    ImGui::SetTooltip("Mutes the throws of jugglers who are links (@2[3]: another juggler's\n"
+                                      "throws) on the ladder, so the parts written out stand out.");
                 if (ImGui::BeginMenu("Color Vision")) {
                     for (int i = 0; i < static_cast<int>(ColorVisionMode::Count); ++i) {
                         const ColorVisionMode mode = static_cast<ColorVisionMode>(i);
@@ -1404,7 +1402,7 @@ int runApp() {
                 std::string why, text;
                 bool ok = true;
                 if (edited.linkJuggler >= 0)
-                    ok = linkJuggler(parsed.form, parsed.loop, edited.linkJuggler, edited.linkTo, edited.linkOffset,
+                    ok = linkJuggler(parsed.form, parsed.loop, edited.linkJuggler, edited.linkTo, edited.linkStart,
                                      &newForm, &newLoop, &why);
                 else
                     newForm = unlinkJuggler(parsed.form, edited.unlinkJuggler);
@@ -1442,7 +1440,7 @@ int runApp() {
                 else if (ImGui::IsKeyPressed(ImGuiKey_L)) siteswapBox.rotateRequested = -1;
             }
             // Ctrl+click (Cmd+click on a Mac) on a throw makes the part the cursor is in a copy of
-            // that juggler, starting on that beat ("@1+8"). The text box doesn't see the click (so
+            // that juggler, starting with that throw ("@1[8]"). The text box doesn't see the click (so
             // the cursor stays put), nor the drag after it (so nothing gets selected).
             const bool savedClicked = io.MouseClicked[0];
             const ImU16 savedClickCount = io.MouseClickedCount[0];
@@ -1535,16 +1533,14 @@ int runApp() {
                     if (shown.valid || shown.sketch) siteswapHoverThrow = juggler * shown.loop.period + beat;
                     ImGui::SetTooltip("%s", describeThrow(shown.loop, juggler, beat).c_str());
                 } else {
-                    // A link ("@2+3"): what it means.
-                    int to = 0, offset = 0;
+                    // A link ("@2[3]"): what it means.
+                    int to = 0, start = 0;
                     bool lrSwap = false;
-                    if (index >= 0 && linkAtCharacter(siteswapText, index, &juggler, &to, &offset, &lrSwap)) {
-                        std::string what = "J" + std::to_string(juggler + 1) + " does exactly what J" + std::to_string(to + 1) + " does";
-                        if (offset != 0)
-                            what += ", " + std::to_string(std::abs(offset)) + " beat" + (std::abs(offset) == 1 ? "" : "s") +
-                                    (offset > 0 ? " later" : " earlier");
+                    if (index >= 0 && linkAtCharacter(siteswapText, index, &juggler, &to, &start, &lrSwap)) {
+                        std::string what = "J" + std::to_string(juggler + 1) + ": " + linkWords(to, start, shown.loop.period);
                         if (lrSwap) what += ", with hands swapped";
-                        what += ".\nEditing either one (on the ladder) edits both.";
+                        what += ".\nThe number in brackets is how many beats into their throws the copy starts\n"
+                                "([0] is their first throw, [-1] their last). Editing either one (on the ladder) edits both.";
                         ImGui::SetTooltip("%s", what.c_str());
                     }
                 }

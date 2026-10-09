@@ -149,7 +149,7 @@ LadderToolbarRequest drawLadderToolbar(const JugglingLoop& loop, const LadderEdi
                                        "The triangle button left of each juggler's number collapses or expands just that one.");
     }
 
-    // Dim linked jugglers (with links, "@2+3"): their throws muted, so the parts written out
+    // Dim linked jugglers (with links, "@2[3]"): their throws muted, so the parts written out
     // stand out. Shown pressed in while on.
     if (hasLinks) {
         ImGui::SameLine();
@@ -159,8 +159,8 @@ LadderToolbarRequest drawLadderToolbar(const JugglingLoop& loop, const LadderEdi
         drawLinkGlyph(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax(),
                       ImGui::GetColorU32(ImGuiCol_Text));
         if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Dim linked jugglers (L)\n\nMutes the throws of jugglers who are links (@2+3: the same as\n"
-                              "another juggler), so the parts written out stand out.");
+            ImGui::SetTooltip("Dim linked jugglers (L)\n\nMutes the throws of jugglers who are links (@2[3]: another\n"
+                              "juggler's throws), so the parts written out stand out.");
     }
 
     // Period control: write the loop out at a multiple of its shortest period.
@@ -323,7 +323,7 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
     // A collapsed strip is narrow (the same layout, smaller); the others share what's left.
     const float jugglerCount = static_cast<float>(jugglers);
     auto isCollapsed = [&](int j) { return jugglers > 1 && j < kMaxJugglers && edit.collapsed[static_cast<size_t>(j)]; };
-    // Jugglers who are links ("@2+3"), and whether to mute their throws.
+    // Jugglers who are links ("@2[3]"), and whether to mute their throws.
     const PatternForm* form = options.form && options.form->jugglers == jugglers ? options.form : nullptr;
     auto isLinked = [&](int j) { return form && form->linked(j); };
     auto muted = [&](int j, ImU32 color) {
@@ -1362,15 +1362,13 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
             const int j = std::min(edit.contextJuggler, jugglers - 1);
             if (isLinked(j)) {
                 const PartLink& link = form->links[static_cast<size_t>(j)];
-                ImGui::TextDisabled("J%d: the same as J%d%s", j + 1, link.to + 1,
-                                    link.offset == 0 ? "" : (link.offset > 0 ? (", " + std::to_string(link.offset) + " beat" + (link.offset == 1 ? "" : "s") + " later").c_str()
-                                                                              : (", " + std::to_string(-link.offset) + " beat" + (link.offset == -1 ? "" : "s") + " earlier").c_str()));
+                ImGui::TextDisabled("J%d: %s", j + 1, linkWords(link.to, link.start, period).c_str());
             } else {
                 ImGui::TextDisabled("J%d", j + 1);
             }
             ImGui::Separator();
-            // Same as...: another juggler, at an offset. Offsets that wouldn't make a pattern
-            // (or sketch) are greyed out, saying why.
+            // Same as...: another juggler, starting from one of their beats. Starts that wouldn't
+            // make a pattern (or sketch) are greyed out, saying why.
             const PatternForm emptyForm;
             if (ImGui::BeginMenu("Same as", jugglers > 1)) {
                 for (int k = 0; k < jugglers; ++k) {
@@ -1383,15 +1381,16 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
                         JugglingLoop newLoop;
                         std::string why;
                         const bool ok = linkJuggler(form ? *form : emptyForm, loop, j, k, d, &newForm, &newLoop, &why);
-                        char item[48];
-                        if (d == 0)
-                            std::snprintf(item, sizeof(item), "On the same beats (@%d)", k + 1);
-                        else
-                            std::snprintf(item, sizeof(item), "%d beat%s later (@%d+%d)", d, d == 1 ? "" : "s", k + 1, d);
+                        // "From beat 5, 3p+2 (@1[4])": where J(j) starts in J(k)'s throws.
+                        const std::string what = "From beat " + std::to_string(d + 1) + ", " +
+                                                 throwLabel(loop.at(k, d), k, jugglers, options.relativeTargets) + " (" +
+                                                 linkText(k, d, period) + ")";
+                        char item[64];
+                        std::snprintf(item, sizeof(item), "%s", what.c_str());
                         if (ImGui::MenuItem(item, nullptr, false, ok)) {
                             result.linkJuggler = j;
                             result.linkTo = k;
-                            result.linkOffset = d;
+                            result.linkStart = d;
                         }
                         reasonTooltip(ok ? std::string() : "Can't: " + why);
                     }
@@ -1400,8 +1399,8 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
                 ImGui::EndMenu();
             }
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Make J%d do exactly what another juggler does, some beats later (a link).\n"
-                                  "Editing either one then edits both.",
+                ImGui::SetTooltip("Make J%d do exactly what another juggler does, starting from one of their beats\n"
+                                  "(a link). Editing either one then edits both.",
                                   j + 1);
             if (ImGui::MenuItem("Unlink", nullptr, false, isLinked(j))) result.unlinkJuggler = j;
             reasonTooltip(isLinked(j) ? "Writes J" + std::to_string(j + 1) + "'s throws out in full, to be edited on their own."
@@ -1564,12 +1563,10 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
                 const std::string label = "J" + std::to_string(j + 1);
                 const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
                 dl->AddText(ImVec2((a.x + b.x - ts.x) * 0.5f, (a.y + b.y - ts.y) * 0.5f), ink, label.c_str());
-                // A link says what it copies ("= J2+3"), if there's room.
+                // A link says what it copies ("= J2[3]"), if there's room.
                 if (isLinked(j) && !isCollapsed(j)) {
                     const PartLink& link = form->links[static_cast<size_t>(j)];
-                    std::string what = "= J" + std::to_string(link.to + 1);
-                    if (link.offset > 0) what += "+" + std::to_string(link.offset);
-                    if (link.offset < 0) what += "-" + std::to_string(-link.offset);
+                    std::string what = "= J" + linkText(link.to, link.start, period).substr(1);
                     if (link.lrSwap) what += " LR";
                     // Between the L and R labels below the number, where there's room.
                     const ImVec2 ws = ImGui::CalcTextSize(what.c_str());
@@ -1593,10 +1590,7 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
             std::string what = "Juggler " + std::to_string(hoverHeader + 1);
             if (isLinked(hoverHeader)) {
                 const PartLink& link = form->links[static_cast<size_t>(hoverHeader)];
-                what += ": the same as J" + std::to_string(link.to + 1);
-                if (link.offset != 0)
-                    what += ", " + std::to_string(std::abs(link.offset)) + " beat" + (std::abs(link.offset) == 1 ? "" : "s") +
-                            (link.offset > 0 ? " later" : " earlier");
+                what += ": " + linkWords(link.to, link.start, period);
                 if (link.lrSwap) what += ", hands swapped";
             }
             what += hoverHeader == options.selectedJuggler ? " (selected). Click to deselect." : ". Click to select.";

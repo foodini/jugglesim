@@ -71,8 +71,8 @@ ThrowForm plainForm(const LoopThrow& t, int juggler, int jugglers) {
 bool linkHolds(const JugglingLoop& loop, const PatternForm& form, int j) {
     const PartLink& link = form.links[static_cast<size_t>(j)];
     for (int b = 0; b < loop.period; ++b) {
-        const LoopThrow& source = loop.at(link.to, b - link.offset);
-        const ThrowForm f = form.formFor(link.to, b - link.offset, source);
+        const LoopThrow& source = loop.at(link.to, b + link.start);
+        const ThrowForm f = form.formFor(link.to, b + link.start, source);
         if (carryThrow(f, source, link.to, j, loop.jugglers) != loop.at(j, b)) return false;
     }
     return true;
@@ -99,8 +99,8 @@ bool loopToText(const JugglingLoop& loop, std::string* text, const PatternForm* 
             if (typed && form->linked(j) && linkHolds(loop, *form, j)) {
                 const PartLink& link = form->links[static_cast<size_t>(j)];
                 out += "@" + std::to_string(link.to + 1);
-                if (link.offset > 0) out += "+" + std::to_string(link.offset);
-                if (link.offset < 0) out += "-" + std::to_string(-link.offset);
+                const int start = positiveMod(link.start, loop.period);
+                if (start != 0) out += "[" + std::to_string(start) + "]";
                 if (loop.handsSwapped(j) != loop.handsSwapped(link.to)) out += ",LRswap";
                 continue;
             }
@@ -131,8 +131,8 @@ JugglingLoop applyLinks(const PatternForm& form, const JugglingLoop& loop) {
             const PartLink& link = form.links[static_cast<size_t>(j)];
             if (done[static_cast<size_t>(j)] || !done[static_cast<size_t>(link.to)]) continue;
             for (int b = 0; b < loop.period; ++b) {
-                const LoopThrow source = out.at(link.to, b - link.offset);
-                const ThrowForm f = form.formFor(link.to, b - link.offset, source);
+                const LoopThrow source = out.at(link.to, b + link.start);
+                const ThrowForm f = form.formFor(link.to, b + link.start, source);
                 out.throws[static_cast<size_t>(j * loop.period + b)] = carryThrow(f, source, link.to, j, loop.jugglers);
             }
             out.swapHands[static_cast<size_t>(j)] = static_cast<char>(out.handsSwapped(link.to) != link.lrSwap);
@@ -165,12 +165,12 @@ bool projectEdit(const PatternForm& form, const JugglingLoop& before, const Jugg
             const LoopThrow& t = after.at(j, b);
             if (t == base.at(j, b)) continue;
             changed.push_back(j * period + b);
-            int root = j, offset = 0;
-            if (!form.root(j, &root, &offset)) {
+            int root = j, start = 0;
+            if (!form.root(j, &root, &start)) {
                 if (why) *why = "The links between these jugglers go round in a loop.";
                 return false;
             }
-            const int rootBeat = positiveMod(b - offset, period);
+            const int rootBeat = positiveMod(b + start, period);
             const LoopThrow rootThrow = carryThrow(form.formFor(j, b, t), t, j, root, jugglers);
             const size_t slot = static_cast<size_t>(root * period + rootBeat);
             if (rootChanged[slot] && roots.throws[slot] != rootThrow) {
@@ -197,7 +197,7 @@ bool projectEdit(const PatternForm& form, const JugglingLoop& before, const Jugg
     return true;
 }
 
-bool linkJuggler(const PatternForm& form, const JugglingLoop& loop, int j, int to, int offset, PatternForm* newForm,
+bool linkJuggler(const PatternForm& form, const JugglingLoop& loop, int j, int to, int start, PatternForm* newForm,
                  JugglingLoop* newLoop, std::string* why) {
     if (j < 0 || to < 0 || j >= loop.jugglers || to >= loop.jugglers || j == to) return false;
     PatternForm f = form;
@@ -208,7 +208,7 @@ bool linkJuggler(const PatternForm& form, const JugglingLoop& loop, int j, int t
         f.links.assign(static_cast<size_t>(loop.jugglers), PartLink());
     }
     f.links[static_cast<size_t>(j)].to = to;
-    f.links[static_cast<size_t>(j)].offset = offset;
+    f.links[static_cast<size_t>(j)].start = start;
     f.links[static_cast<size_t>(j)].lrSwap = false;
     int root = 0, total = 0;
     if (!f.root(j, &root, &total)) {

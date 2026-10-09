@@ -193,7 +193,7 @@ Siteswap parseVanilla(const std::string& all) {
 // <field|field|...>: each field is a juggler's throws, each a value optionally followed by
 // 'p' (a pass) and its target: none with two jugglers (the other one), else the target's
 // number (3p2) or a relative one (3p+1, 3p-1; also allowed with two jugglers). A field can
-// instead be a link, "@2+3" (the same as J2, 3 beats later). Any field can end in options
+// instead be a link, "@2[3]" (J2's throws, starting from throws[3]). Any field can end in options
 // after commas (",LRswap").
 Siteswap parsePassing(const std::string& text) {
     Siteswap s;
@@ -231,7 +231,7 @@ Siteswap parsePassing(const std::string& text) {
         ownSwap[static_cast<size_t>(j)] = lrSwap ? 1 : 0;
         const std::string head = trimmed(f);
         if (!head.empty() && head[0] == '@') {
-            // A link: "@2", "@2+3", "@2-1".
+            // A link: "@2", "@2[3]", "@2[-1]".
             size_t i = 1;
             int to = 0;
             bool anyDigit = false;
@@ -240,24 +240,38 @@ Siteswap parsePassing(const std::string& text) {
                 anyDigit = true;
                 ++i;
             }
-            while (i < head.size() && std::isspace(static_cast<unsigned char>(head[i]))) ++i;
-            int offset = 0;
+            auto skipSpaces = [&]() {
+                while (i < head.size() && std::isspace(static_cast<unsigned char>(head[i]))) ++i;
+            };
+            skipSpaces();
+            int start = 0;
             bool ok = anyDigit;
             if (ok && i < head.size()) {
-                const int sign = head[i] == '-' ? -1 : (head[i] == '+' ? 1 : 0);
+                ok = head[i] == '[';
                 ++i;
-                while (i < head.size() && std::isspace(static_cast<unsigned char>(head[i]))) ++i;
-                bool anyOffset = false;
-                while (i < head.size() && std::isdigit(static_cast<unsigned char>(head[i]))) {
-                    offset = offset * 10 + (head[i] - '0');
-                    anyOffset = true;
+                skipSpaces();
+                int sign = 1;
+                if (ok && i < head.size() && head[i] == '-') {
+                    sign = -1;
+                    ++i;
+                    skipSpaces();
+                }
+                bool anyStart = false;
+                while (ok && i < head.size() && std::isdigit(static_cast<unsigned char>(head[i]))) {
+                    start = start * 10 + (head[i] - '0');
+                    anyStart = true;
                     ++i;
                 }
-                ok = sign != 0 && anyOffset && i == head.size();
-                offset *= sign;
+                skipSpaces();
+                ok = ok && anyStart && i < head.size() && head[i] == ']';
+                ++i;
+                skipSpaces();
+                ok = ok && i >= head.size();
+                start *= sign;
             }
             if (!ok) {
-                s.error = "In " + jugglerName(j) + "'s part, a link is written @2 or @2+3 (the same as J2, 3 beats later).";
+                s.error = "In " + jugglerName(j) +
+                          "'s part, a link is written @1 (the same as J1) or @1[3] (J1's throws, starting 3 beats in).";
                 return s;
             }
             if (to < 1 || to > jugglers) {
@@ -270,7 +284,7 @@ Siteswap parsePassing(const std::string& text) {
                 return s;
             }
             links[static_cast<size_t>(j)].to = to - 1;
-            links[static_cast<size_t>(j)].offset = offset;
+            links[static_cast<size_t>(j)].start = start;
             links[static_cast<size_t>(j)].lrSwap = lrSwap;
             continue;
         }
@@ -346,7 +360,7 @@ Siteswap parsePassing(const std::string& text) {
                           "' only follows a 'p' (3p+1).";
                 return s;
             } else if (ch == '@') {
-                s.error = "In " + jugglerName(j) + "'s part, a link (@2+3) takes the whole part.";
+                s.error = "In " + jugglerName(j) + "'s part, a link (@2[3]) takes the whole part.";
                 return s;
             } else if (unsupported(ch, &s)) {
                 return s;
@@ -422,7 +436,7 @@ Siteswap parsePassing(const std::string& text) {
             const PartLink& link = links[static_cast<size_t>(j)];
             if (done[static_cast<size_t>(j)] || !done[static_cast<size_t>(link.to)]) continue;
             for (int b = 0; b < period; ++b) {
-                const int from = modPositive(b - link.offset, period);
+                const int from = modPositive(b + link.start, period);
                 const ThrowForm& form = s.form.throws[static_cast<size_t>(link.to * period + from)];
                 s.loop.throws[static_cast<size_t>(j * period + b)] =
                     carryThrow(form, s.loop.at(link.to, from), link.to, j, jugglers);
@@ -490,15 +504,15 @@ bool PatternForm::hasLinks() const {
     return false;
 }
 
-bool PatternForm::root(int juggler, int* rootJuggler, int* offset) const {
+bool PatternForm::root(int juggler, int* rootJuggler, int* start) const {
     int k = juggler, total = 0;
     for (int steps = 0; linked(k); ++steps) {
         if (steps > jugglers) return false;
-        total += links[static_cast<size_t>(k)].offset;
+        total += links[static_cast<size_t>(k)].start;
         k = links[static_cast<size_t>(k)].to;
     }
     *rootJuggler = k;
-    *offset = total;
+    *start = total;
     return true;
 }
 
@@ -527,4 +541,19 @@ std::string loopProblem(const JugglingLoop& loop) {
     s.loop = loop;
     validate(&s);
     return (s.valid || s.sketch) ? std::string() : s.error;
+}
+
+std::string linkText(int to, int start, int period) {
+    std::string out = "@" + std::to_string(to + 1);
+    if (period > 0) start = modPositive(start, period);
+    if (start != 0) out += "[" + std::to_string(start) + "]";
+    return out;
+}
+
+std::string linkWords(int to, int start, int period) {
+    if (period > 0) start = modPositive(start, period);
+    const std::string name = "J" + std::to_string(to + 1);
+    if (start == 0) return "the same as " + name;
+    return name + "'s throws, starting " + std::to_string(start) + " beat" + (start == 1 ? "" : "s") + " in (from " + name +
+           "'s beat " + std::to_string(start + 1) + ")";
 }

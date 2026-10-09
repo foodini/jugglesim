@@ -22,13 +22,13 @@ int openThrowCount(const JugglingLoop& loop);
 
 // The loop as siteswap text, "?" for open throws: "531", "<3p 3|3p 3>", "<3p ? 3|...>", with
 // ",LRswap" after a juggler whose hands are swapped. With `form` (how the pattern was typed; see
-// PatternForm), throws are written as they were typed and linked jugglers as links ("@2+3")
+// PatternForm), throws are written as they were typed and linked jugglers as links ("@2[3]")
 // where the loop still follows the link (otherwise written out); without it, passes are written
 // as Juggling Lab does ("3p2" with 3+ jugglers). Returns false if a value can't be written (25,
 // 33 or over 35).
 bool loopToText(const JugglingLoop& loop, std::string* text, const PatternForm* form = nullptr);
 
-// ---- Links between jugglers ("@2+3"; see PatternForm in siteswap.h)
+// ---- Links between jugglers ("@2[3]"; see PatternForm in siteswap.h)
 
 // The loop with every linked juggler's throws (and hands) made again from what they copy, at
 // loop.period. Jugglers that aren't links are unchanged.
@@ -42,10 +42,11 @@ JugglingLoop applyLinks(const PatternForm& form, const JugglingLoop& loop);
 bool projectEdit(const PatternForm& form, const JugglingLoop& before, const JugglingLoop& after,
                  JugglingLoop* result, std::string* why);
 
-// Makes juggler `j` a link ("Same as..."): the same as juggler `to`, `offset` beats later. The
+// Makes juggler `j` a link ("Same as..."): juggler `to`'s throws, starting from to's
+// throws[start] (so j's beat b is to's beat b + start). The
 // new form and loop; false, with the reason, for a loop of links or a result that isn't a
 // pattern or sketch.
-bool linkJuggler(const PatternForm& form, const JugglingLoop& loop, int j, int to, int offset, PatternForm* newForm,
+bool linkJuggler(const PatternForm& form, const JugglingLoop& loop, int j, int to, int start, PatternForm* newForm,
                  JugglingLoop* newLoop, std::string* why);
 // The form with juggler `j` no longer a link (their throws written out in full).
 PatternForm unlinkJuggler(const PatternForm& form, int j);

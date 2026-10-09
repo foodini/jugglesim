@@ -82,9 +82,10 @@ std::string tidySiteswap(const std::string& text);
 // position in that juggler's part (the beat in the loop). False if it isn't part of a throw.
 bool throwAtCharacter(const std::string& text, int index, int* juggler, int* beat);
 
-// If the character at `index` is in a link ("@2+3"), the juggler whose part it is, the juggler
-// they copy (0-based), the offset, and whether their hands are swapped (",LRswap").
-bool linkAtCharacter(const std::string& text, int index, int* juggler, int* to, int* offset, bool* lrSwap);
+// If the character at `index` is in a link ("@2[3]"), the juggler whose part it is, the juggler
+// they copy (0-based), where in that juggler's throws they start (as written: may be negative or
+// past the period), and whether their hands are swapped (",LRswap").
+bool linkAtCharacter(const std::string& text, int index, int* juggler, int* to, int* start, bool* lrSwap);
 
 // The characters [*start, *end) of a throw, by juggler and beat in the loop. For a linked
 // juggler, the characters of the throw they copy.
@@ -96,10 +97,9 @@ bool charactersOfThrow(const std::string& text, int juggler, int beat, int* star
 bool throwAtCursor(const std::string& text, int cursor, int* juggler, int* beat);
 
 // Ctrl+click in the box: makes the part the cursor is in a link to the juggler whose throw was
-// clicked (clickIndex is a character of that throw): "@k+d", where d is the throw's position in
-// their part. Clicking J1's beat 9 gives "@1+8": J1's throws, 8 beats later, so the copy of J1's
-// beat 1 falls on the beat clicked. Whatever the part held is replaced; its options (",LRswap")
-// are kept. An offset of 0 is written "@k", and offsets are written negative ("@1-12") if the
-// text's links already are. False (with *why) if the click wasn't on a throw in another
-// juggler's part.
+// clicked (clickIndex is a character of that throw), starting with that throw: "@k[i]", where i
+// is the throw's position in their part (counting from 0). Clicking J1's beat 9 gives "@1[8]":
+// on beat 1 the copy throws J1's beat 9. Whatever the part held is replaced; its options
+// (",LRswap") are kept. A start of 0 is written "@k". False (with *why) if the click wasn't on a
+// throw in another juggler's part.
 bool linkToClickedThrow(const std::string& text, int cursor, int clickIndex, SiteswapEdit* result, std::string* why);
