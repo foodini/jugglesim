@@ -1,0 +1,8 @@
+# Line endings: files are stored with LF in the repository and checked out with the platform's
+# own line endings (CRLF on Windows, LF on the Mac), whatever core.autocrlf says.
+* text=auto
+
+# Scripts that need particular line endings on every platform.
+*.sh  text eol=lf
+*.mk  text eol=lf
+*.bat text eol=crlf
