@@ -21,16 +21,18 @@ struct SiteswapEdit {
 //   - A "|" typed at the end of a passing pattern adds a juggler, all "?".
 //   - A throw inserted into one juggler's part puts a "?" at the same position in the others
 //     (or, if a part was shorter, pads it with "?" at the end).
-//   - A throw deleted from one juggler's part deletes the throw at the same position in the
-//     others if either of them was a "?" (a "?" never holds anything back; a real throw does).
+//   - A real throw deleted from one juggler's part deletes the "?"s at the same position in the
+//     others. Deleting a "?" deletes just that "?": it never touches other jugglers' parts.
+//   - A pass to a juggler the pattern doesn't have yet ("3p+2" with two jugglers) adds jugglers,
+//     all "?" (up to kMaxJugglers).
 // Passing patterns are rewritten in the standard style: spaces between throws, none around the
 // bars. A missing ">" is added.
 //
-// Deleting a "?" (or a throw across from one) deletes its whole column, but backspacing a "?" is
-// also how you'd start replacing it. So a column deletion is remembered for one step: if the
-// very next edit types a throw at the same spot, it was a replacement after all, and what the
-// deletion took from the other parts comes back ("<7 5 3 1|? 5 3 1>", backspace the "?", type
-// 7: "<7 5 3 1|7 5 3 1>"). Anything else (another edit, moving the cursor, leaving the box)
+// Deleting a real throw deletes the "?"s across from it, but backspacing a throw is also how
+// you'd start replacing it. So such a column deletion is remembered for one step: if the very
+// next edit types a throw at the same spot, it was a replacement after all, and what the
+// deletion took from the other parts comes back ("<7 5 3 1|? 5 3 1>", backspace the 7, type 8:
+// "<8 5 3 1|? 5 3 1>"). Anything else (another edit, moving the cursor, leaving the box)
 // forgets it; the caller calls forget() for the last two.
 struct SiteswapAutofillMemory {
     bool armed = false;
@@ -80,5 +82,10 @@ std::string tidySiteswap(const std::string& text);
 // position in that juggler's part (the beat in the loop). False if it isn't part of a throw.
 bool throwAtCharacter(const std::string& text, int index, int* juggler, int* beat);
 
-// The characters [*start, *end) of a throw, by juggler and beat in the loop.
+// If the character at `index` is in a link ("@2+3"), the juggler whose part it is, the juggler
+// they copy (0-based), the offset, and whether their hands are swapped (",LRswap").
+bool linkAtCharacter(const std::string& text, int index, int* juggler, int* to, int* offset, bool* lrSwap);
+
+// The characters [*start, *end) of a throw, by juggler and beat in the loop. For a linked
+// juggler, the characters of the throw they copy.
 bool charactersOfThrow(const std::string& text, int juggler, int beat, int* start, int* end);

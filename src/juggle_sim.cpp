@@ -16,7 +16,6 @@ int modPositive(int a, int m) {
     return r < 0 ? r + m : r;
 }
 
-bool isRightHandBeat(int beat) { return modPositive(beat, 2) == 0; }
 
 // Hand geometry (juggler-local). Throws are made from the inside, catches on the outside.
 // Roughly elbow height, in front of the body, so the elbows stay comfortably bent. Higher
@@ -308,12 +307,12 @@ public:
 
     // Where j's hand releases on beat b and catches before throwing on beat b (j-local).
     Vec3 throwPointAt(int j, int b) const {
-        return turned(throwPoint(isRightHandBeat(b), heightFraction(j, b)), throwTurn(j, b));
+        return turned(throwPoint(rightHand(j, b), heightFraction(j, b)), throwTurn(j, b));
     }
     Vec3 catchPointAt(int j, int b) const {
         if (incomingPass(j, b) && prop() != PropType::Ball)
-            return turned(passCatchPoint(isRightHandBeat(b), incomingHeightFraction(j, b)), catchTurn(j, b));
-        return turned(catchPoint(isRightHandBeat(b), incomingHeightFraction(j, b)), catchTurn(j, b));
+            return turned(passCatchPoint(rightHand(j, b), incomingHeightFraction(j, b)), catchTurn(j, b));
+        return turned(catchPoint(rightHand(j, b), incomingHeightFraction(j, b)), catchTurn(j, b));
     }
 
     // ---- Turning toward a partner who isn't straight ahead (radians about +Y, positive toward
@@ -327,6 +326,8 @@ public:
         if (!incomingPass(j, b)) return 0.0f;
         return turnTo(j, incomingFrom(j, b));
     }
+    // Whether j throws with the right hand on beat b (their hands may be swapped: LRswap).
+    bool rightHand(int j, int b) const { return loop_.rightHandBeat(j, b); }
     float turnTo(int j, int other) const { return turnTo_[static_cast<size_t>(j * jugglers_ + other)]; }
     // A juggler-local point or direction turned by `angle` about the vertical through the feet.
     static Vec3 turned(Vec3 p, float angle) {
@@ -360,7 +361,7 @@ public:
     // over end, in the plane running front to back through the juggler (turned by
     // kClubAxisBias), the top turning back toward the juggler.
     SpinFrame frameFor(int j, int b) const {
-        const bool right = isRightHandBeat(b);
+        const bool right = rightHand(j, b);
         SpinFrame f;
         if (prop() != PropType::Ball) {
             const float side = std::sin(kClubAxisBias);
@@ -540,7 +541,7 @@ public:
             // The two hands' bumps overlap (one hand scoops while the other is still holding),
             // so the sway uses a sharpened bump that's only large around this hand's drive;
             // otherwise the sides would cancel out.
-            const float side = isRightHandBeat(n) ? -1.0f : 1.0f;
+            const float side = rightHand(j, n) ? -1.0f : 1.0f;
             *sway += side * shape * shape * shape * info.sway;
         }
         *dip = std::sqrt(std::sqrt(dip4));
@@ -649,7 +650,7 @@ public:
     // position and velocity are continuous all the way round.
     Vec3 palm(int j, bool right, double t) const {
         int prev = static_cast<int>(std::floor(t));
-        if (isRightHandBeat(prev) != right) --prev;
+        if (rightHand(j, prev) != right) --prev;
         const int next = prev + 2;
         const double spb = secondsPerBeat();
         const double catchTime = catchTimeFor(j, next);
@@ -713,7 +714,7 @@ public:
         out->prop = prop();
         const Vec3 p = palm(j, right, t);
         int prev = static_cast<int>(std::floor(t));
-        if (isRightHandBeat(prev) != right) --prev;
+        if (rightHand(j, prev) != right) --prev;
         const int next = prev + 2;
         const PropAngles a = propAngles(prop());
         SpinFrame frame;
@@ -936,7 +937,7 @@ JugglerScene evaluateScene(const JugglingLoop& sketchOrLoop, const BallOrbits& o
     for (int j = 0; j < loop.jugglers; ++j) {
         for (int b = now - 36; b <= now + 36; ++b) {
             const int v = ev.valueAt(j, b);
-            const bool right = isRightHandBeat(b);
+            const bool right = loop.rightHandBeat(j, b);
             if (isOpen(j, b) && ev.incomingAt(j, b) > 0) {
                 // A sketch's undecided throw: the prop landing here is caught and held as usual,
                 // then vanishes when it would have been thrown.

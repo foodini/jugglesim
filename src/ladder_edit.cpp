@@ -166,6 +166,7 @@ DropResult editDrop(EditChain& chain, Slot target, bool closeOnCopy, JugglingLoo
         touchedRange(chain, 0, false, Slot(), false, &lo, &hi);
         JugglingLoop loop;
         loop.jugglers = chain.base.jugglers;
+        loop.swapHands = chain.base.swapHands;
         loop.period = length;
         loop.throws.resize(static_cast<size_t>(loop.jugglers * length));
         for (int j = 0; j < loop.jugglers; ++j)

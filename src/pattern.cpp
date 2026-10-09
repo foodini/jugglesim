@@ -5,14 +5,18 @@
 
 namespace {
 
-// Hand that throws on a given beat in async juggling: beat 0 is the right hand.
-Hand asyncHandForBeat(int beat) { return beat % 2 == 0 ? Hand::Right : Hand::Left; }
+// Hand that throws on a given beat in async juggling: beat 0 is the right hand, unless the
+// juggler's hands are swapped.
+Hand asyncHandForBeat(const JugglingLoop& loop, int juggler, int beat) {
+    return loop.rightHandBeat(juggler, beat) ? Hand::Right : Hand::Left;
+}
 
 }  // namespace
 
 Pattern patternFromLoop(const JugglingLoop& loop) {
     Pattern p;
     p.jugglers = std::max(1, loop.jugglers);
+    p.swapHands = loop.swapHands;
     const int period = loop.period;
     // Physical period: an odd-length loop needs two passes to come back to the same hand.
     const int storedBeats = (period % 2 == 1) ? period * 2 : period;
@@ -22,11 +26,11 @@ Pattern patternFromLoop(const JugglingLoop& loop) {
             if (t.value == 0) continue;  // empty hand: no event
             ThrowEvent e;
             e.juggler = j;
-            e.hand = asyncHandForBeat(beat);
+            e.hand = asyncHandForBeat(loop, j, beat);
             e.throwTick = beatsToTicks(beat);
             e.value = t.value;
             e.destJuggler = t.dest;
-            e.destHand = asyncHandForBeat(beat + t.value);
+            e.destHand = asyncHandForBeat(loop, t.dest, beat + t.value);
             e.spins = defaultSpinCount(t.value);
             p.events.push_back(e);
         }
@@ -45,6 +49,7 @@ Pattern patternFromLoopValues(const std::vector<int>& values) { return patternFr
 JugglingLoop patternLoop(const Pattern& pattern) {
     JugglingLoop loop;
     loop.jugglers = pattern.jugglers;
+    loop.swapHands = pattern.swapHands;
     loop.period = loopPeriodBeats(pattern);
     loop.throws.assign(static_cast<size_t>(loop.jugglers * loop.period), LoopThrow());
     for (int j = 0; j < loop.jugglers; ++j)
@@ -109,6 +114,7 @@ Pattern withPeriod(const Pattern& pattern, int periodBeats) {
     if (shortest == 0 || periodBeats <= 0 || periodBeats % shortest != 0) return pattern;
     JugglingLoop longer;
     longer.jugglers = loop.jugglers;
+    longer.swapHands = loop.swapHands;
     longer.period = periodBeats;
     for (int j = 0; j < loop.jugglers; ++j)
         for (int i = 0; i < periodBeats; ++i) longer.throws.push_back(loop.at(j, i % shortest));
@@ -129,6 +135,7 @@ bool patternToSiteswap(const Pattern& pattern, std::string* text) {
             if (!valueChar(loop.at(0, b).value, &c)) return false;
             out += c;
         }
+        if (loop.handsSwapped(0)) out += ",LRswap";
     } else {
         // Juggling Lab's passing notation: <3p 3|3p 3>.
         out = "<";
@@ -145,6 +152,7 @@ bool patternToSiteswap(const Pattern& pattern, std::string* text) {
                     if (loop.jugglers > 2) out += std::to_string(t.dest + 1);
                 }
             }
+            if (loop.handsSwapped(j)) out += ",LRswap";
         }
         out += '>';
     }

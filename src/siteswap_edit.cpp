@@ -1,8 +1,10 @@
 // siteswap_edit.cpp - see siteswap_edit.h.
 #include "siteswap_edit.h"
+#include "siteswap.h"
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cstddef>
 #include <utility>
 #include <vector>
@@ -34,6 +36,10 @@ struct Parsed {
     bool closed = false;   // has its ">"
     std::vector<std::vector<Token>> parts;
     std::vector<int> partStarts;  // character where each part starts (after "<" or "|")
+    // Per part: a link instead of throws ("@2+3", as written without spaces), and options after
+    // commas (",LRswap"), both kept as they are when the text is rewritten.
+    std::vector<std::string> links, options;
+    std::vector<int> linkStart, linkEnd;  // the link's characters, if any
 };
 
 int valueOf(unsigned char c) {
@@ -56,8 +62,15 @@ Parsed parse(const std::string& text) {
     while (i < text.size() && std::isspace(static_cast<unsigned char>(text[i]))) ++i;
     p.passing = i < text.size() && text[i] == '<';
     if (p.passing) ++i;
-    p.parts.emplace_back();
-    p.partStarts.push_back(static_cast<int>(i));
+    auto newPart = [&]() {
+        p.parts.emplace_back();
+        p.partStarts.push_back(static_cast<int>(i));
+        p.links.emplace_back();
+        p.options.emplace_back();
+        p.linkStart.push_back(-1);
+        p.linkEnd.push_back(-1);
+    };
+    newPart();
     // A digit right after a "p" is read as its target (3p2), whatever the number of parts: with
     // three or more jugglers it is one, and while the third juggler's part hasn't been typed
     // yet it soon will be, so autofill mustn't pull "3p2" apart. (With exactly two jugglers,
@@ -68,12 +81,46 @@ Parsed parse(const std::string& text) {
         if (std::isspace(c)) {
             ++i;
         } else if (p.passing && c == '|' && !p.closed) {
-            p.parts.emplace_back();
             ++i;
-            p.partStarts.push_back(static_cast<int>(i));
+            newPart();
         } else if (p.passing && c == '>' && !p.closed) {
             p.closed = true;
             ++i;
+        } else if (!p.closed && c == ',') {
+            // Options, up to the end of the part.
+            const size_t stop = p.passing ? text.find_first_of("|>", i) : std::string::npos;
+            const std::string raw = text.substr(i, stop == std::string::npos ? std::string::npos : stop - i);
+            std::string normalized;
+            size_t from = 1;
+            while (from <= raw.size()) {
+                size_t next = raw.find(',', from);
+                if (next == std::string::npos) next = raw.size();
+                std::string option = raw.substr(from, next - from);
+                while (!option.empty() && std::isspace(static_cast<unsigned char>(option.back()))) option.pop_back();
+                while (!option.empty() && std::isspace(static_cast<unsigned char>(option.front()))) option.erase(0, 1);
+                std::string lower;
+                for (const char ch : option) lower += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                if (lower == "lrswap") option = "LRswap";  // (written the standard way)
+                normalized += "," + option;
+                from = next + 1;
+            }
+            p.options.back() += normalized;
+            i = stop == std::string::npos ? text.size() : stop;
+        } else if (p.passing && !p.closed && c == '@' && p.parts.back().empty() && p.links.back().empty() &&
+                   p.options.back().empty()) {
+            // A link: "@2", "@2+3", "@2 - 1" (written back without the spaces).
+            p.linkStart.back() = static_cast<int>(i);
+            std::string link = "@";
+            ++i;
+            while (i < text.size() && (std::isdigit(static_cast<unsigned char>(text[i])) || text[i] == '+' ||
+                                       text[i] == '-' || text[i] == ' ')) {
+                if (text[i] != ' ') link += text[i];
+                ++i;
+            }
+            p.links.back() = link;
+            p.linkEnd.back() = static_cast<int>(i);
+        } else if (!p.closed && !p.links.back().empty()) {
+            return p;  // throws after a link: not ok
         } else if (!p.closed && (c == '?' || valueOf(c) >= 0)) {
             Token t;
             t.start = static_cast<int>(i);
@@ -130,11 +177,13 @@ std::string format(const Parsed& p, std::vector<int>* partStart = nullptr,
     for (size_t f = 0; f < p.parts.size(); ++f) {
         if (f > 0) out += '|';
         if (partStart) partStart->push_back(static_cast<int>(out.size()));
+        if (f < p.links.size() && !p.links[f].empty()) out += p.links[f];
         for (size_t k = 0; k < p.parts[f].size(); ++k) {
             if (k > 0 && p.passing) out += ' ';
             out += tokenText(p.parts[f][k]);
             if (tokenEnds) (*tokenEnds)[f].push_back(static_cast<int>(out.size()));
         }
+        if (f < p.options.size()) out += p.options[f];
     }
     if (p.passing) out += '>';
     return out;
@@ -207,8 +256,63 @@ std::string replaceTokens(const std::string& text, std::vector<std::pair<Token, 
 
 }  // namespace
 
+namespace {
+bool autofillCore(const std::string& before, const std::string& after, int cursor, SiteswapEdit* result,
+                  SiteswapAutofillMemory* memory);
+
+// The fewest jugglers a passing pattern's relative targets need: "3p+2" (or "3p-2") needs 3.
+// (Not absolute ones: with two jugglers "3p3" is a pass and then a 3, so a digit after a "p"
+// says nothing for sure about how many jugglers there are.)
+size_t jugglersNeeded(const Parsed& p) {
+    size_t needed = 0;
+    for (const std::vector<Token>& part : p.parts)
+        for (const Token& t : part)
+            if (t.pass && t.relative != kNoRelative)
+                needed = std::max(needed, static_cast<size_t>(std::abs(t.relative)) + 1);
+    return needed;
+}
+}  // namespace
+
 bool autofillSiteswap(const std::string& before, const std::string& after, int cursor, SiteswapEdit* result,
                       SiteswapAutofillMemory* memory) {
+    SiteswapEdit filled;
+    const bool changed = autofillCore(before, after, cursor, &filled, memory);
+    if (!changed) {
+        filled.text = after;
+        filled.cursor = cursor;
+    }
+    // A pass to a juggler the pattern doesn't have yet ("<3p+2" with two parts): add jugglers,
+    // all "?", to make room (up to kMaxJugglers).
+    Parsed p = parse(filled.text);
+    const size_t needed = p.ok && p.passing ? std::min<size_t>(jugglersNeeded(p), kMaxJugglers) : 0;
+    if (needed > p.parts.size()) {
+        size_t longest = 0;
+        for (size_t f = 0; f < p.parts.size(); ++f)
+            if (p.links[f].empty()) longest = std::max(longest, p.parts[f].size());
+        const Parsed was = p;
+        while (p.parts.size() < needed) {
+            p.parts.emplace_back(longest, openToken());
+            p.links.emplace_back();
+            p.options.emplace_back();
+        }
+        p.closed = true;
+        std::vector<int> partStart;
+        std::vector<std::vector<int>> tokenEnds;
+        result->text = format(p, &partStart, &tokenEnds);
+        result->cursor = mapCursor(was, filled.cursor, partStart, tokenEnds);
+        if (memory && memory->armed) {
+            memory->text = result->text;
+            memory->cursor = result->cursor;
+        }
+        return result->text != after;
+    }
+    if (changed) *result = filled;
+    return changed;
+}
+
+namespace {
+bool autofillCore(const std::string& before, const std::string& after, int cursor, SiteswapEdit* result,
+                  SiteswapAutofillMemory* memory) {
     // Any edit uses up what the last one remembered.
     SiteswapAutofillMemory remembered;
     if (memory) {
@@ -256,6 +360,27 @@ bool autofillSiteswap(const std::string& before, const std::string& after, int c
         }
     }
 
+    // "@" typed at the start of a part that autofill filled with "?": it starts a link there,
+    // replacing the "?"s (as a throw typed in front of a "?" fills it in).
+    if (b.ok && b.passing && after.size() == before.size() + 1 && cursor >= 1 &&
+        after[static_cast<size_t>(cursor - 1)] == '@' &&
+        after.compare(0, static_cast<size_t>(cursor - 1), before, 0, static_cast<size_t>(cursor - 1)) == 0) {
+        for (size_t f = 0; f < b.parts.size(); ++f) {
+            if (b.partStarts[f] != cursor - 1 || !b.links[f].empty() || b.parts[f].empty()) continue;
+            bool allOpen = true;
+            for (const Token& t : b.parts[f]) allOpen = allOpen && t.value == kOpen;
+            if (!allOpen) break;
+            Parsed made = b;
+            made.closed = true;
+            made.parts[f].clear();
+            made.links[f] = "@";
+            std::vector<int> partStart;
+            result->text = format(made, &partStart);
+            result->cursor = partStart[f] + 1;
+            return true;
+        }
+    }
+
     // "<" typed into an empty box, or in front of a solo pattern.
     if (b.ok && !b.passing && after.size() == before.size() + 1 && !after.empty() && after[0] == '<' &&
         after.substr(1) == before) {
@@ -263,6 +388,8 @@ bool autofillSiteswap(const std::string& before, const std::string& after, int c
         made.ok = made.passing = made.closed = true;
         made.parts.push_back(b.parts[0]);
         made.parts.emplace_back(b.parts[0].size(), openToken());
+        made.links = {"", ""};
+        made.options = {b.options.empty() ? std::string() : b.options[0], ""};
         result->text = format(made);
         result->cursor = 1;
         return true;
@@ -279,6 +406,12 @@ bool autofillSiteswap(const std::string& before, const std::string& after, int c
         return result->text != after;
     }
     if (!b.ok || !a.ok || !b.passing || !a.passing) return false;
+    // Parts compared whole: throws, link and options. A link part has no throws of its own and
+    // takes no part in lining up columns.
+    auto same = [](const Parsed& x, size_t fx, const Parsed& y, size_t fy) {
+        return samePart(x.parts[fx], y.parts[fy]) && x.links[fx] == y.links[fy] && x.options[fx] == y.options[fy];
+    };
+    auto isLink = [](const Parsed& x, size_t f) { return f < x.links.size() && !x.links[f].empty(); };
 
     Parsed out = a;
     out.closed = true;
@@ -289,21 +422,24 @@ bool autofillSiteswap(const std::string& before, const std::string& after, int c
         // A "|" typed: if it made a new, empty part (the others unchanged), fill it with "?".
         size_t added = a.parts.size();
         for (size_t f = 0, g = 0; f < a.parts.size(); ++f) {
-            if (added == a.parts.size() && a.parts[f].empty() && (g >= b.parts.size() || !samePart(a.parts[f], b.parts[g]))) {
+            if (added == a.parts.size() && a.parts[f].empty() && !isLink(a, f) && a.options[f].empty() &&
+                (g >= b.parts.size() || !same(a, f, b, g))) {
                 added = f;
                 continue;
             }
-            if (g >= b.parts.size() || !samePart(a.parts[f], b.parts[g])) return false;
+            if (g >= b.parts.size() || !same(a, f, b, g)) return false;
             ++g;
         }
         if (added == a.parts.size()) return false;
         size_t longest = 0;
-        for (const std::vector<Token>& part : b.parts) longest = std::max(longest, part.size());
+        for (size_t f = 0; f < b.parts.size(); ++f)
+            if (!isLink(b, f)) longest = std::max(longest, b.parts[f].size());
         out.parts[added].assign(longest, openToken());
         changed = longest > 0;
     } else if (a.parts.size() == b.parts.size()) {
         size_t edited = a.parts.size();
         for (size_t f = 0; f < a.parts.size(); ++f) {
+            if (a.links[f] != b.links[f] || a.options[f] != b.options[f]) return false;  // a link or option typed
             if (samePart(a.parts[f], b.parts[f])) continue;
             if (edited != a.parts.size()) return false;  // more than one part changed (a paste?)
             edited = f;
@@ -329,8 +465,9 @@ bool autofillSiteswap(const std::string& before, const std::string& after, int c
             out.parts[edited].erase(out.parts[edited].begin() + inserted + 1);
             changed = true;
         } else if (inserted >= 0) {
+            changed = true;  // (spaced out in the standard style, at least)
             for (size_t g = 0; g < out.parts.size(); ++g) {
-                if (g == edited) continue;
+                if (g == edited || isLink(out, g)) continue;
                 std::vector<Token>& part = out.parts[g];
                 if (part.size() == was.size()) {
                     part.insert(part.begin() + inserted, openToken());
@@ -346,10 +483,13 @@ bool autofillSiteswap(const std::string& before, const std::string& after, int c
             const Token& gone = was[static_cast<size_t>(deleted)];
             changed = true;  // (tidy up the spaces the deleted throw leaves, at least)
             for (size_t g = 0; g < out.parts.size(); ++g) {
-                if (g == edited) continue;
+                if (g == edited || isLink(out, g)) continue;
                 std::vector<Token>& part = out.parts[g];
                 if (part.size() != was.size()) continue;
-                if (gone.value == kOpen || part[static_cast<size_t>(deleted)].value == kOpen) {
+                // Deleting a real throw takes the "?"s across from it with it. Deleting a "?" only
+                // deletes that "?": other jugglers' parts, and their real throws above all, are
+                // never touched by it.
+                if (gone.value != kOpen && part[static_cast<size_t>(deleted)].value == kOpen) {
                     part.erase(part.begin() + deleted);
                     changed = true;
                     columnDeleted = true;
@@ -378,6 +518,8 @@ bool autofillSiteswap(const std::string& before, const std::string& after, int c
     }
     return result->text != after;
 }
+
+}  // namespace
 
 bool bumpThrowAtCursor(const std::string& text, int cursor, int delta, SiteswapEdit* result) {
     const Parsed p = parse(text);
@@ -618,10 +760,74 @@ bool throwAtCharacter(const std::string& text, int index, int* juggler, int* bea
     return false;
 }
 
-bool charactersOfThrow(const std::string& text, int juggler, int beat, int* start, int* end) {
+namespace {
+
+// "@2+3" -> juggler 1 (0-based), offset 3. False if it isn't one.
+bool readLink(const std::string& link, int* to, int* offset) {
+    if (link.size() < 2 || link[0] != '@') return false;
+    size_t i = 1;
+    int number = 0;
+    bool any = false;
+    while (i < link.size() && std::isdigit(static_cast<unsigned char>(link[i]))) {
+        number = number * 10 + (link[i] - '0');
+        any = true;
+        ++i;
+    }
+    if (!any) return false;
+    int off = 0;
+    if (i < link.size()) {
+        const int sign = link[i] == '-' ? -1 : (link[i] == '+' ? 1 : 0);
+        if (sign == 0) return false;
+        ++i;
+        bool digits = false;
+        while (i < link.size() && std::isdigit(static_cast<unsigned char>(link[i]))) {
+            off = off * 10 + (link[i] - '0');
+            digits = true;
+            ++i;
+        }
+        if (!digits || i != link.size()) return false;
+        off *= sign;
+    }
+    *to = number - 1;
+    *offset = off;
+    return true;
+}
+
+bool hasLrSwap(const std::string& options) {
+    std::string lower;
+    for (const char c : options) lower += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return lower.find("lrswap") != std::string::npos;
+}
+
+}  // namespace
+
+bool linkAtCharacter(const std::string& text, int index, int* juggler, int* to, int* offset, bool* lrSwap) {
     const Parsed p = parse(text);
+    if (!p.ok) return false;
+    for (size_t f = 0; f < p.parts.size(); ++f) {
+        if (p.links[f].empty() || index < p.linkStart[f] || index >= p.linkEnd[f]) continue;
+        if (!readLink(p.links[f], to, offset)) return false;
+        *juggler = static_cast<int>(f);
+        *lrSwap = hasLrSwap(p.options[f]);
+        return true;
+    }
+    return false;
+}
+
+bool charactersOfThrow(const std::string& text, int juggler, int beat, int* start, int* end) {
+    Parsed p = parse(text);
     if (!p.ok || juggler < 0 || juggler >= static_cast<int>(p.parts.size())) return false;
+    // A linked juggler's throw is written where the throw it copies is.
+    for (size_t steps = 0; !p.links[static_cast<size_t>(juggler)].empty(); ++steps) {
+        int to = 0, offset = 0;
+        if (steps > p.parts.size() || !readLink(p.links[static_cast<size_t>(juggler)], &to, &offset) || to < 0 ||
+            to >= static_cast<int>(p.parts.size()))
+            return false;
+        juggler = to;
+        beat -= offset;
+    }
     const std::vector<Token>& part = p.parts[static_cast<size_t>(juggler)];
+    if (!part.empty()) beat = ((beat % static_cast<int>(part.size())) + static_cast<int>(part.size())) % static_cast<int>(part.size());
     if (beat < 0 || beat >= static_cast<int>(part.size())) return false;
     *start = part[static_cast<size_t>(beat)].start;
     *end = part[static_cast<size_t>(beat)].end;

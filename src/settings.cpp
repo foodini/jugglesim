@@ -1,6 +1,7 @@
 // settings.cpp - see settings.h.
 #include "settings.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -63,6 +64,12 @@ AppSettings loadSettings() {
             settings.tempoPanelCollapsed = value == "collapsed";
         } else if (key == "colors") {
             settings.colorByOrbit = value == "orbit";
+        } else if (key == "slow_motion") {
+            char* end = nullptr;
+            const double rate = std::strtod(value.c_str(), &end);
+            if (end != value.c_str()) settings.slowRate = static_cast<float>(std::clamp(rate, 0.05, 0.5));
+        } else if (key == "linked_jugglers") {
+            settings.dimLinked = value == "dim";
         } else if (key == "throw_values") {
             settings.showThrowValues = value == "on";
         } else if (key == "ladder_width") {
@@ -91,6 +98,8 @@ bool saveSettings(const AppSettings& settings) {
     out << "tempo_panel = " << (settings.tempoPanelCollapsed ? "collapsed" : "open") << "\n";
     out << "colors = " << (settings.colorByOrbit ? "orbit" : "prop") << "\n";
     out << "throw_values = " << (settings.showThrowValues ? "on" : "off") << "\n";
+    out << "linked_jugglers = " << (settings.dimLinked ? "dim" : "normal") << "\n";
+    out << "slow_motion = " << settings.slowRate << "\n";
     out << "ladder_width = " << settings.ladderFraction << "\n";
     return static_cast<bool>(out);
 }

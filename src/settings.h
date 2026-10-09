@@ -15,6 +15,8 @@ struct AppSettings {
     bool tempoPanelCollapsed = false;  // the juggler pane's Tweakables panel
     bool showThrowValues = false;      // the ladder's throw-value labels
     bool colorByOrbit = false;         // color props by orbit instead of one color each
+    bool dimLinked = false;            // mute linked jugglers' throws on the ladder
+    float slowRate = 0.25f;            // slow-motion playback speed, 0.05..0.5 of normal
     float ladderFraction = 0.5f;       // the ladder pane's share of the window width
 };
 

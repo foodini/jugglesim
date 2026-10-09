@@ -8,13 +8,23 @@ The bar along the bottom of the juggler pane has the transport controls:
 
 | Button | Key | Does |
 |---|---|---|
+| go to beat 1 | **B** | Back to the start (playing or paused, as it was) |
 | step back | **Left** (**Shift+Left**: a whole beat) | Pauses and steps back 1/12 of a beat |
 | play / pause | **Space** | Starts or stops the animation |
 | step forward | **Right** (**Shift+Right**: a whole beat) | Pauses and steps forward 1/12 of a beat |
+| Slow | **S** | Slow motion on or off, at the speed beside it (0.05 to 0.5 of normal) |
 
 The same commands are in the **Playback** menu. The keys don't act while you're typing in the
-siteswap box. Next to the buttons is the current beat (beat 1 is the right hand's first throw,
-as on the ladder).
+siteswap box.
+
+Next to the buttons is the current beat (beat 1 is the right hand's first throw, as on the
+ladder). **Drag** it left or right to move through time, or **double-click** it to type the beat
+to go to; either pauses. On the ladder, **click or drag in the beat numbers** to put the
+playhead there; this pauses too. The slow-motion speed is
+remembered; dragging its slider turns slow motion on.
+
+Loading a pattern from the library, starting a new one, or pasting over the whole siteswap box
+starts again from beat 1.
 
 Stepping works in both directions, by any amount: the juggler's position at any moment is
 worked out directly from the pattern (every flight is an exact parabola), so nothing has to be
@@ -84,6 +94,9 @@ passing distance apart. The camera starts behind and above J1, so you see the pa
 J1's side (a feed from the feeder's, say), and the numbers go clockwise seen from above: J2 on
 J1's left, the last juggler on J1's right. Looking down a little keeps the near jugglers from
 hiding the far ones, and the whole formation is framed, feet and all. Other formations will come with choreography.
+
+A juggler with swapped hands (`,LRswap`, see [ladder.md](ladder.md)) throws with the left hand
+on beat 1.
 
 They look at their partners when nothing needs watching and follow the high throws when it
 does. A juggler passing to (or catching from) someone who isn't straight ahead, as around a

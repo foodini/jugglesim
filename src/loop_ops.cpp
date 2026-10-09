@@ -35,39 +35,201 @@ int openThrowCount(const JugglingLoop& loop) {
     return open;
 }
 
-bool loopToText(const JugglingLoop& loop, std::string* text, const PassStyle* style) {
+namespace {
+
+// How a throw's target is written after its value ("", "p", "p+1", "p2").
+std::string targetText(const ThrowForm& f, int jugglers) {
+    switch (f.kind) {
+    case ThrowForm::Kind::Plain:
+        return "";
+    case ThrowForm::Kind::BareP:
+        return "p";
+    case ThrowForm::Kind::Relative:
+        return std::string("p") + (f.value < 0 ? "-" : "+") + std::to_string(f.value < 0 ? -f.value : f.value);
+    case ThrowForm::Kind::Absolute:
+        return jugglers > 2 ? "p" + std::to_string(f.value + 1) : "p";
+    }
+    return "";
+}
+
+// The form a throw is written in when there's no record of how it was typed: as Juggling Lab
+// writes it.
+ThrowForm plainForm(const LoopThrow& t, int juggler, int jugglers) {
+    ThrowForm f;
+    if (t.value == kOpenThrow || t.dest == juggler) return f;
+    if (jugglers == 2) {
+        f.kind = ThrowForm::Kind::BareP;
+    } else {
+        f.kind = ThrowForm::Kind::Absolute;
+        f.value = t.dest;
+    }
+    return f;
+}
+
+// Whether juggler j's throws in `loop` are what their link in `form` makes of the throws of the
+// juggler they copy.
+bool linkHolds(const JugglingLoop& loop, const PatternForm& form, int j) {
+    const PartLink& link = form.links[static_cast<size_t>(j)];
+    for (int b = 0; b < loop.period; ++b) {
+        const LoopThrow& source = loop.at(link.to, b - link.offset);
+        const ThrowForm f = form.formFor(link.to, b - link.offset, source);
+        if (carryThrow(f, source, link.to, j, loop.jugglers) != loop.at(j, b)) return false;
+    }
+    return true;
+}
+
+}  // namespace
+
+bool loopToText(const JugglingLoop& loop, std::string* text, const PatternForm* form) {
     std::string out;
     if (loop.empty()) return false;
     for (const LoopThrow& t : loop.throws)
         if (t.value != kOpenThrow && !writableValue(t.value)) return false;
+    // The record of how it was typed applies if it's for these jugglers, at this period or one
+    // it's a multiple of (written out longer, its throws still line up).
+    const bool typed = form && form->jugglers == loop.jugglers && form->period > 0 && loop.period % form->period == 0;
     if (loop.jugglers <= 1) {
         for (int b = 0; b < loop.period; ++b) out += valueChar(loop.at(0, b).value);
+        if (loop.handsSwapped(0)) out += ",LRswap";
     } else {
         // Juggling Lab's passing notation: <3p 3|3p 3>.
         out = "<";
         for (int j = 0; j < loop.jugglers; ++j) {
             if (j > 0) out += '|';
+            if (typed && form->linked(j) && linkHolds(loop, *form, j)) {
+                const PartLink& link = form->links[static_cast<size_t>(j)];
+                out += "@" + std::to_string(link.to + 1);
+                if (link.offset > 0) out += "+" + std::to_string(link.offset);
+                if (link.offset < 0) out += "-" + std::to_string(-link.offset);
+                if (loop.handsSwapped(j) != loop.handsSwapped(link.to)) out += ",LRswap";
+                continue;
+            }
             for (int b = 0; b < loop.period; ++b) {
                 const LoopThrow& t = loop.at(j, b);
                 if (b > 0) out += ' ';
                 out += valueChar(t.value);
-                const bool relative = style && style->relative;
-                if (t.value != kOpenThrow && t.dest != j) {
-                    out += 'p';
-                    if (relative)
-                        out += '+' + std::to_string(((t.dest - j) % loop.jugglers + loop.jugglers) % loop.jugglers);
-                    else if (loop.jugglers > 2)
-                        out += std::to_string(t.dest + 1);
-                } else if (t.value != kOpenThrow && style && style->marked(j, b, loop.jugglers, loop.period)) {
-                    // A self written as a pass to yourself (to line up columns), kept that way.
-                    out += relative ? "p+0" : "p" + std::to_string(j + 1);
-                }
+                ThrowForm f = typed ? form->formFor(j, b, t) : plainForm(t, j, loop.jugglers);
+                if (t.value != kOpenThrow && carryThrow(f, t, j, j, loop.jugglers) != t) f = plainForm(t, j, loop.jugglers);
+                if (t.value != kOpenThrow) out += targetText(f, loop.jugglers);
             }
+            if (loop.handsSwapped(j)) out += ",LRswap";
         }
         out += '>';
     }
     *text = out;
     return true;
+}
+
+JugglingLoop applyLinks(const PatternForm& form, const JugglingLoop& loop) {
+    JugglingLoop out = loop;
+    if (!form.hasLinks() || form.jugglers != loop.jugglers || loop.empty()) return out;
+    out.swapHands.resize(static_cast<size_t>(loop.jugglers), 0);
+    std::vector<char> done(static_cast<size_t>(loop.jugglers), 0);
+    for (int j = 0; j < loop.jugglers; ++j) done[static_cast<size_t>(j)] = form.linked(j) ? 0 : 1;
+    for (int pass = 0; pass < loop.jugglers; ++pass) {
+        for (int j = 0; j < loop.jugglers; ++j) {
+            const PartLink& link = form.links[static_cast<size_t>(j)];
+            if (done[static_cast<size_t>(j)] || !done[static_cast<size_t>(link.to)]) continue;
+            for (int b = 0; b < loop.period; ++b) {
+                const LoopThrow source = out.at(link.to, b - link.offset);
+                const ThrowForm f = form.formFor(link.to, b - link.offset, source);
+                out.throws[static_cast<size_t>(j * loop.period + b)] = carryThrow(f, source, link.to, j, loop.jugglers);
+            }
+            out.swapHands[static_cast<size_t>(j)] = static_cast<char>(out.handsSwapped(link.to) != link.lrSwap);
+            done[static_cast<size_t>(j)] = 1;
+        }
+    }
+    return out;
+}
+
+bool projectEdit(const PatternForm& form, const JugglingLoop& before, const JugglingLoop& after,
+                 JugglingLoop* result, std::string* why) {
+    if (!form.hasLinks() || form.jugglers != after.jugglers || before.empty()) {
+        *result = after;
+        return true;
+    }
+    if (after.period % before.period != 0) {
+        if (why)
+            *why = "Adding or deleting beats isn't possible with linked jugglers yet. Unlink them first "
+                   "(right-click a juggler's number).";
+        return false;
+    }
+    const JugglingLoop base = before.period == after.period ? before : loopWithPeriod(before, after.period);
+    const int period = after.period, jugglers = after.jugglers;
+    // Each changed throw goes to the part written out that it's (a copy of) a throw of.
+    JugglingLoop roots = base;
+    std::vector<char> rootChanged(roots.throws.size(), 0);
+    std::vector<int> changed;
+    for (int j = 0; j < jugglers; ++j) {
+        for (int b = 0; b < period; ++b) {
+            const LoopThrow& t = after.at(j, b);
+            if (t == base.at(j, b)) continue;
+            changed.push_back(j * period + b);
+            int root = j, offset = 0;
+            if (!form.root(j, &root, &offset)) {
+                if (why) *why = "The links between these jugglers go round in a loop.";
+                return false;
+            }
+            const int rootBeat = positiveMod(b - offset, period);
+            const LoopThrow rootThrow = carryThrow(form.formFor(j, b, t), t, j, root, jugglers);
+            const size_t slot = static_cast<size_t>(root * period + rootBeat);
+            if (rootChanged[slot] && roots.throws[slot] != rootThrow) {
+                if (why) *why = "Those changes to linked jugglers don't agree with each other.";
+                return false;
+            }
+            roots.throws[slot] = rootThrow;
+            rootChanged[slot] = 1;
+        }
+    }
+    const JugglingLoop out = applyLinks(form, roots);
+    for (const int slot : changed) {
+        if (out.throws[static_cast<size_t>(slot)] != after.throws[static_cast<size_t>(slot)]) {
+            if (why) *why = "That change can't be made to every linked juggler at once.";
+            return false;
+        }
+    }
+    const std::string problem = loopProblem(out);
+    if (!problem.empty()) {
+        if (why) *why = "Every linked juggler would follow, and then: " + problem;
+        return false;
+    }
+    *result = out;
+    return true;
+}
+
+bool linkJuggler(const PatternForm& form, const JugglingLoop& loop, int j, int to, int offset, PatternForm* newForm,
+                 JugglingLoop* newLoop, std::string* why) {
+    if (j < 0 || to < 0 || j >= loop.jugglers || to >= loop.jugglers || j == to) return false;
+    PatternForm f = form;
+    if (f.jugglers != loop.jugglers || static_cast<int>(f.links.size()) != loop.jugglers) {
+        // No record of how it was typed (or for other jugglers): start one with nothing linked.
+        f = PatternForm();
+        f.jugglers = loop.jugglers;
+        f.links.assign(static_cast<size_t>(loop.jugglers), PartLink());
+    }
+    f.links[static_cast<size_t>(j)].to = to;
+    f.links[static_cast<size_t>(j)].offset = offset;
+    f.links[static_cast<size_t>(j)].lrSwap = false;
+    int root = 0, total = 0;
+    if (!f.root(j, &root, &total)) {
+        if (why) *why = "J" + std::to_string(to + 1) + " already copies J" + std::to_string(j + 1) + " (through links).";
+        return false;
+    }
+    const JugglingLoop out = applyLinks(f, loop);
+    const std::string problem = loopProblem(out);
+    if (!problem.empty()) {
+        if (why) *why = problem;
+        return false;
+    }
+    *newForm = f;
+    *newLoop = out;
+    return true;
+}
+
+PatternForm unlinkJuggler(const PatternForm& form, int j) {
+    PatternForm f = form;
+    if (j >= 0 && j < static_cast<int>(f.links.size())) f.links[static_cast<size_t>(j)] = PartLink();
+    return f;
 }
 
 int loopShortestPeriod(const JugglingLoop& loop) {
@@ -87,6 +249,7 @@ JugglingLoop loopWithPeriod(const JugglingLoop& loop, int period) {
     if (shortest == 0 || period <= 0 || period % shortest != 0) return loop;
     JugglingLoop out;
     out.jugglers = loop.jugglers;
+    out.swapHands = loop.swapHands;
     out.period = period;
     for (int j = 0; j < loop.jugglers; ++j)
         for (int i = 0; i < period; ++i) out.throws.push_back(loop.at(j, i % shortest));
@@ -200,6 +363,7 @@ bool insertBeats(const JugglingLoop& loop, int beforeBeat, int count, JugglingLo
     const int k = positiveMod(beforeBeat, p);  // the new beats go just before this position
     JugglingLoop out;
     out.jugglers = loop.jugglers;
+    out.swapHands = loop.swapHands;
     out.period = p + count;
     out.throws.resize(static_cast<size_t>(out.jugglers * out.period));
     for (int j = 0; j < loop.jugglers; ++j) {
@@ -247,6 +411,7 @@ bool deleteBeats(const JugglingLoop& loop, int firstBeat, int count, JugglingLoo
 
     JugglingLoop out;
     out.jugglers = loop.jugglers;
+    out.swapHands = loop.swapHands;
     out.period = kept;
     out.throws.resize(static_cast<size_t>(out.jugglers * kept));
     for (int j = 0; j < loop.jugglers; ++j) {

@@ -13,6 +13,8 @@ can trace any point on a throw straight across to its beat number.
   column), side by side: J1, J2, ... up to J6. Every juggler throws with the right hand on beat
   1. Click a juggler's number over their strip to select them (the same selection as in the 3D
   view; see [juggler.md](juggler.md)); click it again to deselect.
+- **Linked jugglers** (`@2+3`, see *The siteswap box*) say what they copy under their number;
+  right-click a juggler's number for *Same as* and *Unlink*. **L** dims linked jugglers' throws.
 - **Collapsing strips.** With several jugglers it gets busy. The small triangle button just
   left of a juggler's number collapses their strip to a narrow one (or expands it again); their
   throws are still drawn, so passes to and from them still show, but without value labels. The
@@ -262,10 +264,51 @@ With three or more jugglers, a pass says who it goes to, right after the `p`:
 The target has to follow the `p` directly: `3p2 3` is a pass to J2 and then a 3, while `3p 2`
 is a pass with no target (an error, with three or more jugglers) followed by a 2.
 
-When the ladder rewrites the text (after an edit there), passes are written the way the pattern
-already writes them: if it uses any relative targets, every pass is written relative (and a
-`+0` you wrote on a self is kept); otherwise they're written by number, as Juggling Lab does.
-The ladder's throw labels and the labels over the props follow the same style.
+When the ladder rewrites the text (after an edit there), every throw you didn't change is
+written exactly as you typed it (`3p+1`, `3p-4`, `3p2`, a `+0` on a self), and links stay links.
+A new or changed pass is written the way the pattern already writes passes: relative if it uses
+any relative targets (with `-` if they were all written that way), otherwise by number, as
+Juggling Lab does. The ladder's throw labels and the labels over the props follow the pattern's
+style too.
+
+### Linked jugglers
+
+A juggler's part can be a **link** instead of throws: `@2+3` means "does exactly what J2 does, 3
+beats later" (`@2-3`: 3 beats earlier; `@2`: on the same beats). A one-count feast for five:
+
+    <3p+1 3p+2 3p+3 3p+4 3|@1+2|@1+4|@1+1|@1+3>
+
+and turning every `+` into a `-` reverses it. A link keeps each throw's target the way it was
+written, which is what makes this work:
+
+- A **relative** target shifts with the copy: J1's `3p+1` goes to J2, and in J3 (a copy of J1)
+  the same throw goes to J4.
+- An **absolute** target stays put: if J2's part has `4p1`, any juggler copying J2 passes to J1
+  too (handy for feeds).
+
+Links can copy links (`@3` where J3 is `@1+1`), but not in a loop, and at least one juggler has
+to have their throws written out.
+
+**Editing a linked juggler edits all of them.** Change a throw on the ladder, in the juggler
+written out or in any copy, and the change goes to the part written out and from there to every
+copy. If a copy would then collide (two props in one hand at once), the edit is refused and the
+line under the siteswap box says why. Adding or deleting beats isn't possible with links yet:
+unlink first.
+
+On the ladder, a linked juggler's strip says what it copies under their number (`= J1+3`).
+**Right-click a juggler's number** for **Same as** (pick a juggler and an offset; offsets that
+wouldn't make a pattern are greyed out, saying why) and **Unlink** (write their throws out in
+full, to edit on their own). The toolbar's rings button, **L** or *View > Dim Linked Jugglers*
+mutes the linked jugglers' throws, so the parts written out stand out.
+
+### Swapped hands
+
+`,LRswap` after a part swaps that juggler's hands: their left hand throws on beat 1. It works on
+any part, linked or not, and on a solo pattern (`531,LRswap`). A link copies the hands of the
+juggler it copies, and `,LRswap` on the link swaps them again. An offset of an odd number of
+beats swaps hands by itself, since every throw moves onto the other hand's beat. So in the
+7-club 2-count, `<4p 3|@1+1>` has J2 pass from the left hand, and `<4p 3|@1+1,LRswap>` has both
+jugglers pass from the right.
 
 Passing patterns are drawn and edited on the ladder like any other (see above).
 
@@ -277,12 +320,15 @@ above). Other programs won't read it.
 - **Autofill.** Typing `<` in front of a solo pattern makes it a passing pattern with a second
   juggler still to decide: `531` becomes `<5 3 1|? ? ?>`. `<3` becomes `<3|?>`, and each throw
   you add to one juggler's part adds a `?` at the same place in the other's (`<5 3 1|5 3 1>`
-  with a `7` typed at the front becomes `<7 5 3 1|? 5 3 1>`). Deleting a throw deletes the one
-  at the same place in the other part if either of them is a `?` (a `?` holds nothing back; a
-  real throw does). If the very next thing you do is type a throw in the same place, though,
-  you were replacing it, and the column comes back: backspacing the `?` in `<7 5 3 1|? 5 3 1>`
-  and typing `7` gives `<7 5 3 1|7 5 3 1>`. (Moving the cursor first, or any other edit, keeps
-  the deletion.) A `|` typed at the end adds a juggler, all `?`. A missing `>` is added.
+  with a `7` typed at the front becomes `<7 5 3 1|? 5 3 1>`). Deleting a real throw also
+  deletes the `?`s at the same place in the other parts; deleting a `?` deletes just that `?`,
+  and never touches anyone else's throws. If the very next thing you do after deleting a real
+  throw is type a throw in the same place, you were replacing it, and the `?`s come back:
+  backspacing the 7 in `<7 5 3 1|? 5 3 1>` and typing `8` gives `<8 5 3 1|? 5 3 1>`. (Moving the
+  cursor first, or any other edit, keeps the deletion.) A `|` typed at the end adds a juggler,
+  all `?`, and so does a pass to a juggler the pattern doesn't have yet: `<3p+2` becomes
+  `<3p+2|?|?>`. Typing `@` at the start of a part of `?`s replaces them with a link. A missing
+  `>` is added.
   Passing patterns are written in the standard style: spaces between throws, none around the
   bars.
 - **Up/Down** change the throw at the cursor: `?`, then 0, 1, 2, … up to 35 (z), skipping 25 and

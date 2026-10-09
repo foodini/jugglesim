@@ -51,6 +51,7 @@ struct Pattern {
     std::vector<ThrowEvent> events;  // sorted by throwTick; each lies inside its section body
     std::vector<Section> sections;
     int jugglers = 1;
+    std::vector<char> swapHands;  // as in JugglingLoop: jugglers whose left hand throws on beat 1
 };
 
 // Default spin count for a throw value: 1 = no spin (handed across), 2 = no spin (held),

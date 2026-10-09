@@ -49,9 +49,10 @@ struct LadderEditState {
     Slot drawTo;
 
     // The right-click menu: what it was opened on.
-    enum class Context { None, Beat, Throw };
+    enum class Context { None, Beat, Throw, Juggler };
     Context context = Context::None;
     int contextBeat = 0;            // Beat: the beat line clicked
+    int contextJuggler = 0;         // Juggler: whose number (strip header) was right-clicked
     Slot contextSlot;               // Throw: where the throw clicked is thrown from
     std::vector<int> pathHighlight; // slots to highlight (hovering "Delete path"): juggler * period + beat,
     int pathHighlightPeriod = 1;    // with this period (the props' cycle, which may be longer than the loop's)
@@ -60,6 +61,7 @@ struct LadderEditState {
     float firstBeat = 0.0f;        // beat drawn at the top of the ladder (may be negative)
     float zoom = 1.0f;
     bool beatOneVisible = true;    // as of the last frame drawn
+    bool scrubbing = false;        // dragging the playhead in the beat-number column
 
     // Each juggler's strip can be collapsed to a narrow one (its throws still drawn, so passes
     // to and from it still show), to make room when there are many jugglers.
@@ -77,12 +79,15 @@ struct LadderToolbarRequest {
     bool toggleValues = false;  // the throw-values button was clicked
     bool toggleOrbits = false;  // the color-by-orbit button was clicked
     bool toggleCollapseAll = false;  // the collapse/expand-all button was clicked
+    bool toggleDimLinked = false;    // the dim-linked-jugglers button was clicked
 };
 
 // Draws the toolbar row (mode toggle, throw values, color by orbit, period control, reset
 // view). Call before drawLadderDiagram.
+// hasLinks: the pattern has linked jugglers (shows the dim-linked button, pressed in while
+// dimLinked).
 LadderToolbarRequest drawLadderToolbar(const JugglingLoop& loop, const LadderEditState& edit, bool showValues,
-                                       bool colorByOrbit);
+                                       bool colorByOrbit, bool hasLinks = false, bool dimLinked = false);
 
 // How to draw the ladder (things owned by the rest of the app).
 struct LadderViewOptions {
@@ -93,6 +98,10 @@ struct LadderViewOptions {
     // juggler * period + beat in the loop (-1: none).
     int highlightThrow = -1;
     bool relativeTargets = false;  // label passes "3p+1" (the pattern's text does) rather than "3p2"
+    // How the pattern was typed: which jugglers are links ("@2+3"), for their strip headers, the
+    // Same as.../Unlink menu and dimming. May be null.
+    const PatternForm* form = nullptr;
+    bool dimLinked = false;  // draw linked jugglers' throws muted, so the parts written out stand out
 };
 
 constexpr int kNoSelectionChange = -2;
@@ -110,6 +119,14 @@ struct LadderEditResult {
     JugglingLoop preview;
     // A strip header was clicked: the juggler to select, or -1 to deselect.
     int selectJuggler = kNoSelectionChange;
+    // From a juggler's menu: make linkJuggler the same as linkTo, linkOffset beats later; or
+    // unlink unlinkJuggler (write their throws out). -1: nothing.
+    int linkJuggler = -1, linkTo = -1, linkOffset = 0;
+    int unlinkJuggler = -1;
+    // Clicking or dragging in the beat-number column: move the playhead to scrubBeat (fractional;
+    // beat 0 is "beat 1"). scrubEnded: the drag just finished.
+    bool scrubbing = false, scrubEnded = false;
+    double scrubBeat = 0.0;
 };
 
 // Abandons any open edit chain (e.g. when the pattern is changed some other way).

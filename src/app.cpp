@@ -616,7 +616,7 @@ void renderJugglerView(Renderer& renderer, const Primitives& prims, const PropMe
 }
 
 // The transport icons, drawn into a button's rectangle.
-enum class TransportIcon { StepBack, Play, Pause, StepForward };
+enum class TransportIcon { ToStart, StepBack, Play, Pause, StepForward };
 
 void drawTransportIcon(ImDrawList* dl, ImVec2 min, ImVec2 max, TransportIcon icon, ImU32 color) {
     const float h = max.y - min.y;
@@ -634,6 +634,7 @@ void drawTransportIcon(ImDrawList* dl, ImVec2 min, ImVec2 max, TransportIcon ico
         dl->AddRectFilled(ImVec2(cx - s * 0.18f, c.y - s), ImVec2(cx + s * 0.18f, c.y + s), color);
     };
     switch (icon) {
+        case TransportIcon::ToStart: bar(c.x - s * 1.05f); triangleLeft(c.x - s * 0.05f); triangleLeft(c.x + s * 0.95f); break;
         case TransportIcon::StepBack: bar(c.x - s * 0.75f); triangleLeft(c.x + s * 0.35f); break;
         case TransportIcon::Play: triangleRight(c.x + s * 0.1f); break;
         case TransportIcon::Pause: bar(c.x - s * 0.4f); bar(c.x + s * 0.4f); break;
@@ -653,6 +654,7 @@ bool transportButton(const char* id, TransportIcon icon, float size) {
 struct Playback {
     bool playing = true;
     double beat = 0.0;
+    bool slow = false;          // slow motion (at AppSettings::slowRate)
 };
 constexpr double kStepBeats = 1.0 / 12.0;  // one arrow-key press; Shift steps a whole beat
 
@@ -666,6 +668,7 @@ struct SiteswapBox {
     std::string note;            // why the last swap didn't happen
     double noteUntil = 0.0;      // (shown until then)
     bool wasActive = false;      // the box had the keyboard last frame
+    bool replacedWhole = false;  // an edit replaced the whole text at once (a paste over it)
     SiteswapAutofillMemory memory;  // a column deletion the next keystroke may take back
 };
 
@@ -677,6 +680,14 @@ int siteswapBoxCallback(ImGuiInputTextCallbackData* data) {
     SiteswapEdit edit;
     bool apply = false;
     if (data->EventFlag == ImGuiInputTextFlags_CallbackEdit) {
+        // Nothing kept from before at either end, and more than one character arrived at once:
+        // the whole pattern was replaced (pasted over), so playback starts again from beat 1.
+        size_t prefix = 0, suffix = 0;
+        while (prefix < box->before.size() && prefix < text.size() && box->before[prefix] == text[prefix]) ++prefix;
+        while (suffix < box->before.size() - prefix && suffix < text.size() - prefix &&
+               box->before[box->before.size() - 1 - suffix] == text[text.size() - 1 - suffix])
+            ++suffix;
+        if (prefix == 0 && suffix == 0 && text.size() > 1) box->replacedWhole = true;
         apply = autofillSiteswap(box->before, text, data->CursorPos, &edit, &box->memory);
     } else if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
         box->memory.forget();
@@ -731,14 +742,14 @@ int siteswapBoxCallback(ImGuiInputTextCallbackData* data) {
 
 // A throw described for the text box's tooltip: "J1, beat 3, right hand: 4p, a pass to J2's
 // left hand, caught on beat 7." Beats count from 1, as on the ladder; each juggler's first
-// throw is from the right hand.
+// throw is from the right hand (the left, if their hands are swapped).
 std::string describeThrow(const JugglingLoop& loop, int juggler, int beat) {
     const LoopThrow& t = loop.at(juggler, beat);
-    auto handName = [](int b) { return (b % 2 == 0) ? "right" : "left"; };
+    auto handName = [&loop](int j, int b) { return loop.rightHandBeat(j, b) ? "right" : "left"; };
     char text[160];
     int n = 0;
     if (loop.jugglers > 1) n = std::snprintf(text, sizeof(text), "J%d, ", juggler + 1);
-    n += std::snprintf(text + n, sizeof(text) - static_cast<size_t>(n), "beat %d, %s hand: ", beat + 1, handName(beat));
+    n += std::snprintf(text + n, sizeof(text) - static_cast<size_t>(n), "beat %d, %s hand: ", beat + 1, handName(juggler, beat));
     char* rest = text + n;
     const size_t room = sizeof(text) - static_cast<size_t>(n);
     if (t.value == kOpenThrow) {
@@ -751,11 +762,11 @@ std::string describeThrow(const JugglingLoop& loop, int juggler, int beat) {
         const int caught = beat + t.value;
         if (pass)
             std::snprintf(rest, room, "%cp, a pass to J%d's %s hand, caught on beat %d", digit, t.dest + 1,
-                          handName(caught), caught + 1);
-        else if (caught % 2 == beat % 2)
+                          handName(t.dest, caught), caught + 1);
+        else if (caught % 2 == beat % 2)  // (the same juggler, so a swap changes nothing here)
             std::snprintf(rest, room, "%c, back to the same hand on beat %d", digit, caught + 1);
         else
-            std::snprintf(rest, room, "%c, across to the %s hand on beat %d", digit, handName(caught), caught + 1);
+            std::snprintf(rest, room, "%c, across to the %s hand on beat %d", digit, handName(juggler, caught), caught + 1);
     }
     return text;
 }
@@ -807,6 +818,7 @@ int runApp() {
     // pattern is kept but not shown.
     char siteswapText[256] = "531";
     SiteswapBox siteswapBox;
+    Playback playback;
     int siteswapHoverThrow = -1;  // the throw under the mouse in the text box (for the ladder)
     Siteswap parsed = parseSiteswap(siteswapText);
     Pattern pattern = patternFromSiteswap(parsed);
@@ -902,13 +914,21 @@ int runApp() {
     };
     // Makes a loop from the ladder the pattern (an edit, a throw drawn or deleted, beats added or
     // deleted): a complete one written at its shortest period, a sketch as it is. One undo step.
+    // With linked jugglers, the change goes to every one of them (whichever was edited), or is
+    // refused with the reason shown under the siteswap box.
     auto applyLoop = [&](const JugglingLoop& changed) {
         commitTyping();
         JugglingLoop l = changed;
+        std::string why;
+        if (!projectEdit(parsed.form, parsed.loop, changed, &l, &why)) {
+            siteswapBox.note = "Can't: " + why;
+            siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+            return;
+        }
         if (openThrowCount(l) == 0) l = loopWithPeriod(l, loopShortestPeriod(l));
         std::string text;
-        // Written the way the pattern's passes were (relative targets if it used them).
-        if (!loopToText(l, &text, &parsed.passStyle)) return;
+        // Written the way the pattern was typed: targets as they were, links as links.
+        if (!loopToText(l, &text, &parsed.form)) return;
         const Siteswap check = parseSiteswap(text);
         if (!check.valid && !check.sketch) return;  // shouldn't happen; keep what we have
         std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
@@ -957,6 +977,7 @@ int runApp() {
     // undo step, which also puts the settings back. It goes to the top of Recent.
     auto loadLibraryPattern = [&](const LibraryPattern& chosen, bool mine) {
         commitTyping();
+        playback.beat = 0.0;  // a new pattern starts at beat 1
         recordSettingsChange();
         const PatternSettings before = currentPatternSettings();
         showPatternText(chosen.siteswap);
@@ -1009,7 +1030,6 @@ int runApp() {
     TweakablesPanelState tweakablesPanel;
     bool showImGuiDemo = false;
     bool showColorPreview = false;
-    Playback playback;
     CameraControl camera;
     // Selection in the 3D view (passing patterns): the selected juggler, or -1. With
     // frameSelected the camera frames just that juggler.
@@ -1026,6 +1046,8 @@ int runApp() {
         playback.playing = false;
         playback.beat += beats;
     };
+    // Back to beat 1 (playing or not, as it was).
+    auto goToStart = [&]() { playback.beat = 0.0; };
 
     bool done = false;
     while (!done) {
@@ -1040,7 +1062,9 @@ int runApp() {
         ImGui::NewFrame();
 
         // --- Playback clock ---
-        if (playback.playing) playback.beat += static_cast<double>(io.DeltaTime) * juggleParams.bpm / 60.0;
+        if (playback.playing)
+            playback.beat += static_cast<double>(io.DeltaTime) * juggleParams.bpm / 60.0 *
+                             (playback.slow ? static_cast<double>(settings.slowRate) : 1.0);
 
         // --- Keyboard shortcuts (not while typing: the text box has its own undo, etc.) ---
         if (!io.WantTextInput && io.KeyCtrl) {
@@ -1049,6 +1073,8 @@ int runApp() {
         }
         if (!io.WantTextInput && !io.KeyCtrl) {
             if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) playback.playing = !playback.playing;
+            if (ImGui::IsKeyPressed(ImGuiKey_B, false)) goToStart();
+            if (ImGui::IsKeyPressed(ImGuiKey_S, false)) playback.slow = !playback.slow;
             if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) stepPlayback(io.KeyShift ? 1.0 : kStepBeats);
             if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) stepPlayback(io.KeyShift ? -1.0 : -kStepBeats);
             if (ImGui::IsKeyPressed(ImGuiKey_F, false)) frameSelected = selectedJuggler >= 0;
@@ -1057,6 +1083,11 @@ int runApp() {
                 saveSettings(settings);
             }
             // C: collapse all the jugglers' ladder strips (or expand them, if all are collapsed).
+            // L: dim linked jugglers' throws on the ladder (or not).
+            if (ImGui::IsKeyPressed(ImGuiKey_L, false) && parsed.form.hasLinks()) {
+                settings.dimLinked = !settings.dimLinked;
+                saveSettings(settings);
+            }
             if (ImGui::IsKeyPressed(ImGuiKey_C, false)) {
                 const int jugglers = sketching ? sketchLoop.jugglers : (patternValid ? pattern.jugglers : 0);
                 if (jugglers > 1) toggleCollapseAll(ladderEdit, jugglers);
@@ -1122,6 +1153,8 @@ int runApp() {
                 if (ImGui::MenuItem("Step Back", "Left")) stepPlayback(-kStepBeats);
                 if (ImGui::MenuItem("Step Forward One Beat", "Shift+Right")) stepPlayback(1.0);
                 if (ImGui::MenuItem("Step Back One Beat", "Shift+Left")) stepPlayback(-1.0);
+                if (ImGui::MenuItem("Go to Beat 1", "B")) goToStart();
+                if (ImGui::MenuItem("Slow Motion", "S", playback.slow)) playback.slow = !playback.slow;
                 ImGui::Separator();
                 if (ImGui::MenuItem("Reset Tweakables")) resetTweakables(juggleParams);
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
@@ -1175,6 +1208,13 @@ int runApp() {
                         ImGui::SetTooltip("Narrows every juggler's strip on the ladder (their throws still show),\n"
                                           "or widens them all again if they're all narrow.");
                 }
+                if (ImGui::MenuItem("Dim Linked Jugglers", "L", settings.dimLinked, parsed.form.hasLinks())) {
+                    settings.dimLinked = !settings.dimLinked;
+                    saveSettings(settings);
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
+                    ImGui::SetTooltip("Mutes the throws of jugglers who are links (@2+3: the same as another\n"
+                                      "juggler) on the ladder, so the parts written out stand out.");
                 if (ImGui::BeginMenu("Color Vision")) {
                     for (int i = 0; i < static_cast<int>(ColorVisionMode::Count); ++i) {
                         const ColorVisionMode mode = static_cast<ColorVisionMode>(i);
@@ -1221,12 +1261,17 @@ int runApp() {
             // What the ladder shows and edits: the sketch, or the pattern.
             const JugglingLoop ladderLoop = sketching ? sketchLoop : (patternValid ? patternLoop(pattern) : JugglingLoop());
             const LadderToolbarRequest request =
-                drawLadderToolbar(ladderLoop, ladderEdit, settings.showThrowValues, settings.colorByOrbit);
+                drawLadderToolbar(ladderLoop, ladderEdit, settings.showThrowValues, settings.colorByOrbit,
+                                  parsed.form.hasLinks(), settings.dimLinked);
             if (request.toggleOrbits) {
                 settings.colorByOrbit = !settings.colorByOrbit;
                 saveSettings(settings);
             }
             if (request.toggleCollapseAll) toggleCollapseAll(ladderEdit, ladderLoop.jugglers);
+            if (request.toggleDimLinked) {
+                settings.dimLinked = !settings.dimLinked;
+                saveSettings(settings);
+            }
             if (request.resetView) resetLadderView(ladderEdit);
             if (request.toggleValues) {
                 settings.showThrowValues = !settings.showThrowValues;
@@ -1238,7 +1283,7 @@ int runApp() {
                 const JugglingLoop longer = loopWithPeriod(ladderLoop, request.newPeriodBeats);
                 // (Written as it is: a period chosen on purpose isn't shortened again.)
                 std::string text;
-                if (loopToText(longer, &text, &parsed.passStyle)) {
+                if (loopToText(longer, &text, &parsed.form)) {
                     const Siteswap check = parseSiteswap(text);
                     if (check.valid || check.sketch) {
                         std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
@@ -1256,7 +1301,9 @@ int runApp() {
             ladderOptions.colorByOrbit = settings.colorByOrbit;
             ladderOptions.selectedJuggler = selectedJuggler;
             ladderOptions.highlightThrow = siteswapHoverThrow;
-            ladderOptions.relativeTargets = parsed.passStyle.relative;
+            ladderOptions.relativeTargets = parsed.form.relative;
+            ladderOptions.form = &parsed.form;
+            ladderOptions.dimLinked = settings.dimLinked;
             const LadderEditResult edited =
                 drawLadderDiagram(sketching ? sketchLoop : (patternValid ? patternLoop(pattern) : JugglingLoop()),
                                   settings.colorVision, ladderEdit, playback.beat, ladderOptions);
@@ -1270,6 +1317,33 @@ int runApp() {
                 if (selectedJuggler < 0) frameSelected = false;
             }
             if (edited.committed) applyLoop(edited.loop);
+            // Scrubbing in the beat numbers: the playhead follows the mouse, and playback stays
+            // paused afterwards.
+            if (edited.scrubbing) {
+                playback.playing = false;
+                playback.beat = edited.scrubBeat;
+            }
+            // A juggler's menu: Same as... (make them a link) or Unlink (write them out).
+            if (edited.linkJuggler >= 0 || edited.unlinkJuggler >= 0) {
+                PatternForm newForm;
+                JugglingLoop newLoop = parsed.loop;
+                std::string why, text;
+                bool ok = true;
+                if (edited.linkJuggler >= 0)
+                    ok = linkJuggler(parsed.form, parsed.loop, edited.linkJuggler, edited.linkTo, edited.linkOffset,
+                                     &newForm, &newLoop, &why);
+                else
+                    newForm = unlinkJuggler(parsed.form, edited.unlinkJuggler);
+                if (ok && loopToText(newLoop, &text, &newForm)) {
+                    commitTyping();
+                    cancelLadderEdit(ladderEdit);
+                    showPatternText(text);
+                    recordPattern(text);
+                } else if (!why.empty()) {
+                    siteswapBox.note = "Can't: " + why;
+                    siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+                }
+            }
         }
         ImGui::End();
 
@@ -1313,6 +1387,10 @@ int runApp() {
                     std::snprintf(siteswapText, sizeof(siteswapText), "%s", tidy.c_str());
                     boxChanged = true;
                 }
+            }
+            if (siteswapBox.replacedWhole) {
+                playback.beat = 0.0;
+                siteswapBox.replacedWhole = false;
             }
             if (boxChanged) {
                 cancelLadderEdit(ladderEdit);
@@ -1368,6 +1446,19 @@ int runApp() {
                                          ImGui::GetColorU32(ImGuiCol_Text), 1.0f);
                     if (shown.valid || shown.sketch) siteswapHoverThrow = juggler * shown.loop.period + beat;
                     ImGui::SetTooltip("%s", describeThrow(shown.loop, juggler, beat).c_str());
+                } else {
+                    // A link ("@2+3"): what it means.
+                    int to = 0, offset = 0;
+                    bool lrSwap = false;
+                    if (index >= 0 && linkAtCharacter(siteswapText, index, &juggler, &to, &offset, &lrSwap)) {
+                        std::string what = "J" + std::to_string(juggler + 1) + " does exactly what J" + std::to_string(to + 1) + " does";
+                        if (offset != 0)
+                            what += ", " + std::to_string(std::abs(offset)) + " beat" + (std::abs(offset) == 1 ? "" : "s") +
+                                    (offset > 0 ? " later" : " earlier");
+                        if (lrSwap) what += ", with hands swapped";
+                        what += ".\nEditing either one (on the ladder) edits both.";
+                        ImGui::SetTooltip("%s", what.c_str());
+                    }
                 }
             }
             boxDraw->PopClipRect();
@@ -1530,6 +1621,9 @@ int runApp() {
         ImGui::SetNextWindowSize(ImVec2(W - leftWidth, transportHeight));
         if (ImGui::Begin("Transport", nullptr, paneFlags)) {
             const float h = ImGui::GetFrameHeight();
+            if (transportButton("##tostart", TransportIcon::ToStart, h)) goToStart();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Go to beat 1 (B)");
+            ImGui::SameLine();
             if (transportButton("##stepback", TransportIcon::StepBack, h))
                 stepPlayback(io.KeyShift ? -1.0 : -kStepBeats);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step back 1/12 beat (Left)\nShift: one beat (Shift+Left)");
@@ -1542,8 +1636,35 @@ int runApp() {
                 stepPlayback(io.KeyShift ? 1.0 : kStepBeats);
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Step forward 1/12 beat (Right)\nShift: one beat (Shift+Right)");
             ImGui::SameLine(0.0f, style.ItemSpacing.x * 4.0f);
-            ImGui::AlignTextToFramePadding();
-            ImGui::Text("Beat %.2f", playback.beat + 1.0);  // beat 0 is "beat 1", as on the ladder
+            // The beat (beat 0 is "beat 1", as on the ladder): drag it to scrub, or double-click
+            // (or Ctrl+click) it to type a beat to go to. Either pauses, as stepping does.
+            {
+                double shown = playback.beat + 1.0;
+                ImGui::SetNextItemWidth(h * 5.0f);
+                if (ImGui::DragScalar("##beat", ImGuiDataType_Double, &shown, 0.02f, nullptr, nullptr, "Beat %.2f")) {
+                    playback.beat = shown - 1.0;
+                    playback.playing = false;
+                }
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Drag to move through time; double-click to type a beat.\n"
+                                      "On the ladder, click or drag in the beat numbers.");
+            }
+            // Slow motion: on/off, and how slow.
+            ImGui::SameLine(0.0f, style.ItemSpacing.x * 4.0f);
+            {
+                const bool slow = playback.slow;
+                if (slow) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                if (ImGui::Button("Slow")) playback.slow = !playback.slow;
+                if (slow) ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slow motion (S), at the speed set beside it");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(h * 4.5f);
+                if (ImGui::SliderFloat("##slowrate", &settings.slowRate, 0.05f, 0.5f, "%.2fx")) {
+                    playback.slow = true;
+                    saveSettings(settings);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Slow-motion speed: 0.05 to 0.5 of normal. Ctrl+click to type one.");
+            }
         }
         ImGui::End();
 
@@ -1670,6 +1791,7 @@ int runApp() {
                 std::string text;
                 if (loopToText(blank, &text)) {
                     commitTyping();
+                    playback.beat = 0.0;
                     recordSettingsChange();
                     showPatternText(text);
                     recordPattern(text);
@@ -1696,7 +1818,7 @@ int runApp() {
         drawJugglerLabels(ImGui::GetBackgroundDrawList(), scene, lastViewProj, viewMin, viewSize, selectedJuggler);
         if (settings.showThrowValues)
             drawPropValueLabels(ImGui::GetBackgroundDrawList(), scene, lastViewProj, viewMin, viewSize,
-                                settings.colorVision, styleOfBall, parsed.passStyle.relative);
+                                settings.colorVision, styleOfBall, parsed.form.relative);
         // The pattern's name, if it has one, in the top-left corner of the juggler pane.
         if (patternValid) {
             const std::map<std::string, std::string>::const_iterator named =
