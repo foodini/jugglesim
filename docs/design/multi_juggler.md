@@ -105,14 +105,101 @@ route" (useful in 3-count: two clubs are always passed). Add only once we know w
 - Frame All (default), Frame Selected (bottom-anchored zoom as now), Juggler's-eye view (steady
   and natural gaze modes; milestone 2).
 
-## Choreography (later)
+## Choreography (design draft, Oct 2026; next after the bracket links)
 
-- 2D top-down Floor view: numbered tokens with facing arrows and L/R marks, pass lines.
-- Default starting formations: facing pair, feed (V), triangle, line, two facing lines, square,
-  circle, square with center, ...
-- Static positions first; keyframed movement later on a timeline sharing the ladder's vertical
-  time axis. Warnings for passes too long for their flight time and for collisions.
-- A choreographed performance is its own file type.
+Jugglers walking and turning while they juggle. Agreed so far; nothing built yet.
+
+**No separate pane.** Space is edited in the juggler pane, time on the ladder.
+- Drag a juggler on the floor (the mouse ray meets the ground plane). A top view (a key or
+  toolbar button swings the camera overhead) for precise placement; orbit back to watch.
+- Keyframes are markers on a juggler's ladder strip at their beats: drag one up or down to
+  retime it, right-click to delete. Pause on a beat and drag a juggler to set a keyframe there.
+
+**Spike marks** (as on a stage floor): points on the floor, each with a facing vector.
+- A new N-juggler choreography starts with N marks evenly round a circle, facing in: today's
+  n-gon formation becomes the default marks, so nothing changes until a mark is moved.
+- Clicking a mark (with a juggler and beat chosen) puts a keyframe there: the juggler stands on
+  the mark, facing along its vector. Keyframes attached to a mark follow it when it moves.
+- Marks give spatial references before the other jugglers are placed.
+
+**Keyframes and movement.**
+- A keyframe is (juggler, beat, floor position, facing), on a spike mark or free.
+- Between keyframes: a straight walk, easing in and out (no lurch). Splines later.
+- Standing still is two keyframes at the same spot ("stand until beat 9, arrive at beat 13").
+- Facing turns smoothly between keyframes, the shorter way by default; a keyframe can flip it
+  (turning left vs right through 180 degrees look different).
+- Two layers of facing: the body follows keyframes; the upper body still twists toward whoever
+  is being passed to, as now.
+- No legs yet: jugglers glide. Planted feet and steps later (some patterns care how you plant
+  your feet; a long way off).
+
+**Looping or not.** A choreography either loops (Shooting Star, Cuisinart) or doesn't (blocking
+out a performance; that needs pattern changes too, see *Units and sequences*). Looping first.
+- In many patterns the jugglers come back permuted after one cycle, and it can take several
+  cycles to get everyone back to where they started.
+
+**Path links.** "J2 follows J1's path", with the same link syntax: `@1[k]` copies J1's throws
+*and* J1's path, k beats in. Where the copy stands: each spike mark maps to the next one (an
+option on the link, like `,marks+1`; name to decide), not a rotation by an angle, so it works
+for any arrangement of marks. Free keyframes (off any mark) have no shifted copy: refuse them in
+a linked path, or rotate about the center as a fallback (to decide).
+- Throws and walking go together: in a Shooting Star the runner stops passing while walking
+  (holding: `2 2 2 2` for a runner with 2 clubs), so one link has to carry both.
+- Pass targets stay per juggler (`3p+2`: two jugglers on), so they keep working while people move.
+
+**Physics.**
+- Passes to a moving, turning catcher: each flight goes from where the thrower is at the throw
+  to where the catcher will be at the catch.
+- Which hand catches is fixed by timing (a `3p` from the right lands in the catcher's left), and
+  with turning that hand can end up on the far side of the body: the same problem as the
+  dropback (passing to someone behind you). Ugly animation is acceptable for now.
+
+**Also needed.**
+- A text form (spike marks, keyframes, path links) for the library and saved patterns.
+- Camera framing over the whole floor the choreography uses, not just the current positions.
+- The Distance tweakable scales the whole layout of marks.
+- Warnings: walks faster than about 2 m/s, jugglers walking through each other, passes too long
+  for their flight time; later, clubs passing close to moving bodies.
+- Undo for every choreography edit.
+- The same jugglers throughout (nobody enters or leaves) for now.
+- Earlier ideas still open: default formations beyond the ring (facing pair, feed V, line, two
+  facing lines, square, square with center); a performance as its own file type.
+
+**Test cases.** The 9-club Shooting Star first (4 jugglers on 5 points of a star, the fifth a
+"phantom"; passes go two places round; the runner walks through the gap to fill the phantom's
+spot, so the hole and the runner role travel round; see
+[juggling.org](http://www.juggling.org/help/passing/patterns/shooting-star.html)). Claude to work
+out its siteswap from that write-up for Ron to check. Then the Cuisinart (below), then Ron's
+6-person pattern.
+
+## Units and sequences (design draft, Oct 2026; after choreography)
+
+Non-looping progressions: a performance as a chain of units ("4-count, R2R double, 4-count, a
+feed..."), instead of one looping pattern.
+
+**States.** Siteswap's established idea: at a given beat, which upcoming beats have a prop
+arriving, per juggler. 3 per juggler, steady, is the ground state `111`. Ron's "a club in each
+hand and one on its way" is a state.
+- A unit's precondition and postcondition don't need to be written: they're computed from its
+  throws (what has to be arriving when it starts, what's still in the air when it ends).
+- Chaining: end state == next start state (equality: an arrival nothing throws is a drop; a
+  throw nothing arrives for is a hole).
+- Example: the 4-count is the 4-beat unit `<3p 3 3 3|3p 3 3 3>`, `111` to `111`. `<4p 3|3p 2>`
+  as a 2-beat unit is also `111` to `111`, and so is `<3 3|3 3>`: "R2R double in 4-count" is
+  `<4p 3|3p 2>` then `<3 3|3 3>`. The double is a unit that drops into a 4-count wherever it
+  starts on a pass beat.
+- A state also carries: hand phase (whether the unit starts on a right-hand beat; swapped hands)
+  and, with choreography, each juggler's spike mark and facing at the start and end (a "runner
+  crosses" unit chains only where the formation matches). Which club is which doesn't matter for
+  chaining (only for colors).
+
+**Library, search, auto-fill.** States are nodes, units are edges.
+- Index units by (jugglers, props, start state, end state); that's what to filter on.
+- "What can follow this?" = units starting from this state. "Get me from this pattern to that
+  one" = a shortest path between their states. With nothing suitable in the library,
+  state-changing throws can be generated (as transition finders already do for solo siteswap).
+- Open: how units are named, entered, browsed and shown (a row of unit chips with the state
+  between them? the ladder as the concatenated timeline?); tempo changes between units.
 
 ## Layout
 
@@ -233,8 +320,8 @@ only by running from one strip to the other (revisit if it gets noisy).
   insert/delete with links refused for now (unlink first).
 - Text kept as typed: unchanged throws keep their written target form; new ones follow the
   pattern's style.
-- UI: right-click a juggler's number for Same as (juggler, offset; invalid offsets greyed with
-  reasons) and Unlink. Linked strips labelled "= J1+3". Dim toggle: L, toolbar rings button, View
+- UI: right-click a juggler's number for Same as (juggler, start; invalid starts greyed with
+  reasons) and Unlink. Linked strips labelled "= J1[3]". Dim toggle: L, toolbar rings button, View
   menu.
 
 ### The Cuisinart (a choreography test case)
