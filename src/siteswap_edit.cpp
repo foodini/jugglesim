@@ -833,3 +833,70 @@ bool charactersOfThrow(const std::string& text, int juggler, int beat, int* star
     *end = part[static_cast<size_t>(beat)].end;
     return true;
 }
+
+bool throwAtCursor(const std::string& text, int cursor, int* juggler, int* beat) {
+    const Parsed p = parse(text);
+    if (!p.ok) return false;
+    size_t part = 0, index = 0;
+    if (!tokenAtCursor(p, cursor, &part, &index)) return false;
+    *juggler = static_cast<int>(part);
+    *beat = static_cast<int>(index);
+    return true;
+}
+
+bool linkToClickedThrow(const std::string& text, int cursor, int clickIndex, SiteswapEdit* result, std::string* why) {
+    const Parsed p = parse(text);
+    if (!p.ok) {
+        *why = "The pattern can't be read as it is, so it can't be linked";
+        return false;
+    }
+    if (!p.passing || p.parts.size() < 2) {
+        *why = "Links are for passing patterns";
+        return false;
+    }
+    // The part the cursor is in (just after a "|" is the part that follows it).
+    size_t mine = 0;
+    for (size_t f = 1; f < p.parts.size(); ++f)
+        if (cursor >= p.partStarts[f]) mine = f;
+    // The throw clicked.
+    int other = -1, position = -1;
+    for (size_t f = 0; f < p.parts.size() && other < 0; ++f)
+        for (size_t k = 0; k < p.parts[f].size(); ++k)
+            if (p.parts[f][k].start <= clickIndex && clickIndex < p.parts[f][k].end) {
+                other = static_cast<int>(f);
+                position = static_cast<int>(k);
+                break;
+            }
+    const std::string me = "J" + std::to_string(mine + 1);
+    if (other < 0) {
+        *why = "Ctrl+click a throw in another juggler's part: " + me + " copies them, starting on that beat";
+        return false;
+    }
+    if (other == static_cast<int>(mine)) {
+        *why = "That's " + me + "'s own part: Ctrl+click a throw in another juggler's part";
+        return false;
+    }
+    // Written the way the text's other links are: negative if any of them is.
+    bool negative = false;
+    for (const std::string& link : p.links) {
+        int to = 0, off = 0;
+        if (!link.empty() && readLink(link, &to, &off) && off < 0) negative = true;
+    }
+    const int period = static_cast<int>(p.parts[static_cast<size_t>(other)].size());
+    int offset = position;
+    if (negative && offset > 0) offset -= period;
+    std::string link = "@" + std::to_string(other + 1);
+    if (offset != 0) link += (offset < 0 ? "-" : "+") + std::to_string(std::abs(offset));
+    // The part's characters: from just after its "<" or "|" up to the next "|" or ">".
+    const size_t start = static_cast<size_t>(p.partStarts[mine]);
+    size_t end = text.size();
+    if (mine + 1 < p.parts.size()) {
+        end = static_cast<size_t>(p.partStarts[mine + 1] - 1);
+    } else {
+        const size_t close = text.find('>', start);
+        if (close != std::string::npos) end = close;
+    }
+    result->text = text.substr(0, start) + link + p.options[mine] + text.substr(end);
+    result->cursor = static_cast<int>(start + link.size());
+    return true;
+}

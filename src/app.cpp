@@ -35,8 +35,10 @@
 #include "imgui_impl_opengl3.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cfloat>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -670,6 +672,12 @@ struct SiteswapBox {
     bool wasActive = false;      // the box had the keyboard last frame
     bool replacedWhole = false;  // an edit replaced the whole text at once (a paste over it)
     SiteswapAutofillMemory memory;  // a column deletion the next keystroke may take back
+    int cursor = 0;              // where the cursor is (as of the last callback)
+    int linkClick = -1;          // Ctrl+click this frame: the character clicked (-1: none)
+    bool linkClicked = false;    // ...whether there was one
+    bool linkDrag = false;       // the mouse is still down after a Ctrl+click (don't select)
+    ImVec2 lastMin, lastMax;     // where the box was last frame
+    float lastTextLeft = 0.0f;   // ...and where its text started
 };
 
 // The text box's callback: autofill after an edit, Up/Down to change the throw at the cursor,
@@ -728,6 +736,17 @@ int siteswapBoxCallback(ImGuiInputTextCallbackData* data) {
         }
     }
     box->rotateRequested = 0;
+    if (!apply && box->linkClicked) {
+        // Ctrl+click on a throw: the part the cursor is in becomes a copy of that juggler.
+        box->memory.forget();
+        std::string why;
+        apply = linkToClickedThrow(text, data->CursorPos, box->linkClick, &edit, &why);
+        if (!apply) {
+            box->note = why;
+            box->noteUntil = ImGui::GetTime() + 5.0;
+        }
+    }
+    box->linkClicked = false;
     if (apply && static_cast<int>(edit.text.size()) < data->BufSize) {
         data->DeleteChars(0, data->BufTextLen);
         data->InsertChars(0, edit.text.c_str());
@@ -737,6 +756,7 @@ int siteswapBoxCallback(ImGuiInputTextCallbackData* data) {
     } else {
         box->before = text;
     }
+    box->cursor = data->CursorPos;
     return 0;
 }
 
@@ -774,6 +794,49 @@ std::string describeThrow(const JugglingLoop& loop, int juggler, int beat) {
 // The x position of character `index` of the text box's text (as drawn, scrolled or not).
 float siteswapCharacterX(const char* text, int index, float textLeft) {
     return textLeft + ImGui::CalcTextSize(text, text + index).x;
+}
+
+// Where the text box's cursor is, for the line under it: "J1, beat 5, right hand: 3p+2" (the
+// throw it's in or just after, as typed), or what a link there means. Empty if neither.
+std::string cursorReadout(const char* text, int cursor, const JugglingLoop& loop) {
+    const std::string s(text);
+    size_t first = 0;
+    while (first < s.size() && std::isspace(static_cast<unsigned char>(s[first]))) ++first;
+    const bool passing = first < s.size() && s[first] == '<';
+    int juggler = 0, beat = 0;
+    if (throwAtCursor(s, cursor, &juggler, &beat)) {
+        std::string out = passing ? "J" + std::to_string(juggler + 1) + ", " : std::string();
+        out += "beat " + std::to_string(beat + 1);
+        if (!loop.empty() && juggler < loop.jugglers && beat < loop.period)
+            out += loop.rightHandBeat(juggler, beat) ? ", right hand" : ", left hand";
+        int start = 0, end = 0;
+        if (charactersOfThrow(s, juggler, beat, &start, &end)) out += ": " + s.substr(static_cast<size_t>(start), static_cast<size_t>(end - start));
+        return out;
+    }
+    int to = 0, offset = 0;
+    bool lrSwap = false;
+    if ((cursor > 0 && linkAtCharacter(s, cursor - 1, &juggler, &to, &offset, &lrSwap)) ||
+        linkAtCharacter(s, cursor, &juggler, &to, &offset, &lrSwap)) {
+        std::string out = "J" + std::to_string(juggler + 1) + ": J" + std::to_string(to + 1) + "'s throws";
+        if (offset != 0)
+            out += ", " + std::to_string(std::abs(offset)) + " beat" + (std::abs(offset) == 1 ? "" : "s") +
+                   (offset > 0 ? " later" : " earlier");
+        if (lrSwap) out += ", hands swapped";
+        return out;
+    }
+    return std::string();
+}
+
+// The character of the text box's text at x (-1: none).
+int siteswapCharacterAt(const char* text, float x, float textLeft) {
+    const int length = static_cast<int>(std::strlen(text));
+    float left = textLeft;
+    for (int i = 0; i < length; ++i) {
+        const float right = left + ImGui::CalcTextSize(text + i, text + i + 1).x;
+        if (x >= left && x < right) return i;
+        left = right;
+    }
+    return -1;
 }
 
 }  // namespace
@@ -816,7 +879,7 @@ int runApp() {
     // generates it when the user types, and is rewritten from it when the pattern changes some
     // other way (e.g. the toolbar's period control). While the text is invalid, the last valid
     // pattern is kept but not shown.
-    char siteswapText[256] = "531";
+    char siteswapText[4096] = "531";  // (room for 6 jugglers x 100 beats or so)
     SiteswapBox siteswapBox;
     Playback playback;
     int siteswapHoverThrow = -1;  // the throw under the mouse in the text box (for the ladder)
@@ -1036,11 +1099,19 @@ int runApp() {
     int selectedJuggler = -1;
     bool frameSelected = false;
     Mat4 lastViewProj = Mat4::identity();  // the 3D view's camera as last drawn (for picking)
-    // Pattern extents depend only on the loop, timing and framing, so they're cached.
+    // Pattern extents depend only on the loop, timing and framing, so they're cached. They take
+    // a while to work out for a long passing pattern (a few tenths of a second), so while the
+    // pattern keeps changing (typing, rotating, dragging a tweakable) they wait until it has
+    // settled for a moment; the camera glides to the new framing anyway.
     JugglingLoop extentsLoop;
     JuggleParams extentsParams{-1.0, -1.0};
     int extentsJuggler = -2;
     SceneExtents extents;
+    bool haveExtents = false;
+    JugglingLoop extentsSeenLoop;  // what the extents are wanted for, as of the last frame...
+    JuggleParams extentsSeenParams{-1.0, -1.0};
+    double extentsSeenSince = 0.0;  // ...and since when
+    constexpr double kExtentsSettleSeconds = 0.3;
 
     auto stepPlayback = [&](double beats) {
         playback.playing = false;
@@ -1246,15 +1317,18 @@ int runApp() {
         // never so narrow that either pane is unusable.
         const float minPaneWidth = std::min(ImGui::GetFontSize() * 16.0f, W * 0.5f);
         const float leftWidth = std::floor(std::clamp(W * settings.ladderFraction, minPaneWidth, W - minPaneWidth));
+        // The siteswap entry is a pane of its own along the bottom, the full width of the window
+        // (long passing patterns need the room); the ladder and juggler panes sit above it.
         const float entryHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeight() +
                                   style.WindowPadding.y * 2.0f;
+        const float bodyBottom = H - entryHeight;
         const ImGuiWindowFlags paneFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                                            ImGuiWindowFlags_NoSavedSettings |
                                            ImGuiWindowFlags_NoBringToFrontOnFocus;
 
         // Ladder diagram (top of left half).
         ImGui::SetNextWindowPos(ImVec2(0.0f, top));
-        ImGui::SetNextWindowSize(ImVec2(leftWidth, H - top - entryHeight));
+        ImGui::SetNextWindowSize(ImVec2(leftWidth, bodyBottom - top));
         // The ladder handles the mouse wheel itself (pan/zoom), so the pane mustn't scroll.
         ladderPreview = false;
         if (ImGui::Begin("Ladder", nullptr, paneFlags | ImGuiWindowFlags_NoScrollWithMouse)) {
@@ -1347,9 +1421,9 @@ int runApp() {
         }
         ImGui::End();
 
-        // Siteswap entry (bottom of left half).
-        ImGui::SetNextWindowPos(ImVec2(0.0f, H - entryHeight));
-        ImGui::SetNextWindowSize(ImVec2(leftWidth, entryHeight));
+        // Siteswap entry (along the bottom, full width).
+        ImGui::SetNextWindowPos(ImVec2(0.0f, bodyBottom));
+        ImGui::SetNextWindowSize(ImVec2(W, entryHeight));
         if (ImGui::Begin("Siteswap entry", nullptr, paneFlags)) {
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted("Siteswap");
@@ -1367,10 +1441,30 @@ int runApp() {
                 if (ImGui::IsKeyPressed(ImGuiKey_R)) siteswapBox.rotateRequested = 1;
                 else if (ImGui::IsKeyPressed(ImGuiKey_L)) siteswapBox.rotateRequested = -1;
             }
+            // Ctrl+click (Cmd+click on a Mac) on a throw makes the part the cursor is in a copy of
+            // that juggler, starting on that beat ("@1+8"). The text box doesn't see the click (so
+            // the cursor stays put), nor the drag after it (so nothing gets selected).
+            const bool savedClicked = io.MouseClicked[0];
+            const ImU16 savedClickCount = io.MouseClickedCount[0];
+            const ImVec2 savedDelta = io.MouseDelta;
+            siteswapBox.linkClicked = false;
+            if (siteswapBox.wasActive && io.KeyCtrl && io.MouseClicked[0] &&
+                ImGui::IsMouseHoveringRect(siteswapBox.lastMin, siteswapBox.lastMax)) {
+                siteswapBox.linkClicked = true;
+                siteswapBox.linkClick = siteswapCharacterAt(siteswapText, io.MousePos.x, siteswapBox.lastTextLeft);
+                siteswapBox.linkDrag = true;
+                io.MouseClicked[0] = false;
+                io.MouseClickedCount[0] = 0;
+            }
+            if (!io.MouseDown[0]) siteswapBox.linkDrag = false;
+            if (siteswapBox.linkDrag) io.MouseDelta = ImVec2(0.0f, 0.0f);
             const ImGuiInputTextFlags boxFlags = ImGuiInputTextFlags_CallbackEdit | ImGuiInputTextFlags_CallbackHistory |
                                                  ImGuiInputTextFlags_CallbackAlways;
             bool boxChanged = ImGui::InputText("##siteswap", siteswapText, sizeof(siteswapText), boxFlags,
                                                siteswapBoxCallback, &siteswapBox);
+            io.MouseClicked[0] = savedClicked;
+            io.MouseClickedCount[0] = savedClickCount;
+            io.MouseDelta = savedDelta;
             const ImGuiID boxId = ImGui::GetItemID();
             const ImVec2 boxMin = ImGui::GetItemRectMin();
             const ImVec2 boxMax = ImGui::GetItemRectMax();
@@ -1406,6 +1500,9 @@ int runApp() {
             float textLeft = boxMin.x + ImGui::GetStyle().FramePadding.x;
             if (ImGuiInputTextState* state = ImGui::GetInputTextState(boxId)) textLeft -= state->Scroll.x;
             const float textBottom = boxMax.y - ImGui::GetStyle().FramePadding.y + 1.0f;
+            siteswapBox.lastMin = boxMin;
+            siteswapBox.lastMax = boxMax;
+            siteswapBox.lastTextLeft = textLeft;
             ImDrawList* boxDraw = ImGui::GetWindowDrawList();
             boxDraw->PushClipRect(boxMin, boxMax, true);
             // Throws that are the problem (two landing together): a zigzag underline, in the
@@ -1426,16 +1523,7 @@ int runApp() {
             siteswapHoverThrow = -1;
             const Siteswap& shown = parsed;
             if (boxHovered && !shown.loop.empty()) {
-                const float mx = io.MousePos.x;
-                const int length = static_cast<int>(std::strlen(siteswapText));
-                int index = -1;
-                for (int i = 0; i < length; ++i) {
-                    if (mx >= siteswapCharacterX(siteswapText, i, textLeft) &&
-                        mx < siteswapCharacterX(siteswapText, i + 1, textLeft)) {
-                        index = i;
-                        break;
-                    }
-                }
+                const int index = siteswapCharacterAt(siteswapText, io.MousePos.x, textLeft);
                 int juggler = 0, beat = 0;
                 if (index >= 0 && throwAtCharacter(siteswapText, index, &juggler, &beat) &&
                     juggler < shown.loop.jugglers && beat < shown.loop.period) {
@@ -1480,6 +1568,15 @@ int runApp() {
                                    "%s", parsed.error.c_str());
             else
                 ImGui::TextUnformatted("");
+            // While typing: where the cursor is ("J1, beat 5, right hand: 3p+2"), at the right.
+            const std::string readout = siteswapBox.wasActive ? cursorReadout(siteswapText, siteswapBox.cursor, parsed.loop)
+                                                              : std::string();
+            if (!readout.empty()) {
+                ImGui::SameLine();
+                const float width = ImGui::CalcTextSize(readout.c_str()).x;
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - width));
+                ImGui::TextUnformatted(readout.c_str());
+            }
         }
         ImGui::End();
 
@@ -1502,10 +1599,20 @@ int runApp() {
             if (settings.colorByOrbit && loopComplete)
                 styleOfBall = orbitOfEachBall(loop, ballOrbits, computeLoopOrbits(loop));
             const int framedJuggler = frameSelected ? selectedJuggler : -1;
-            if (loop != extentsLoop || juggleParams.bpm != extentsParams.bpm ||
-                juggleParams.dwellBeats != extentsParams.dwellBeats ||
-                juggleParams.prop != extentsParams.prop || juggleParams.distance != extentsParams.distance ||
-                framedJuggler != extentsJuggler) {
+            auto sameParams = [](const JuggleParams& a, const JuggleParams& b) {
+                return a.bpm == b.bpm && a.dwellBeats == b.dwellBeats && a.prop == b.prop && a.distance == b.distance;
+            };
+            const double now = ImGui::GetTime();
+            if (loop != extentsSeenLoop || !sameParams(juggleParams, extentsSeenParams)) {
+                extentsSeenLoop = loop;
+                extentsSeenParams = juggleParams;
+                extentsSeenSince = now;
+            }
+            const bool stale = loop != extentsLoop || !sameParams(juggleParams, extentsParams) || framedJuggler != extentsJuggler;
+            // At once for the first framing and for framing a juggler (a click); otherwise once
+            // the pattern has settled.
+            if (stale && (!haveExtents || framedJuggler != extentsJuggler || now - extentsSeenSince >= kExtentsSettleSeconds)) {
+                haveExtents = true;
                 extents = computeSceneExtents(loop, juggleParams, framedJuggler);
                 extentsLoop = loop;
                 extentsParams = juggleParams;
@@ -1519,7 +1626,7 @@ int runApp() {
         // double-click to frame them (double-click empty space to frame everyone).
         const float transportHeightForInput = ImGui::GetFrameHeight() + style.WindowPadding.y * 2.0f;
         const ImVec2 viewMin(leftWidth, top);
-        const ImVec2 viewSize(W - leftWidth, H - top - transportHeightForInput);
+        const ImVec2 viewSize(W - leftWidth, bodyBottom - top - transportHeightForInput);
         ImGui::SetNextWindowPos(viewMin);
         ImGui::SetNextWindowSize(viewSize);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
@@ -1577,7 +1684,7 @@ int runApp() {
         {
             const float grab = 4.0f;  // half the width that catches the mouse
             ImGui::SetNextWindowPos(ImVec2(leftWidth - grab, top));
-            ImGui::SetNextWindowSize(ImVec2(grab * 2.0f, H - top));
+            ImGui::SetNextWindowSize(ImVec2(grab * 2.0f, bodyBottom - top));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2(1.0f, 1.0f));
             ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -1585,7 +1692,7 @@ int runApp() {
                              ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                                  ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoFocusOnAppearing |
                                  ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoScrollWithMouse)) {
-                ImGui::InvisibleButton("##split", ImVec2(grab * 2.0f, H - top));
+                ImGui::InvisibleButton("##split", ImVec2(grab * 2.0f, bodyBottom - top));
                 const bool hovered = ImGui::IsItemHovered();
                 const bool active = ImGui::IsItemActive();
                 if (hovered || active) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
@@ -1597,7 +1704,7 @@ int runApp() {
                     saveSettings(settings);
                 }
                 if (hovered || active)
-                    ImGui::GetWindowDrawList()->AddLine(ImVec2(leftWidth, top), ImVec2(leftWidth, H),
+                    ImGui::GetWindowDrawList()->AddLine(ImVec2(leftWidth, top), ImVec2(leftWidth, bodyBottom),
                                                         ImGui::GetColorU32(active ? ImGuiCol_SeparatorActive
                                                                                   : ImGuiCol_SeparatorHovered),
                                                         2.0f);
@@ -1615,9 +1722,9 @@ int runApp() {
                                 ImVec2(W - panelMargin, top + panelMargin), tweakablesPanel))
             saveSettings(settings);
 
-        // Transport bar along the bottom of the juggler pane (right half).
+        // Transport bar along the bottom of the juggler pane (right half, above the siteswap entry).
         const float transportHeight = ImGui::GetFrameHeight() + style.WindowPadding.y * 2.0f;
-        ImGui::SetNextWindowPos(ImVec2(leftWidth, H - transportHeight));
+        ImGui::SetNextWindowPos(ImVec2(leftWidth, bodyBottom - transportHeight));
         ImGui::SetNextWindowSize(ImVec2(W - leftWidth, transportHeight));
         if (ImGui::Begin("Transport", nullptr, paneFlags)) {
             const float h = ImGui::GetFrameHeight();
@@ -1845,12 +1952,13 @@ int runApp() {
         glClearColor(0.10f, 0.10f, 0.12f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Right half, below the menu bar. GL's origin is bottom-left.
+        // Right half, between the menu bar and the transport bar (above the siteswap entry).
+        // GL's origin is bottom-left.
         const int viewX = static_cast<int>(std::lround(leftWidth * pixelsPerPointX));
-        const int transportPixels = static_cast<int>(std::lround(transportHeight * pixelsPerPointY));
+        const int bottomPixels = static_cast<int>(std::lround((H - bodyBottom + transportHeight) * pixelsPerPointY));
         const int topPixels = static_cast<int>(std::lround(top * pixelsPerPointY));
-        const GLRect jugglerRect{viewX, transportPixels, framebufferWidth - viewX,
-                                 framebufferHeight - topPixels - transportPixels};
+        const GLRect jugglerRect{viewX, bottomPixels, framebufferWidth - viewX,
+                                 framebufferHeight - topPixels - bottomPixels};
         renderJugglerView(renderer, prims, propMeshes, scene, cameraView, selectedJuggler, settings.colorVision, styleOfBall,
                           jugglerRect);
 

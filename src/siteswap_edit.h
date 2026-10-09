@@ -89,3 +89,17 @@ bool linkAtCharacter(const std::string& text, int index, int* juggler, int* to, 
 // The characters [*start, *end) of a throw, by juggler and beat in the loop. For a linked
 // juggler, the characters of the throw they copy.
 bool charactersOfThrow(const std::string& text, int juggler, int beat, int* start, int* end);
+
+// The throw at the cursor (the one it's in or just after, else the one starting there): the
+// juggler (0 for a solo pattern) and its position in their part, which is its beat in the loop.
+// False if the cursor isn't at a throw (in a link, say).
+bool throwAtCursor(const std::string& text, int cursor, int* juggler, int* beat);
+
+// Ctrl+click in the box: makes the part the cursor is in a link to the juggler whose throw was
+// clicked (clickIndex is a character of that throw): "@k+d", where d is the throw's position in
+// their part. Clicking J1's beat 9 gives "@1+8": J1's throws, 8 beats later, so the copy of J1's
+// beat 1 falls on the beat clicked. Whatever the part held is replaced; its options (",LRswap")
+// are kept. An offset of 0 is written "@k", and offsets are written negative ("@1-12") if the
+// text's links already are. False (with *why) if the click wasn't on a throw in another
+// juggler's part.
+bool linkToClickedThrow(const std::string& text, int cursor, int clickIndex, SiteswapEdit* result, std::string* why);

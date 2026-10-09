@@ -237,9 +237,9 @@ undoes typing instead.
 
 ## The siteswap box
 
-Below the ladder is a text box for siteswap notation. Typing a valid siteswap replaces the
-pattern. When the pattern is changed some other way (for example with the period control), the
-text is rewritten to match. Vanilla siteswap (asynchronous, one juggler, no multiplexes) and
+Along the bottom of the window, the full width, is a text box for siteswap notation. Typing a
+valid siteswap replaces the pattern. When the pattern is changed some other way (for example
+with the period control), the text is rewritten to match. Vanilla siteswap (asynchronous, one juggler, no multiplexes) and
 passing for up to 6 jugglers are supported so far; sync and multiplex notation are recognized
 and reported as not yet supported.
 
@@ -350,6 +350,15 @@ above). Other programs won't read it.
   the same pattern, started a beat earlier or later. `7531` becomes `1753` (right) or `5317`
   (left). Every juggler's part rotates together: `<3p 5 3 1|3p 5 3 1>` becomes
   `<1 3p 5 3|1 3p 5 3>`. Rotating by an odd number of beats swaps which hand starts.
+- **Ctrl+click** (**Cmd+click** on a Mac) a throw in another juggler's part to make the part
+  the cursor is in a copy of that juggler, starting on the beat you clicked. With the cursor in
+  J2's part, clicking J1's throw on beat 9 makes J2 `@1+8`: J1's throws, 8 beats later, so J2
+  does J1's beat 1 on beat 9. Whatever J2's part held (throws, `?`s, another link) is replaced;
+  a `,LRswap` stays. Offsets are written negative (`@1-12`) if the pattern's links already are.
+  The cursor doesn't move, so you can click again to try another beat.
+- **Where the cursor is** shows at the right of the line under the box while you type: the
+  juggler, beat and hand of the throw the cursor is in or just after ("J1, beat 5, right hand:
+  3p+2"), or what the link there means ("J2: J1's throws, 8 beats later").
 - **Pointing at a throw** describes it ("J1, beat 3, right hand: 4p, a pass to J2's right
   hand, caught on beat 7") and picks it out on the ladder at every repeat.
 - **Mistakes are underlined**: when two throws land in the same hand at the same time, both

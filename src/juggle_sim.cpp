@@ -557,7 +557,7 @@ public:
         BodyMotion m;
         m.intensity = intensity_;
         const double tSeconds = t * secondsPerBeat();
-        const int kTaps = 20;  // each side
+        const int kTaps = bodyTaps_;  // each side
         float dip = 0.0f, sway = 0.0f, weightSum = 0.0f;
         for (int k = -kTaps; k <= kTaps; ++k) {
             const float u = 3.0f * static_cast<float>(k) / kTaps;  // in sigmas
@@ -763,7 +763,12 @@ public:
         out->spinAxis = placement(j).dir(frame.spinAxis());
     }
 
+    // Smooths the body with fewer samples (see bodyAt): a little rougher, and several times
+    // quicker, which is plenty for framing the camera.
+    void useQuickBody() { bodyTaps_ = 5; }
+
 private:
+    int bodyTaps_ = 20;  // samples each side for bodyAt's smoothing
     const JugglingLoop& loop_;
     int period_;
     int jugglers_;
@@ -828,7 +833,8 @@ SceneExtents computeSceneExtents(const JugglingLoop& sketchOrLoop, const JuggleP
     SceneExtents e;
     if (sketchOrLoop.empty()) return e;
     const JugglingLoop loop = physicsLoop(sketchOrLoop);
-    const Evaluator ev(loop, params, patternIntensity(loop, params));
+    Evaluator ev(loop, params, patternIntensity(loop, params));
+    ev.useQuickBody();
     const int span = loop.period % 2 == 0 ? loop.period : loop.period * 2;  // hands and throws both repeat
     const float handThickness = 0.025f;
     e.lowestHandY = 1e9f;
@@ -855,11 +861,13 @@ SceneExtents computeSceneExtents(const JugglingLoop& sketchOrLoop, const JuggleP
             includeX(pl.point(b).x, 0.05f);
             e.nearZ = std::max(e.nearZ, pl.point(b).z + 0.05f);
         }
-        // Hands, and what they hold: sample their paths over one full repeat. (A hand that's
-        // empty at the moment still gets a "held" prop here; that only makes the framing a bit
-        // roomier.)
-        for (int i = 0; i <= span * 100; ++i) {
-            const double t = i / 100.0;
+        // Hands, and what they hold: sample their paths over one full repeat, 24 times a beat
+        // (the paths are smooth, so that's within a few millimeters, and it's slow for long
+        // passing patterns: every sample works out the body's motion). A hand that's empty at
+        // the moment still gets a "held" prop here; that only makes the framing a bit roomier.
+        constexpr int kSamplesPerBeat = 24;
+        for (int i = 0; i <= span * kSamplesPerBeat; ++i) {
+            const double t = static_cast<double>(i) / kSamplesPerBeat;
             for (int right = 0; right < 2; ++right) {
                 const Vec3 p = pl.point(ev.palm(j, right != 0, t));
                 e.lowestHandY = std::min(e.lowestHandY, p.y - handThickness);
