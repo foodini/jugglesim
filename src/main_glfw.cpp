@@ -28,6 +28,7 @@ extern const char kBuiltInPatternText[];
 namespace {
 
 GLFWwindow* g_window = nullptr;
+bool g_closeRequested = false;
 
 void reportGlfwError(int code, const char* description) {
     std::fprintf(stderr, "GLFW error %d: %s\n", code, description);
@@ -39,8 +40,24 @@ void reportGlfwError(int code, const char* description) {
 
 bool platformPollEvents() {
     glfwPollEvents();
-    return !glfwWindowShouldClose(g_window);
+    // Closing (the close button, Cmd+Q) only asks: the app decides, since it may ask about
+    // unsaved work first (platformTakeCloseRequest).
+    if (glfwWindowShouldClose(g_window)) {
+        g_closeRequested = true;
+        glfwSetWindowShouldClose(g_window, GLFW_FALSE);
+    }
+    return true;
 }
+
+SpaceMouseState platformSpaceMouse() { return SpaceMouseState(); }  // (not read on this platform yet)
+
+bool platformTakeCloseRequest() {
+    const bool requested = g_closeRequested;
+    g_closeRequested = false;
+    return requested;
+}
+
+void platformSetWindowTitle(const char* title) { glfwSetWindowTitle(g_window, title); }
 
 bool platformIsMinimized() { return glfwGetWindowAttrib(g_window, GLFW_ICONIFIED) != 0; }
 

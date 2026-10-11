@@ -155,6 +155,31 @@ void Renderer::drawGlow(const Mat4& viewProj, const std::vector<GlowVertex>& tri
     glDisable(GL_DEPTH_TEST);
 }
 
+void Renderer::drawOverlay(const Mat4& viewProj, const std::vector<GlowVertex>& triangles) {
+    if (triangles.empty() || !glowProgram_) return;
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
+    glEnable(GL_POLYGON_OFFSET_FILL);
+    glPolygonOffset(-1.0f, -4.0f);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    gl::UseProgram(glowProgram_);
+    gl::UniformMatrix4fv(locGlowViewProj_, 1, GL_FALSE, viewProj.m);
+    gl::BindVertexArray(glowVao_);
+    gl::BindBuffer(GL_ARRAY_BUFFER, glowVbo_);
+    gl::BufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(triangles.size() * sizeof(GlowVertex)),
+                   triangles.data(), GL_STREAM_DRAW);
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(triangles.size()));
+    gl::BindVertexArray(0);
+    gl::UseProgram(0);
+    glDisable(GL_BLEND);
+    glDisable(GL_POLYGON_OFFSET_FILL);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_DEPTH_TEST);
+}
+
 void appendRibbon(std::vector<GlowVertex>& out, const std::vector<Vec3>& points,
                   const std::vector<float>& fade, Vec3 color, float alpha, float width,
                   Vec3 cameraPos, const float* dashLengths, int dashCount, float dashUnit) {

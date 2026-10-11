@@ -12,6 +12,7 @@
 
 #include "juggle_sim.h"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
@@ -28,11 +29,23 @@ struct PatternSettings {
     // Distance between passing jugglers (m); 0 = automatic. Only saved for passing patterns.
     bool hasDistance = false;
     double distance = 0.0;
+    // Where the jugglers stand and walk (choreography.h's text form); empty: none (standing in
+    // the default formation).
+    bool hasChoreography = false;
+    std::string choreography;
+    // A free camera (one the user has placed): its position (m) and direction (yaw and pitch, in
+    // degrees). Saved with the pattern but not part of undo, and moving the camera doesn't make
+    // the pattern unsaved.
+    bool hasCamera = false;
+    double camera[5] = {0.0, 0.0, 0.0, 0.0, 0.0};  // x, y, z, yaw, pitch
 
     bool operator==(const PatternSettings& o) const {
         return hasProp == o.hasProp && prop == o.prop && hasTempo == o.hasTempo &&
                tempo == o.tempo && hasDwell == o.hasDwell && dwell == o.dwell &&
-               hasDistance == o.hasDistance && distance == o.distance;
+               hasDistance == o.hasDistance && distance == o.distance &&
+               hasChoreography == o.hasChoreography && choreography == o.choreography &&
+               hasCamera == o.hasCamera &&
+               (!hasCamera || std::equal(camera, camera + 5, o.camera));
     }
     bool operator!=(const PatternSettings& o) const { return !(*this == o); }
 };
@@ -68,17 +81,26 @@ void classifyPattern(LibraryPattern* pattern);
 // A name made safe for the file: no ';' (the field separator) or control characters, trimmed.
 std::string sanitizePatternName(const std::string& name);
 
-// A recently loaded pattern: a copy of it (so it still works if the original is renamed or
-// deleted), and whether it came from the user's own patterns.
+// A recently loaded or saved pattern: a copy of it, and whether it came from the user's own
+// patterns. One of My Patterns is listed once, by name, and loading it loads the saved version;
+// deleting it takes it off the list.
 struct RecentPattern {
     LibraryPattern pattern;
     bool mine = false;
 };
 constexpr int kMaxRecentPatterns = 8;
 
-// Puts `pattern` at the front of `recent` (moving it there if it's already in the list) and
-// trims the list to kMaxRecentPatterns.
+// Puts `pattern` at the front of `recent` (moving it there if it's already in the list: for one
+// of My Patterns, any entry with the same name) and trims the list to kMaxRecentPatterns.
 void addRecentPattern(std::vector<RecentPattern>* recent, const LibraryPattern& pattern, bool mine);
+
+// Takes one of My Patterns (by name) off the list: it has been deleted.
+void removeRecentPattern(std::vector<RecentPattern>* recent, const std::string& name);
+
+// Brings the copy of one of My Patterns (listed under `oldName`) up to date after it's renamed,
+// leaving its place in the list alone.
+void refreshRecentPattern(std::vector<RecentPattern>* recent, const std::string& oldName,
+                          const LibraryPattern& current);
 
 // The recent list (recent_patterns.txt in the user data folder, most recent first). Each line is
 // "mine" or "jugglesim", a space, then a library line.

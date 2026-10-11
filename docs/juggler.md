@@ -4,11 +4,13 @@ The right half of the window shows a juggler performing the current pattern in 3
 
 ## Playback
 
+Press **?** (or *Help > Keyboard Shortcuts*) for a sheet of every key and mouse action.
+
 The bar along the bottom of the juggler pane has the transport controls:
 
 | Button | Key | Does |
 |---|---|---|
-| go to beat 1 | **B** | Back to the start (playing or paused, as it was) |
+| go to beat 1 | **B** | Back to the start (playing or paused, as it was), with the ladder scrolled back to beat 1 |
 | step back | **Left** (**Shift+Left**: a whole beat) | Pauses and steps back 1/12 of a beat |
 | play / pause | **Space** | Starts or stops the animation |
 | step forward | **Right** (**Shift+Right**: a whole beat) | Pauses and steps forward 1/12 of a beat |
@@ -19,8 +21,9 @@ siteswap box.
 
 Next to the buttons is the current beat (beat 1 is the right hand's first throw, as on the
 ladder). **Drag** it left or right to move through time, or **double-click** it to type the beat
-to go to; either pauses. On the ladder, **click or drag in the beat numbers** to put the
-playhead there; this pauses too. The slow-motion speed is
+to go to; either pauses. On the ladder, **click a beat number** to go to exactly that beat
+(the nearest whole beat to the click), or **drag** in the beat numbers to move the playhead
+smoothly; this pauses too. The slow-motion speed is
 remembered; dragging its slider turns slow motion on.
 
 Loading a pattern from the library, starting a new one, or pasting over the whole siteswap box
@@ -40,12 +43,14 @@ left end, moving smoothly down at the current beat. The same moment is also mark
 every time the ladder's colors repeat: when the same prop is back in the same hand. Hands
 alternate, so an odd period takes two loops; and the props on an orbit take turns, so with a
 color per prop it takes as many loops as an orbit has props. In `3` that's every 6 beats, in a
-4-count every 24; with colors by orbit, only the hands matter. So the bright playhead always
-shows the prop the jugglers are really throwing.
+4-count every 24; with colors by orbit, only the hands matter. So every copy shows the same
+props in the same hands as the bright playhead.
 
-The bright playhead belongs to beats 1 up to that repeat. As it moves past the end it fades out
-over a beat, while the copy coming down from above beat 1 brightens, so there's always one
-bright playhead and it never jumps.
+The bright playhead is on the current beat, the same number as the beat counter under the
+juggler pane: time runs on (beat 77, 78, ...) rather than going back to beat 1 each time the
+pattern comes round. While playing, the ladder follows it: once it's 60% of the way down, the
+ladder scrolls with it. Scrolling the ladder yourself pauses the following for a couple of
+seconds.
 
 ## The camera
 
@@ -56,16 +61,57 @@ high 7 pulls the camera far back.
 
 To look around:
 
-- **Drag** in the juggler pane to orbit: left and right swing around the juggler, up and down
-  tilt to look from above or below.
-- **Mouse wheel** zooms in and out. Zooming in keeps the bottom of the view where it is, so the
-  juggler stays in view and the tops of the flights are what get cropped. Zoomed in closer than
-  the juggler's own height, the view stays centered on the juggler.
+- **Right-drag** in the juggler pane to orbit: left and right swing around the juggler, up and
+  down tilt to look from above or below. A left-drag that starts on empty space does the same.
+  (On a Mac trackpad, a two-finger click is a right-click: press with two fingers and drag.)
+  While you orbit, a white **reticle** shows what you're orbiting about: a ring with a cross on
+  the floor and, if the point is above the floor, a small cross there with a line down to the
+  ring.
+- **Mouse wheel** (a two-finger scroll on a trackpad) zooms in and out. Zooming in keeps the
+  bottom of the view where it is, so the juggler stays in view and the tops of the flights are
+  what get cropped. Zoomed in closer than the juggler's own height, the view stays centered on
+  the juggler.
+- **Middle-drag** (or **Shift+right-drag**) pans: the floor under the mouse moves with it. This
+  makes the camera **free** (below).
+- **A 3D mouse** (a 3Dconnexion SpaceMouse; Windows only for now) moves the camera whatever
+  has the keyboard, the ladder, the siteswap box or a menu, and makes the camera **free**
+  (below). You grab the stage, like an object in your hand: **spin** the cap to turn it round,
+  **tilt** it toward or away from you to see it from higher or lower (never past straight down
+  or up), **push** it away to move back and **pull** it toward you to move in. **Sliding** it
+  sideways or up and down moves the stage
+  the same way. The further you push, the faster it goes;
+  *3D Mouse > Speed* (a menu that appears when one is connected) sets how fast. JuggleSim reads
+  the device directly, so 3Dconnexion's settings for it don't matter, with one exception: if
+  their software also sends JuggleSim keys of its own when you move the cap, set every axis
+  speed in its *Advanced Settings* for JuggleSim to 0. (Mouse-wheel scrolling it sends while the
+  cap moves is ignored already; *Help > 3D Mouse Diagnostics* shows what the cap is sending,
+  live.)
 - **Home** (with the mouse over the juggler) or *View > Reset Camera* goes back to the default
   view.
 
 Your angle and zoom are kept relative to the automatic framing, so if you switch patterns while
 looking from the side, you stay at the side and the new pattern is still framed.
+
+### The free camera
+
+Panning, or anything done with a 3D mouse, makes the camera **free**: it stays exactly where you put it, whatever the pattern does, and the corner of the
+pane says *Free camera: Home re-frames*. Then:
+
+- Spinning or tilting a 3D mouse's cap orbits, like a right-drag.
+- Orbiting goes round a point that stays put for the whole drag: the selected juggler (at chest
+  height, where they are when you start); else the juggler in the middle of the view; else the
+  floor in the middle of the view, if that's on the stage (the floor the jugglers, spike marks
+  and keyframes use, plus 1.5 m); else the edge of the stage where your line of sight leaves
+  it. The reticle always shows it, faintly, and brighter while you orbit.
+- The wheel (and pushing or pulling a 3D mouse) moves the camera along the way it's looking,
+  faster the further it is from the nearest juggler, prop or spike mark, so it covers distance
+  quickly but slows near things.
+- **Home**, *View > Frame All*, **F**, a double-click, or **T** go back to the automatic
+  framing (T to the automatic top view; T again for the usual view). Loading a pattern does too,
+  unless it was saved with a camera.
+- *File > Save* (or *Save As*) saves a free camera with the pattern, and loading the pattern
+  puts the camera back there. Moving the camera isn't an undo step and doesn't count as an
+  unsaved change.
 
 ## Pattern names and throw values
 
@@ -87,13 +133,16 @@ props are colored by orbit, as on the ladder.
 ## Several jugglers
 
 A passing pattern (see the siteswap box in [the ladder notes](ladder.md)) shows every juggler,
-each with their number over their head (J1, J2, ..., as on the ladder). Two jugglers face each
+each with their number over their head (J1, J2, ..., as on the ladder; numbers that would
+overlap, say for two jugglers in the same place, are moved apart, with a thin line down to their
+juggler if they're moved far). Two jugglers face each
 other, juggler 1 on the left as seen from the default camera. Three to six stand at the corners
 of a regular polygon (a triangle, a square, ... a hexagon), facing the middle, neighbors the
 passing distance apart. The camera starts behind and above J1, so you see the pattern from
 J1's side (a feed from the feeder's, say), and the numbers go clockwise seen from above: J2 on
 J1's left, the last juggler on J1's right. Looking down a little keeps the near jugglers from
-hiding the far ones, and the whole formation is framed, feet and all. Other formations will come with choreography.
+hiding the far ones, and the whole formation is framed, feet and all. For other formations, and
+for moving the jugglers, see *Choreography* below.
 
 A juggler with swapped hands (`,LRswap`, see [ladder.md](ladder.md)) throws with the left hand
 on beat 1.
@@ -112,8 +161,112 @@ out around the pass.
   ladder does the same.)
 - **Double-click** a juggler (or select one and press **F**, or use *View > Frame Selected*) to
   frame just them: their hands, what they hold and their own throws (passes leave the frame).
-  Double-click empty space, or use *View > Frame All*, to frame everyone again. *Home* and
+  Double-click empty space, press **F** with no one selected, or use *View > Frame All*, to
+  frame everyone again. *Home* and
   *View > Reset Camera* also frame everyone.
+
+## Choreography: moving the jugglers
+
+Jugglers can walk and turn while they juggle. Where they stand is set with **spike marks** (as
+on a stage floor) and **keyframes**. This is the first stage; see the design notes
+([multi_juggler.md](design/multi_juggler.md)) for what's coming.
+
+- **View > Choreography** (**M**, for Movement and spike Marks) shows the spike marks: a ring on the floor, numbered (in a bubble past the arrow's tip), with an
+  arrow for the way someone standing on it faces (in pale yellow). The first time, there's one
+  under each juggler, where the formation puts them, so nothing moves until you change something.
+  The marks, the paths (below) and the camera's reticle lie on the floor, so the jugglers hide
+  them where they're in front.
+- **View > Top View** (**T**) swings the camera to look straight down, framing everything in
+  use, for placing marks and jugglers. **T** again goes back. Right-drag sideways to turn the
+  view round (it keeps looking straight down), and the wheel to zoom; panning or a 3D mouse
+  makes the camera free, starting from the top view.
+- **The Choreography panel** (under the Tweakables, in choreography mode) sets the **grid**
+  spike marks snap to, drawn faintly on the floor:
+  - **Square:** lines every 0.25 to 2 m; marks snap to where they cross.
+  - **Radial:** rings every 0.25 to 2 m and 3 to 32 spokes from the middle; marks snap to where
+    rings and spokes cross, or to the middle. One spoke points at the default camera, or, with
+    **Turn half a spoke**, that direction falls between two.
+  - **Triangles:** equilateral triangles with sides of 0.25 to 2 m; marks snap to their corners.
+  - **None:** no grid shown; marks snap to the nearest 5 cm.
+
+  To help count, every few lines (**Mid lines**, every 2 to 12; for the radial grid, rings) are
+  drawn a little heavier, and the lines through the middle of the floor heaviest, with a dot in
+  the middle. The radial grid can also make every few spokes heavier (**Mid spokes**): only counts
+  that divide the spokes evenly are offered, so with 12 spokes, every 2, 3, 4 or 6.
+
+  The grid is a setting of JuggleSim, not part of the pattern, and changing it never moves
+  anything already placed.
+- **Spike marks:** drag a mark's ring to move it (snapping to the grid; **Shift**: freely), and its
+  arrow to turn it (in 15-degree steps; **Shift**: freely). Right-click a mark to make it
+  **Face the Middle**, to **Delete** it, or to **Add Another Spike Mark Here** (on the same spot:
+  turn it by its arrow); right-click the floor to **Add a Spike Mark** there. Where several marks
+  share a spot, putting a juggler there lights up their arrows and numbers: click the one they
+  stand on (**Esc** keeps the one they're on).
+- **Keyframes** say where a juggler is on a beat. Pause on the beat first (the transport bar,
+  or click the beat's number on the ladder), then either:
+  - **drag the juggler** to where they should be: dropped on a mark, they stand on it, facing as
+    it says; anywhere else, they stand there (snapped to the grid; **Shift**: freely) facing as
+    they were; or
+  - **select the juggler** and **click a mark** (its ring, if someone's standing on it).
+
+  Either way, a small popup then asks how long they **loiter** there: click **0** to **4**, one
+  of the lengths already used nearest this point in the choreography (shown after them), or
+  type a number in the box and press Enter. Or just press a key: **0**-**9**, **a** = 10,
+  **b** = 11 and so on, as in siteswap. A loiter of N beats is a second keyframe N beats later
+  on the same spot, facing the same way. Lengths that would reach another of their keyframes
+  are greyed out, and typing one flashes an error. **0** or **Esc** leaves just the arrival.
+- **Between keyframes** a juggler walks in a straight line, easing in and out, and turns
+  smoothly, the shorter way round. To stand still for a while, put two keyframes on the same
+  spot. After their last keyframe they walk back to their first, so the whole choreography
+  repeats. A juggler with one keyframe just stands there; one with none stands on their own
+  mark (J1 on mark 1, and so on).
+- **The choreography's length** (*Length* in the Choreography panel) is how many beats it takes
+  to come round. It starts as the siteswap's period, but it's the choreography's own: editing
+  the siteswap doesn't change it, and it doesn't have to match. Shortening it past some
+  keyframes asks first, listing the keyframes that would be deleted. When neither length is a
+  multiple of the other (a 3-beat siteswap with an 8-beat walk, say), a warning in the top-left
+  of the juggler pane says how long it takes them to line up again (24 beats). **Dismiss** it if
+  that's what you meant; it comes back only if something changes and it applies again.
+- **On the ladder,** keyframes are diamonds on the juggler's strip, and a white line down the
+  strip joins two where the juggler loiters between them (walking and turning aren't drawn).
+  *View > Keyframe Marks* (**K**) labels each diamond on a spike mark with the mark ("M3").
+  **Drag** a diamond up or down to
+  move it to another beat; **right-click** it to delete it, or to have the juggler **Turn the Long
+  Way Round** on the way to it (through more than half a turn). **Ctrl+drag** a diamond to make a
+  loiter there: a copy of the keyframe, on the same spot facing the same way, as far up or down
+  as you drag it. It stops short of the keyframes either side (it can reach one only if that's
+  on the same spot already, which changes nothing).
+- **Walk links:** to block out one juggler and have others copy them, right-click another
+  juggler (their number on the ladder, or them on the stage) and choose **Walk Like...**. Pick the
+  **leader**, an **offset** in beats (J2 does on each beat what the leader does that many beats
+  later; the 1/2, 1/3 and 1/4 buttons are those fractions of the choreography's length), and a
+  **turn** about the middle of the floor: none, or 1/2 to 1/5 of a circle, clockwise or
+  counterclockwise seen from above. Changes show as you make them. A follower's diamonds on the
+  ladder are the leader's, moved round (dim, not editable), and their strip says which leader
+  (`J1+24ccw1/4`). Followers can follow followers. Linking a juggler who has keyframes deletes
+  them (it asks first); **Unlink** writes the follower's walking out as their own keyframes, so
+  nothing moves.
+- **Paths:** each juggler with keyframes has their path drawn on the floor: where they walk over
+  the whole cycle, back to the start. There's a point for every beat, with an arrow the way they
+  face then (so you can see them turn as they go) and the beat's number; beats they stand still
+  for share one point, numbered like "5-8". The points crowd together where they slow down to
+  stop and spread out where they're walking fastest. Paths are dashed: the selected juggler's
+  is bright cyan and drawn on top, everyone else's dim blue-gray, each with the juggler's number
+  (J2) along it. While walking, a path
+  runs a few centimeters to the walker's right, so two jugglers walking the same line opposite
+  ways show as two lines. **Click a point** to go to that beat with that juggler selected, ready
+  to drag them somewhere new for a keyframe. When the numbers get crowded, turn off *View > Path
+  Beat Numbers*: then only the point under the mouse is numbered.
+- A keyframe on a mark moves with the mark, so moving a mark moves everyone who stands on it.
+- Passes go where the catcher will be when they catch, however they're walking or turning.
+  Passing to someone behind you isn't handled well yet (the pass still arrives, but the hands
+  don't look right).
+- Until you change something (move, add or delete a mark, or make a keyframe), the marks are
+  just the default formation and follow the **Distance** tweakable. From then on the
+  choreography says where everyone stands, in meters, so Distance is greyed out; *View > Clear
+  Choreography* makes it available again.
+- Choreography is part of the pattern: it's saved with your patterns (*File > Save*), undoable
+  like any other change, and *View > Clear Choreography* removes it.
 
 ## Tweakables
 
@@ -139,8 +292,9 @@ in the top-right corner of the juggler pane ("Tweakables" is a working name):
   cycle and is empty for the rest. Real cascades are often around 1.3 to 1.6.
 
 Short throws get a shorter dwell automatically, so they still spend some time in the air: a
-throw's catch uses at most half its value as dwell. A 1 (a quick hand-across) is in the air for
-half a beat. A **2** is a hold: the ball simply stays in the hand.
+throw's catch uses at most half its value as dwell. A 1 is a hand-across: the throwing hand
+carries the prop just past the middle and lets go, and the other hand takes it from right
+beside it, the hands nearly touching; it's in the air for half a beat. A **2** is a hold: the ball simply stays in the hand.
 
 Throw heights follow from the tempo: every throw is timed to land exactly when it's due, so a
 faster tempo means lower throws.
@@ -149,7 +303,8 @@ faster tempo means lower throws.
   1 to 5 m, in steps of 0.05 m (0.25 m with **Shift**). With **Auto** checked, it follows the
   pattern's highest throw: 1 m plus 0.4 m for each step of throw height above 1, so about 1.8 m
   for a pattern of 3s and 2.2 m with 4s. Moving the slider turns Auto off; checking it again
-  goes back to the automatic distance. Library patterns can carry a distance.
+  goes back to the automatic distance. Library patterns can carry a distance. It's unavailable
+  (greyed out) in a pattern with choreography, which puts the jugglers where they stand.
 
 ## Props
 
@@ -175,6 +330,9 @@ ladder, and every flight leaves the same dashed trail.
   a juggler would naturally give it for its flight time (at the default tempo, a single on a 3
   and a double on a 5; higher throws get more). The prop then turns at exactly the rate that
   brings it round in time for the catch. 1s go across flat, without turning; 2s are held.
+  Pause and rest the mouse on a club or ring in the air to see its throw and spin rate, in
+  spins a beat (so it doesn't depend on the tempo); the ladder shows the same when you rest the
+  mouse on a throw.
 
 ## What you see
 

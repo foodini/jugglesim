@@ -40,11 +40,17 @@ with (feeds, the 5-person star, and 2-counts round the ring).
 
 ## Saving your own patterns
 
-*File > Save to My Patterns...* saves the current pattern under a name you choose (the siteswap,
-unless you change it). It's saved together with the current props, tempo and dwell (and, for a
-passing pattern, the distance between the jugglers), and loading
-it later sets all of them again. If you already have a pattern with that name, you're asked
-whether to replace it.
+*File > Save As...* (**Ctrl+Shift+S**) saves the current pattern to My Patterns under a name you
+choose (the siteswap, unless you change it). It's saved together with the current props, tempo
+and dwell (and, for a passing pattern, the distance between the jugglers, its choreography and a
+free camera), and loading it later sets all of them again. If you already have a pattern with
+that name, you're asked whether to replace it.
+
+Once a pattern is one of yours (you loaded it from My Patterns, or just saved it), *File > Save
+"name"* (**Ctrl+S**) saves your changes over it without asking for the name again. For any other
+pattern (a new one, one you typed, or one of JuggleSim's), *File > Save...* asks for a name, as
+Save As does. When you start a new pattern or quit with unsaved changes, the prompt's **Save**
+button saves over the open pattern the same way.
 
 Sketches (patterns with throws not decided yet, `?`) can be saved too. They're grouped under
 *Sketches* instead of a number of props.
@@ -71,7 +77,10 @@ siteswap ; name ; settings
 It's plain text, so you can back it up, copy it to another computer, or edit it by hand
 (JuggleSim reads it when it starts). The settings are optional:
 `props=balls|clubs|rings`, `tempo=` (beats per minute), `dwell=` (beats) and, for passing
-patterns, `distance=` (meters, 1 to 5, or `auto`).
+patterns, `distance=` (meters, 1 to 5, or `auto`). Two more are written by JuggleSim:
+`choreo=` (the choreography: spike marks and keyframes) and `camera=x,y,z,yaw,pitch` (a free
+camera: where it is in meters, and the way it looks in degrees; see
+[the juggler pane](juggler.md#the-free-camera)).
 
 A pattern written in notation this version of JuggleSim can't read yet (for example sync
 notation, before it's supported) is kept in the file and shown in *Manage My Patterns* (greyed

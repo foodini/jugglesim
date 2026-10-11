@@ -15,11 +15,17 @@ can trace any point on a throw straight across to its beat number.
   view; see [juggler.md](juggler.md)); click it again to deselect.
 - **Linked jugglers** (`@2[3]`, see *The siteswap box*) say what they copy under their number;
   right-click a juggler's number for *Same as* and *Unlink*. **L** dims linked jugglers' throws.
+- **Choreography keyframes** (where a juggler stands on a beat; see *Choreography* in
+  [juggler.md](juggler.md)) are diamonds on the juggler's strip: drag one up or down to move it
+  to another beat, right-click it to delete it or to turn the long way round.
 - **Collapsing strips.** With several jugglers it gets busy. The small triangle button just
   left of a juggler's number collapses their strip to a narrow one (or expands it again); their
   throws are still drawn, so passes to and from them still show, but without value labels. The
   toolbar's arrows button, **C** or *View > Collapse All Jugglers* collapses every strip, or
-  expands them all if they're all collapsed already.
+  expands them all if they're all collapsed already. **Ctrl+1** to **Ctrl+6** collapse or expand
+  one juggler's strip.
+- **Resting the mouse on a throw** says what it is ("J2, beat 6: 3"); with clubs or rings, also
+  its spin ("a double, 0.45 spins a beat").
 - **Throws.** Each throw is drawn from the beat it's thrown on to the beat it lands on, with an
   arrowhead at the landing.
   - **Odd throws** (1, 3, 5, ...) change hands, so they cross between the juggler's columns.
@@ -50,6 +56,8 @@ are in the pattern; see [juggler.md](juggler.md).
   When zoomed out, only every few beats are numbered.
 - **Home**, **Ctrl+0**, the toolbar's **Reset View** button or *View > Reset Ladder View* puts
   beat 1 back at the top at the normal zoom. The button lights up when beat 1 is off screen.
+  **Home** and **Ctrl+0** (with the mouse over the ladder) take the playhead back to beat 1 too,
+  like **B**.
 
 The divider between the ladder and the 3D view can be dragged to give either more room.
 Double-click it (or use *View > Reset Layout*) to share the width equally again. JuggleSim

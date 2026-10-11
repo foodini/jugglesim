@@ -34,6 +34,10 @@ public:
     // Draws glowing triangles with additive blending: depth-tested against the scene but not
     // writing depth, so overlapping glows add up. Call after the solid geometry.
     void drawGlow(const Mat4& viewProj, const std::vector<GlowVertex>& triangles);
+    // Draws overlay triangles (lines and marks on the floor) with ordinary alpha blending:
+    // depth-tested against the scene, pulled a little toward the camera so the floor they lie
+    // on doesn't hide them, and not writing depth. Later triangles draw over earlier ones.
+    void drawOverlay(const Mat4& viewProj, const std::vector<GlowVertex>& triangles);
 
 private:
     GLuint program_ = 0;

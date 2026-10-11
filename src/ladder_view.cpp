@@ -2,6 +2,7 @@
 #include "ladder_view.h"
 
 #include "draw_helpers.h"
+#include "juggle_sim.h"
 #include "loop_ops.h"
 #include "imgui.h"
 
@@ -9,6 +10,7 @@
 #include <cfloat>
 #include <climits>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <map>
@@ -208,7 +210,8 @@ LadderToolbarRequest drawLadderToolbar(const JugglingLoop& loop, const LadderEdi
     ImGui::EndDisabled();
     if (lost) ImGui::PopStyleColor();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-        ImGui::SetTooltip("Back to the default pan and zoom, with beat 1 at the top (Home, or Ctrl+0).\n\n"
+        ImGui::SetTooltip("Back to the default pan and zoom, with beat 1 at the top. (Home or Ctrl+0 over the\n"
+                          "ladder does this and takes the playhead back to beat 1 too, like B.)\n\n"
                           "On the ladder: mouse wheel scrolls, Ctrl+wheel zooms.");
 
     return request;
@@ -283,7 +286,7 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
     ImGui::InvisibleButton("##ladder_canvas", size,
                            ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
     const bool canvasHovered = ImGui::IsItemHovered();
-    const bool leftClicked = canvasHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+    bool leftClicked = canvasHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left);  // (false if a keyframe took it)
     const bool rightClicked = canvasHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right);
     const ImVec2 mouse = ImGui::GetIO().MousePos;
     const float time = static_cast<float>(ImGui::GetTime());
@@ -378,17 +381,125 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
             const float beatsPerNotch = 2.0f / edit.zoom;
             edit.firstBeat -= io.MouseWheel * beatsPerNotch;
         }
+        if (canvasHovered && io.MouseWheel != 0.0f) edit.followPausedUntil = ImGui::GetTime() + 2.0;
         // Only while the mouse is over the ladder: Home over the juggler resets the camera.
         if (ImGui::IsWindowHovered() && !io.WantTextInput &&
-            (ImGui::IsKeyPressed(ImGuiKey_Home) || (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_0))))
+            (ImGui::IsKeyPressed(ImGuiKey_Home) || (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_0)))) {
             resetLadderView(edit);
+            result.goToStart = true;
+        }
     }
     const float beatSpacing = baseSpacing * edit.zoom;
+
+    // Following the playhead (while playing): keep it above 60% of the way down, gliding (a
+    // quick ease, so starting to follow from far away doesn't jump). The ladder runs on with
+    // the beat count; it never jumps back.
+    if (!loop.empty()) {
+        const double now = playheadBeat;
+        const bool following = options.followPlayhead && !chain.active && !edit.drawing && !edit.scrubbing &&
+                                edit.keyDragJuggler < 0 && ImGui::GetTime() >= edit.followPausedUntil;
+        if (following) {
+            const double visible = std::max(1.0, static_cast<double>((maxPt.y - y0) / beatSpacing));
+            const double at = (now - edit.firstBeat) / visible;  // 0 at the top, 1 at the bottom
+            double target = edit.firstBeat;
+            if (at > 0.6) target = now - 0.6 * visible;
+            else if (at < 0.0) target = now - 0.2 * visible;  // (above the top: scrolled away)
+            const double ease = std::min(1.0, static_cast<double>(ImGui::GetIO().DeltaTime) * 8.0);
+            edit.firstBeat += static_cast<float>((target - edit.firstBeat) * ease);
+        }
+    }
     const float firstBeat = edit.firstBeat;
     auto beatY = [&](int b) { return y0 + (static_cast<float>(b) - firstBeat) * beatSpacing; };
     // Beats with any part on screen (a little margin either side for markers and labels).
     const int bFirst = static_cast<int>(std::floor(firstBeat - (y0 - bodyTop) / beatSpacing)) - 1;
     const int bLast = static_cast<int>(std::ceil(firstBeat + (maxPt.y - y0) / beatSpacing)) + 1;
+    // Choreography keyframes: a marker on the middle of the juggler's strip at the keyframe's
+    // beat, in every repeat of the cycle on screen.
+    struct KeyMarker {
+        ImVec2 at;
+        int index;  // in options.keyframes
+    };
+    std::vector<KeyMarker> keyMarkers;
+    const float keyRadius = fontSize * 0.42f;
+    if (options.keyframeCycle > 0) {
+        for (int i = 0; i < static_cast<int>(options.keyframes.size()); ++i) {
+            const LadderKeyframe& k = options.keyframes[static_cast<size_t>(i)];
+            if (k.juggler < 0 || k.juggler >= jugglers) continue;
+            const float x = 0.5f * (columnX(k.juggler, false) + columnX(k.juggler, true));
+            const int cycle = options.keyframeCycle;
+            for (int b = k.beat + ((bFirst - k.beat) / cycle - 1) * cycle; b <= bLast; b += cycle)
+                if (b >= bFirst) keyMarkers.push_back({ImVec2(x, beatY(b)), i});
+        }
+    }
+    int hoverKey = -1;  // the keyframe marker under the mouse (index in options.keyframes)
+    int hoverKeyScreenBeat = 0;  // ...on this beat on screen
+    int hoverDerivedKey = -1;    // ...or a walk link's copy of a leader's keyframe (not editable)
+    for (const KeyMarker& m : keyMarkers)
+        if (canvasHovered && std::fabs(mouse.x - m.at.x) + std::fabs(mouse.y - m.at.y) <= keyRadius * 1.3f) {
+            if (options.keyframes[static_cast<size_t>(m.index)].derived) {
+                hoverDerivedKey = m.index;
+                continue;
+            }
+            hoverKey = m.index;
+            hoverKeyScreenBeat = static_cast<int>(std::lround(firstBeat + (m.at.y - y0) / beatSpacing));
+        }
+    // Dragging a keyframe marker up or down retimes it (to whole beats).
+    // Ctrl+dragging one makes a loiter: a copy on the same spot, between its neighbors (or onto a
+    // neighbor already on the same spot, which changes nothing).
+    if (hoverKey >= 0 && leftClicked && !chain.active && !edit.drawing && edit.keyDragJuggler < 0) {
+        const LadderKeyframe& key = options.keyframes[static_cast<size_t>(hoverKey)];
+        edit.keyDragJuggler = key.juggler;
+        edit.keyDragBeat = key.beat;
+        edit.keyDragScreenBeat = hoverKeyScreenBeat;
+        edit.keyDragLoiter = ImGui::GetIO().KeyCtrl;
+        if (edit.keyDragLoiter) {
+            const int cycle = std::max(1, options.keyframeCycle);
+            // This juggler's keyframes in beat order, and this one's neighbors.
+            std::vector<const LadderKeyframe*> keys;
+            for (const LadderKeyframe& k : options.keyframes)
+                if (k.juggler == key.juggler) keys.push_back(&k);
+            std::sort(keys.begin(), keys.end(),
+                      [](const LadderKeyframe* a, const LadderKeyframe* b) { return a->beat < b->beat; });
+            const size_t n = keys.size();
+            size_t i = 0;
+            while (i < n && keys[i]->beat != key.beat) ++i;
+            const LadderKeyframe& prev = *keys[(i + n - 1) % n];
+            const int prevGap = n <= 1 ? cycle : ((key.beat - prev.beat) % cycle + cycle) % cycle;
+            const int nextGap = n <= 1 ? cycle : ((keys[(i + 1) % n]->beat - key.beat) % cycle + cycle) % cycle;
+            const bool prevSame = prev.stayBeats > 0, nextSame = key.stayBeats > 0;
+            edit.keyDragMin = hoverKeyScreenBeat - prevGap + (prevSame ? 0 : 1);
+            edit.keyDragMax = hoverKeyScreenBeat + nextGap - (nextSame ? 0 : 1);
+        }
+        leftClicked = false;  // the press is the keyframe's, not a throw's
+    }
+    int keyDragTo = 0;  // while dragging a keyframe: the beat (on screen) it would go to
+    if (edit.keyDragJuggler >= 0) {
+        keyDragTo = static_cast<int>(std::lround(firstBeat + (mouse.y - y0) / beatSpacing));
+        if (edit.keyDragLoiter) keyDragTo = std::clamp(keyDragTo, edit.keyDragMin, edit.keyDragMax);
+        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            const int cycle = std::max(1, options.keyframeCycle);
+            const int to = ((edit.keyDragBeat + keyDragTo - edit.keyDragScreenBeat) % cycle + cycle) % cycle;
+            if (edit.keyDragLoiter) {
+                // (Onto a neighbor on the same spot: already a loiter, so nothing to add.)
+                bool onNeighbor = false;
+                for (const LadderKeyframe& k : options.keyframes)
+                    onNeighbor = onNeighbor || (k.juggler == edit.keyDragJuggler && k.beat == to);
+                if (keyDragTo != edit.keyDragScreenBeat && !onNeighbor) {
+                    result.loiterJuggler = edit.keyDragJuggler;
+                    result.loiterFrom = edit.keyDragBeat;
+                    result.loiterTo = to;
+                    result.loiterBefore = keyDragTo < edit.keyDragScreenBeat;
+                }
+            } else if (to != edit.keyDragBeat) {
+                result.moveKeyframeJuggler = edit.keyDragJuggler;
+                result.moveKeyframeFrom = edit.keyDragBeat;
+                result.moveKeyframeTo = to;
+            }
+            edit.keyDragJuggler = -1;
+            edit.keyDragLoiter = false;
+        }
+    }
     // Remember whether beat 1 was visible, for the toolbar's Reset View button.
     edit.beatOneVisible = beatY(0) >= bodyTop && beatY(0) <= maxPt.y;
 
@@ -699,6 +810,10 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             result.scrubbing = true;
             result.scrubBeat = static_cast<double>(firstBeat) + static_cast<double>((mouse.y - y0) / beatSpacing);
+            // A click (no drag yet) goes to the nearest whole beat; dragging moves smoothly.
+            const float slop = ImGui::GetIO().MouseDragThreshold;
+            if (ImGui::GetIO().MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] < slop * slop)
+                result.scrubBeat = std::round(result.scrubBeat);
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
         } else {
             edit.scrubbing = false;
@@ -706,7 +821,7 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         }
     } else if (overGutter) {
         ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
-        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) ImGui::SetTooltip("Click or drag here to move the playhead");
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) ImGui::SetTooltip("Click a beat number to go to that beat, or drag here to move the playhead");
     }
 
     // Idle hover: which end of which throw would a click pick up?
@@ -722,7 +837,7 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
     bool haveTarget = false;
     Slot target;
 
-    if (canvasHovered && inBody && !chain.active && !edit.drawing) {
+    if (canvasHovered && inBody && !chain.active && !edit.drawing && edit.keyDragJuggler < 0) {
         // Empty beats (0s) can be picked up too (they "land" on their own beat). In a sketch,
         // open throws ("?") are where drawing starts, and a spot that throws something but that
         // nothing lands in is where a catch can be drawn into. Right on one of those points, it
@@ -915,7 +1030,12 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         edit.contextJuggler = hoverHeader;
         ImGui::OpenPopup(kContextMenu);
     }
-    if (canvasHovered && inBody && rightClicked && !chain.active && !edit.drawing && !justStopped &&
+    if (canvasHovered && rightClicked && hoverKey >= 0 && !chain.active && !edit.drawing) {
+        edit.context = LadderEditState::Context::Keyframe;
+        edit.contextJuggler = options.keyframes[static_cast<size_t>(hoverKey)].juggler;
+        edit.contextKeyBeat = options.keyframes[static_cast<size_t>(hoverKey)].beat;
+        ImGui::OpenPopup(kContextMenu);
+    } else if (canvasHovered && inBody && rightClicked && !chain.active && !edit.drawing && !justStopped &&
         !result.startedChain && !result.startedDrawing) {
         // The nearest curve within reach (no "clearly nearest" rule here: the menu names the
         // throw it's for).
@@ -1138,19 +1258,96 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         if (!haveTarget) dl->AddCircleFilled(byStart ? c.p0 : c.p1, 4.0f, mixColor(style.color, white, 0.5f, 0.9f));
     }
 
-    // Playhead: where the jugglers are now, at sub-beat resolution, plus the same moment in
-    // every other repeat on screen (fainter). Positioned with floats so it glides.
+    // Loiters: a white line down the middle of the strip from a keyframe to the next, where the
+    // juggler stays put in between. (Walking and turning aren't drawn: kept uncluttered.)
+    if (options.keyframeCycle > 0) {
+        const int cycle = options.keyframeCycle;
+        for (const LadderKeyframe& k : options.keyframes) {
+            if (k.stayBeats <= 0 || k.juggler < 0 || k.juggler >= jugglers) continue;
+            const float x = 0.5f * (columnX(k.juggler, false) + columnX(k.juggler, true));
+            const int start = k.beat + ((bFirst - k.stayBeats - k.beat) / cycle - 1) * cycle;
+            for (int b = start; b <= bLast; b += cycle) {
+                const float y0 = beatY(b) + keyRadius, y1 = beatY(b + k.stayBeats) - keyRadius;
+                if (y1 <= y0 || y1 < bodyTop) continue;
+                dl->AddLine(ImVec2(x, std::max(y0, bodyTop)), ImVec2(x, y1), IM_COL32(20, 22, 28, 200), 4.0f);
+                dl->AddLine(ImVec2(x, std::max(y0, bodyTop)), ImVec2(x, y1), IM_COL32(236, 238, 244, 240), 2.0f);
+            }
+        }
+    }
+    // Choreography keyframes: hollow diamonds (outlined dark and light, so they show on any
+    // throw color), filled while hovered; with showKeyframeMarks, "M3" beside one on a mark.
+    for (const KeyMarker& m : keyMarkers) {
+        const LadderKeyframe& key = options.keyframes[static_cast<size_t>(m.index)];
+        if (options.showKeyframeMarks && key.mark >= 0) {
+            char label[12];
+            std::snprintf(label, sizeof(label), "M%d", key.mark + 1);
+            const ImVec2 at(m.at.x + keyRadius + fontSize * 0.25f, m.at.y - fontSize * 0.5f);
+            dl->AddText(ImVec2(at.x + 1.0f, at.y + 1.0f), IM_COL32(0, 0, 0, 200), label);
+            dl->AddText(at, IM_COL32(236, 226, 150, 255), label);  // the spike marks' pale yellow
+        }
+        const ImVec2 c = m.at;
+        const float r = keyRadius;
+        const ImVec2 pts[4] = {ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y), ImVec2(c.x, c.y + r), ImVec2(c.x - r, c.y)};
+        if (key.derived) {  // a walk link's copy: dim
+            dl->AddConvexPolyFilled(pts, 4, IM_COL32(20, 22, 28, 200));
+            dl->AddPolyline(pts, 4, IM_COL32(150, 154, 164, 200), ImDrawFlags_Closed, 1.0f);
+            continue;
+        }
+        dl->AddConvexPolyFilled(pts, 4, m.index == hoverKey ? IM_COL32(236, 238, 244, 255) : IM_COL32(20, 22, 28, 230));
+        dl->AddPolyline(pts, 4, IM_COL32(236, 238, 244, 255), ImDrawFlags_Closed, 1.5f);
+    }
+    // A keyframe being dragged: a filled diamond where it would go, with the beat.
+    if (edit.keyDragJuggler >= 0 && edit.keyDragJuggler < jugglers) {
+        const ImVec2 c(0.5f * (columnX(edit.keyDragJuggler, false) + columnX(edit.keyDragJuggler, true)), beatY(keyDragTo));
+        const float r = keyRadius * 1.2f;
+        const ImVec2 pts[4] = {ImVec2(c.x, c.y - r), ImVec2(c.x + r, c.y), ImVec2(c.x, c.y + r), ImVec2(c.x - r, c.y)};
+        if (edit.keyDragLoiter && keyDragTo != edit.keyDragScreenBeat) {
+            // The loiter it would make: a white line from the keyframe to its copy.
+            const float ya = beatY(std::min(keyDragTo, edit.keyDragScreenBeat)) + keyRadius;
+            const float yb = beatY(std::max(keyDragTo, edit.keyDragScreenBeat)) - keyRadius;
+            dl->AddLine(ImVec2(c.x, ya), ImVec2(c.x, yb), IM_COL32(20, 22, 28, 200), 4.0f);
+            dl->AddLine(ImVec2(c.x, ya), ImVec2(c.x, yb), IM_COL32(236, 238, 244, 240), 2.0f);
+        }
+        dl->AddConvexPolyFilled(pts, 4, IM_COL32(236, 238, 244, 255));
+        dl->AddPolyline(pts, 4, IM_COL32(20, 22, 28, 255), ImDrawFlags_Closed, 1.5f);
+        const int cycle = std::max(1, options.keyframeCycle);
+        if (edit.keyDragLoiter) {
+            const int a = std::min(keyDragTo, edit.keyDragScreenBeat), b = std::max(keyDragTo, edit.keyDragScreenBeat);
+            if (a == b)
+                ImGui::SetTooltip("J%d: drag up or down to loiter here (between the keyframes either side)",
+                                  edit.keyDragJuggler + 1);
+            else
+                ImGui::SetTooltip("J%d loiters here from beat %d to beat %d (%d beats)", edit.keyDragJuggler + 1, a + 1, b + 1,
+                                  b - a);
+        } else {
+            ImGui::SetTooltip("J%d keyframe to beat %d", edit.keyDragJuggler + 1,
+                              ((edit.keyDragBeat + keyDragTo - edit.keyDragScreenBeat) % cycle + cycle) % cycle + 1);
+        }
+    } else if (hoverDerivedKey >= 0 && hoverKey < 0 && !ImGui::IsPopupOpen(kContextMenu) &&
+               !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        const LadderKeyframe& k = options.keyframes[static_cast<size_t>(hoverDerivedKey)];
+        const std::string& how = k.juggler < static_cast<int>(options.walkLabels.size())
+                                     ? options.walkLabels[static_cast<size_t>(k.juggler)]
+                                     : std::string();
+        ImGui::SetTooltip("J%d %s: this is the leader's keyframe, moved round.\n"
+                          "Edit the leader's keyframes, or unlink J%d (right-click their number).",
+                          k.juggler + 1, how.c_str(), k.juggler + 1);
+    } else if (hoverKey >= 0 && !ImGui::IsPopupOpen(kContextMenu) && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+        const LadderKeyframe& k = options.keyframes[static_cast<size_t>(hoverKey)];
+        ImGui::SetTooltip("J%d keyframe on beat %d: %s%s\nDrag up or down to move it to another beat; Ctrl+drag to loiter here;\n"
+                          "right-click for more",
+                          k.juggler + 1, k.beat + 1, k.where.c_str(), k.longTurn ? " (turning the long way round)" : "");
+    }
+
+    // Playhead: where the jugglers are now, at sub-beat resolution (bright), plus the same moment
+    // in every other repeat on screen (fainter). Positioned with floats so it glides.
     //
     // The repeat is how long until the ladder's colors repeat: the same prop in the same hand.
     // Hands alternate, so an odd period takes two loops to come round; and with a color per prop,
     // the props on an orbit take turns, so it takes as many loops as that orbit has props (all
     // orbits at once: the least common multiple). With colors by orbit (or by path, in a
-    // sketch), only the hands matter. Spacing the copies like that means the bright one always
-    // shows the prop the jugglers are really throwing (in "3", it sweeps 6 beats, not 1).
-    //
-    // The bright copy is the one on beats 1 to `cycle`: going from beat `cycle` to the next it
-    // fades to dim over that beat while the copy coming down from beat 0 to beat 1 brightens,
-    // so there's always exactly one bright playhead and it never jumps.
+    // sketch), only the hands matter. Spacing the copies like that means each one shows the
+    // same props in the same hands (in "3", they're 6 beats apart, not 1).
     {
         auto gcd = [](long long a, long long b) {
             while (b != 0) {
@@ -1178,9 +1375,7 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
             const float y = y0 + static_cast<float>(b - localBeat) * beatSpacing;
             if (y > maxPt.y + 2.0f) break;
             if (y < bodyTop) continue;
-            // Brightness: 1 on beats 1..cycle (b from 0 to cycle - 1), fading in from beat 0
-            // and out past beat `cycle`, each over one beat.
-            const float w = static_cast<float>(std::clamp(std::min(b + 1.0, repeat - b), 0.0, 1.0));
+            const float w = std::fabs(b - playheadBeat) < 0.5 ? 1.0f : 0.0f;  // the playhead itself, or a copy
             const ImU32 col = IM_COL32(255, 255, 255, static_cast<int>(90.0f + 130.0f * w));
             if (w > 0.0f) dl->AddLine(ImVec2(left, y), ImVec2(right, y), IM_COL32(255, 255, 255, static_cast<int>(40.0f * w)), 6.0f);
             dl->AddLine(ImVec2(left, y), ImVec2(right, y), col, 1.0f + w);
@@ -1322,6 +1517,41 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
     } else if (sketch && hoverIndex >= 0 && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         ImGui::SetTooltip("Click to draw this throw again.\nRight-click to delete it or its whole path.");
     }
+    // Resting on a throw (not editing): what it is, and with clubs or rings, how it spins.
+    {
+        const DrawnThrow* rest = !sketch && !chain.active && !edit.drawing && hoverIndex >= 0 &&
+                                         !ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsPopupOpen(kContextMenu)
+                                     ? &drawn[static_cast<size_t>(hoverIndex)]
+                                     : nullptr;
+        if (!rest) {
+            edit.restJuggler = -1;
+        } else if (rest->from.juggler != edit.restJuggler || rest->from.beat != edit.restBeat) {
+            edit.restJuggler = rest->from.juggler;
+            edit.restBeat = rest->from.beat;
+            edit.restSince = ImGui::GetTime();
+        } else if (ImGui::GetTime() - edit.restSince > 0.6) {
+            const int b = ((rest->from.beat % period) + period) % period;
+            std::string what = (jugglers > 1 ? "J" + std::to_string(rest->from.juggler + 1) + ", " : std::string()) + "beat " +
+                               std::to_string(rest->from.beat + 1) + ": " +
+                               throwLabel(rest->t, rest->from.juggler, jugglers, options.relativeTargets);
+            const size_t index = static_cast<size_t>(rest->from.juggler * period + b);
+            if (options.spins && index < options.spins->size()) {
+                const ThrowSpin& s = (*options.spins)[index];
+                if (s.flightBeats > 0.0f) {
+                    static const char* const kNames[] = {"flat (no spin)", "a single", "a double", "a triple", "a quad"};
+                    what += s.spins >= 0 && s.spins <= 4 ? std::string(", ") + kNames[s.spins]
+                                                         : ", " + std::to_string(s.spins) + " spins";
+                    char rate[64];
+                    std::snprintf(rate, sizeof(rate), "\n%.2f spins a beat (%d in %.2f beats in the air)",
+                                  static_cast<double>(s.spins) / static_cast<double>(s.flightBeats), s.spins,
+                                  static_cast<double>(s.flightBeats));
+                    what += rate;
+                }
+            }
+            what += "\nClick near either end to edit it; right-click for more.";
+            ImGui::SetTooltip("%s", what.c_str());
+        }
+    }
 
     // The right-click menu.
     if (ImGui::BeginPopup(kContextMenu)) {
@@ -1357,6 +1587,23 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
                 edit.pathHighlightPeriod = cyclePeriod;
                 ImGui::SetTooltip("Leaves every throw on this path undecided (%d throw%s).",
                                   static_cast<int>(highlight.size()), highlight.size() == 1 ? "" : "s");
+            }
+        } else if (edit.context == LadderEditState::Context::Keyframe) {
+            ImGui::TextDisabled("J%d keyframe, beat %d", edit.contextJuggler + 1, edit.contextKeyBeat + 1);
+            ImGui::Separator();
+            bool longTurn = false;
+            for (const LadderKeyframe& k : options.keyframes)
+                if (k.juggler == edit.contextJuggler && k.beat == edit.contextKeyBeat) longTurn = k.longTurn;
+            if (ImGui::MenuItem("Turn the Long Way Round", nullptr, longTurn)) {
+                result.longTurnKeyframeJuggler = edit.contextJuggler;
+                result.longTurnKeyframeBeat = edit.contextKeyBeat;
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("On the way to this keyframe, turn the other way: through more than half a turn,\n"
+                                  "rather than the shorter way.");
+            if (ImGui::MenuItem("Delete keyframe")) {
+                result.deleteKeyframeJuggler = edit.contextJuggler;
+                result.deleteKeyframeBeat = edit.contextKeyBeat;
             }
         } else if (edit.context == LadderEditState::Context::Juggler) {
             const int j = std::min(edit.contextJuggler, jugglers - 1);
@@ -1405,6 +1652,14 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
             if (ImGui::MenuItem("Unlink", nullptr, false, isLinked(j))) result.unlinkJuggler = j;
             reasonTooltip(isLinked(j) ? "Writes J" + std::to_string(j + 1) + "'s throws out in full, to be edited on their own."
                                       : "J" + std::to_string(j + 1) + " isn't a link.");
+            if (options.walkLinks) {
+                ImGui::Separator();
+                if (ImGui::MenuItem("Walk Like...")) result.walkLikeJuggler = j;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Choreography: J%d walks like another juggler, some beats later and maybe\n"
+                                      "turned round the middle of the floor.",
+                                      j + 1);
+            }
         } else {
             const int beat = edit.contextBeat;
             ImGui::TextDisabled("Beat %d", beat + 1);
@@ -1563,14 +1818,28 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
                 const std::string label = "J" + std::to_string(j + 1);
                 const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
                 dl->AddText(ImVec2((a.x + b.x - ts.x) * 0.5f, (a.y + b.y - ts.y) * 0.5f), ink, label.c_str());
-                // A link says what it copies ("= J2[3]"), if there's room.
-                if (isLinked(j) && !isCollapsed(j)) {
-                    const PartLink& link = form->links[static_cast<size_t>(j)];
-                    std::string what = "= J" + linkText(link.to, link.start, period).substr(1);
-                    if (link.lrSwap) what += " LR";
-                    // Between the L and R labels below the number, where there's room.
-                    const ImVec2 ws = ImGui::CalcTextSize(what.c_str());
+                // A link says what it copies ("= J2[3]"), if there's room; or a walk link what it
+                // walks like.
+                const std::string walkLabel =
+                    j < static_cast<int>(options.walkLabels.size()) ? options.walkLabels[static_cast<size_t>(j)] : std::string();
+                if ((isLinked(j) || !walkLabel.empty()) && !isCollapsed(j)) {
+                    std::string what;
+                    if (isLinked(j)) {
+                        const PartLink& link = form->links[static_cast<size_t>(j)];
+                        what = "= J" + linkText(link.to, link.start, period).substr(1);
+                        if (link.lrSwap) what += " LR";
+                    } else {
+                        what = walkLabel;
+                    }
+                    // Between the L and R labels below the number, where there's room (a walk link
+                    // squeezed to "J1+2ccw1/4" if need be).
                     const float left = columnX(j, false) + fontSize * 0.6f, right = columnX(j, true) - fontSize * 0.6f;
+                    if (!isLinked(j) && ImGui::CalcTextSize(what.c_str()).x > right - left) {
+                        const std::string prefix = "walks like ";
+                        if (what.compare(0, prefix.size(), prefix) == 0) what = what.substr(prefix.size());
+                        what.erase(std::remove(what.begin(), what.end(), ' '), what.end());
+                    }
+                    const ImVec2 ws = ImGui::CalcTextSize(what.c_str());
                     if (ws.x <= right - left)
                         dl->AddText(ImVec2(0.5f * (left + right - ws.x), bodyTop - fontSize * 1.25f), textCol, what.c_str());
                 }
@@ -1593,8 +1862,10 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
                 what += ": " + linkWords(link.to, link.start, period);
                 if (link.lrSwap) what += ", hands swapped";
             }
+            if (hoverHeader < static_cast<int>(options.walkLabels.size()) && !options.walkLabels[static_cast<size_t>(hoverHeader)].empty())
+                what += "; " + options.walkLabels[static_cast<size_t>(hoverHeader)];
             what += hoverHeader == options.selectedJuggler ? " (selected). Click to deselect." : ". Click to select.";
-            what += "\nRight-click: Same as... / Unlink";
+            what += options.walkLinks ? "\nRight-click: Same as... / Unlink / Walk Like..." : "\nRight-click: Same as... / Unlink";
             ImGui::SetTooltip("%s", what.c_str());
         }
     }

@@ -1,11 +1,13 @@
 // juggle_sim.cpp - see juggle_sim.h.
 #include "juggle_sim.h"
 
+#include "choreography.h"
 #include "loop_ops.h"
 
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <unordered_map>
 
 namespace {
 
@@ -29,6 +31,10 @@ Vec3 catchPoint(bool right, float heightFraction) {
     return Vec3(right ? -x : x, 1.18f, 0.36f);
 }
 const Vec3 kBallOnPalm(0.0f, 0.0125f + kBallRadius, 0.0f);  // ball center relative to palm
+// A self 1 is a hand-across: the throwing hand carries the prop just past the middle and lets
+// it go, and the other hand takes it right beside it (the hands nearly touch).
+Vec3 handAcrossThrowPoint(bool right) { return Vec3(right ? 0.01f : -0.01f, 1.13f, 0.36f); }
+Vec3 handAcrossCatchPoint(bool right) { return Vec3(right ? -0.10f : 0.10f, 1.14f, 0.36f); }
 
 // Neutral shoulders and how far a palm can get from its shoulder (upper arm + forearm + a
 // little of the hand, minus a margin). Must match the juggler figure's proportions
@@ -180,6 +186,7 @@ Vec3 passCatchPoint(bool right, float heightFraction) {
 // facing direction (+Z) to (sin yaw, 0, cos yaw). Matches Mat4::translation * Mat4::rotationY.
 struct Placement {
     Vec3 position;
+    float yaw = 0.0f;
     float cosYaw = 1.0f, sinYaw = 0.0f;
     Vec3 dir(Vec3 d) const { return Vec3(d.x * cosYaw + d.z * sinYaw, d.y, -d.x * sinYaw + d.z * cosYaw); }
     Vec3 point(Vec3 p) const { return position + dir(p); }
@@ -203,15 +210,15 @@ class Evaluator {
 public:
     Evaluator(const JugglingLoop& loop, const JuggleParams& params, float intensity = 0.0f)
         : loop_(loop), period_(loop.period), jugglers_(loop.jugglers), params_(params), intensity_(intensity) {
+        // With a choreography the jugglers move: where they are depends on the time. Otherwise
+        // they stand still, in the default formation.
+        cycle_ = choreographyCycle(loop, params);
+        moving_ = cycle_ > 0;
         for (int k = 0; k < jugglers_; ++k) {
             Vec3 position;
             float yaw = 0.0f;
             jugglerPlacement(loop, params, k, &position, &yaw);
-            Placement pl;
-            pl.position = position;
-            pl.cosYaw = std::cos(yaw);
-            pl.sinYaw = std::sin(yaw);
-            placements_.push_back(pl);
+            placements_.push_back(makePlacement(position, yaw));
         }
         turnTo_.assign(static_cast<size_t>(jugglers_ * jugglers_), 0.0f);
         for (int k = 0; k < jugglers_; ++k)
@@ -235,36 +242,46 @@ public:
                 incomingFrom_[landing] = k;
             }
         }
-        // Per-throw data used many times a frame by the body and gaze, for one full repeat of
-        // the pattern (two loops if the loop is odd, so each beat is seen from both hands).
+        // Everything repeats after `span_` beats: the hands (two loops if the loop is odd, so
+        // each beat is seen from both hands) and, with a choreography, the walking too.
         span_ = period_ % 2 == 0 ? period_ : 2 * period_;
-        throws_.resize(static_cast<size_t>(jugglers_ * span_));
-        for (int k = 0; k < jugglers_; ++k) {
-            for (int b = 0; b < span_; ++b) {
-                ThrowInfo& info = throws_[static_cast<size_t>(k * span_ + b)];
-                info.value = valueAt(k, b);
-                info.catchDwell = catchDwell(k, b);
-                info.drive = driveFor(k, b);
-                const float hf = heightFraction(k, b);
-                const float bodyDrive = std::max(0.0f, info.drive.distance - kMaxArmDrive);
-                // A body can only sink and rise so fast: with too little time (a short dwell at
-                // a slow tempo), it dips less.
-                const float bumpSeconds =
-                    std::min(info.drive.carrySeconds - info.drive.seconds, 1.6f * info.drive.seconds);
-                const float maxDip = kMaxBodySpeed * std::max(bumpSeconds, 0.0f);
-                info.dip = std::min(kCrouchPerBodyDrive * bodyDrive + kFervorBob * intensity_ * hf, maxDip);
-                info.sway = std::min(kMaxSway * hf * (0.4f + 0.6f * intensity_), 0.4f * maxDip);
-                if (info.value > 0 && !isHeld(k, b)) {
-                    info.launch = launchPoint(k, b);
-                    info.launchVelocity = launchVelocity(k, b, info.value);
-                    info.flightBeats = static_cast<float>(catchTimeFor(destAt(k, b), b + info.value) - b);
-                }
-            }
-        }
+        if (moving_) span_ = lcm(span_, cycle_);
     }
 
     int jugglers() const { return jugglers_; }
-    const Placement& placement(int j) const { return placements_[static_cast<size_t>(j)]; }
+    int span() const { return span_; }  // beats after which everything repeats
+    // Where j is (and faces) at beat t.
+    Placement placement(int j, double t) const {
+        if (!moving_) return placements_[static_cast<size_t>(j)];
+        Vec3 position;
+        float yaw = 0.0f;
+        jugglerPlacementAt(loop_, params_, j, t, &position, &yaw);
+        return makePlacement(position, yaw);
+    }
+    // How fast j is walking at beat t (world, m/s).
+    Vec3 walkVelocity(int j, double t) const {
+        if (!moving_) return Vec3(0.0f, 0.0f, 0.0f);
+        const double h = 0.02;
+        return (placement(j, t + h).position - placement(j, t - h).position) *
+               static_cast<float>(1.0 / (2.0 * h * secondsPerBeat()));
+    }
+    static Placement makePlacement(Vec3 position, float yaw) {
+        Placement pl;
+        pl.position = position;
+        pl.yaw = yaw;
+        pl.cosYaw = std::cos(yaw);
+        pl.sinYaw = std::sin(yaw);
+        return pl;
+    }
+    static int lcm(int a, int b) {
+        int x = a, y = b;
+        while (y != 0) {
+            const int r = x % y;
+            x = y;
+            y = r;
+        }
+        return a / x * b;
+    }
 
     int valueAt(int j, int b) const { return loop_.at(j, b).value; }
     int destAt(int j, int b) const { return loop_.at(j, b).dest; }
@@ -307,9 +324,11 @@ public:
 
     // Where j's hand releases on beat b and catches before throwing on beat b (j-local).
     Vec3 throwPointAt(int j, int b) const {
+        if (valueAt(j, b) == 1 && destAt(j, b) == j) return handAcrossThrowPoint(rightHand(j, b));
         return turned(throwPoint(rightHand(j, b), heightFraction(j, b)), throwTurn(j, b));
     }
     Vec3 catchPointAt(int j, int b) const {
+        if (incomingAt(j, b) == 1 && incomingFrom(j, b) == j) return handAcrossCatchPoint(rightHand(j, b));
         if (incomingPass(j, b) && prop() != PropType::Ball)
             return turned(passCatchPoint(rightHand(j, b), incomingHeightFraction(j, b)), catchTurn(j, b));
         return turned(catchPoint(rightHand(j, b), incomingHeightFraction(j, b)), catchTurn(j, b));
@@ -320,15 +339,22 @@ public:
     float throwTurn(int j, int b) const {
         const int v = valueAt(j, b);
         if (v <= 0 || isHeld(j, b)) return 0.0f;
-        return turnTo(j, destAt(j, b));
+        return turnTo(j, destAt(j, b), b);
     }
     float catchTurn(int j, int b) const {
         if (!incomingPass(j, b)) return 0.0f;
-        return turnTo(j, incomingFrom(j, b));
+        return turnTo(j, incomingFrom(j, b), b);
     }
     // Whether j throws with the right hand on beat b (their hands may be swapped: LRswap).
     bool rightHand(int j, int b) const { return loop_.rightHandBeat(j, b); }
-    float turnTo(int j, int other) const { return turnTo_[static_cast<size_t>(j * jugglers_ + other)]; }
+    // How far j's hands turn toward `other` around beat t.
+    float turnTo(int j, int other, double t) const {
+        if (!moving_) return turnTo_[static_cast<size_t>(j * jugglers_ + other)];
+        if (other == j) return 0.0f;
+        const Vec3 local = placement(j, t).localPoint(placement(other, t).position);
+        const float angle = std::atan2(local.x, local.z);
+        return std::fabs(angle) < 1e-4f ? 0.0f : std::clamp(kPassTurnShare * angle, -kMaxPassTurn, kMaxPassTurn);
+    }
     // A juggler-local point or direction turned by `angle` about the vertical through the feet.
     static Vec3 turned(Vec3 p, float angle) {
         if (angle == 0.0f) return p;
@@ -381,8 +407,8 @@ public:
         if (prop() == PropType::Ball) return false;
         const int r = destAt(j, b);
         if (r == j) return false;
-        const Vec3 thrower = placement(j).dir(frameFor(j, b).dir);
-        const Vec3 catcher = placement(r).dir(frameFor(r, b + valueAt(j, b)).dir);
+        const Vec3 thrower = placement(j, b).dir(frameFor(j, b).dir);
+        const Vec3 catcher = placement(r, b + valueAt(j, b)).dir(frameFor(r, b + valueAt(j, b)).dir);
         return dot(thrower, catcher) < 0.0f;
     }
     // The angle (in the thrower's frame) the throw arrives at: whatever puts it at the caught
@@ -397,7 +423,7 @@ public:
         const int r = destAt(j, b);
         const float s = flips(j, b) ? -1.0f : 1.0f;
         SpinFrame f;
-        f.dir = placement(r).localDir(placement(j).dir(frameFor(j, b).dir)) * s;
+        f.dir = placement(r, b + valueAt(j, b)).localDir(placement(j, b).dir(frameFor(j, b).dir)) * s;
         if (sign) *sign = s;
         return f;
     }
@@ -423,12 +449,13 @@ public:
     // where the center is when the hand is at the throw point (release) and at the catch point
     // (catch), so flights don't depend on the hand paths.
     Vec3 launchPoint(int j, int b) const {
-        return placement(j).point(throwPointAt(j, b) + propOffset(frameFor(j, b), propAngles(prop()).release));
+        return placement(j, b).point(throwPointAt(j, b) + propOffset(frameFor(j, b), propAngles(prop()).release));
     }
     Vec3 landingPoint(int j, int b, int v) const {
         const int r = destAt(j, b);
         const SpinFrame f = arrivalFrame(j, b, nullptr);
-        return placement(r).point(catchPointAt(r, b + v) + propOffset(f, propAngles(prop()).caught));
+        // Where the catcher is when they catch it (they may be walking).
+        return placement(r, catchTimeFor(r, b + v)).point(catchPointAt(r, b + v) + propOffset(f, propAngles(prop()).caught));
     }
     float flightSeconds(int j, int b, int v) const {
         return static_cast<float>((catchTimeFor(destAt(j, b), b + v) - b) * secondsPerBeat());
@@ -453,8 +480,9 @@ public:
         const SpinFrame f = frameFor(j, b);
         const float tau = static_cast<float>((t - b) * secondsPerBeat());
         const float theta = propAngles(prop()).release + spinRate(j, b, v) * tau;
-        out->axis = placement(j).dir(f.at(theta));
-        out->spinAxis = placement(j).dir(f.spinAxis());
+        const Placement pl = placement(j, b);
+        out->axis = pl.dir(f.at(theta));
+        out->spinAxis = pl.dir(f.spinAxis());
     }
 
     // Velocity j's hand has when it releases on beat b (j-local): whatever makes the prop's
@@ -465,9 +493,11 @@ public:
         const int v = valueAt(j, b);
         if (v <= 0 || isHeld(j, b)) return Vec3(0.0f, 0.0f, 0.0f);
         const float turning = spinRate(j, b, v) * gripToCenter();
-        const Vec3 world = launchVelocity(j, b, v) -
-                           placement(j).dir(frameFor(j, b).rate(propAngles(prop()).release)) * turning;
-        return placement(j).localDir(world);
+        // (Relative to the juggler, who may be walking.)
+        const Placement pl = placement(j, b);
+        const Vec3 world = launchVelocity(j, b, v) - pl.dir(frameFor(j, b).rate(propAngles(prop()).release)) * turning -
+                           walkVelocity(j, b);
+        return pl.localDir(world);
     }
     // Velocity j's hand has at the catch before throwing on beat b (j-local): a fraction of the
     // incoming prop's velocity, so the hand "gives" with the catch (an inelastic collision).
@@ -479,9 +509,11 @@ public:
         const Vec3 accel(0.0f, -kGravity, 0.0f);
         const Vec3 centerVelocity = launchVelocity(src, from, vIn) + accel * flightSeconds(src, from, vIn);
         const float turning = spinRate(src, from, vIn) * gripToCenter();
-        const Vec3 gripVelocity =
-            centerVelocity - placement(src).dir(frameFor(src, from).rate(arrivalAngle(src, from))) * turning;
-        return placement(j).localDir(gripVelocity) * kCatchSoftness;
+        const double catchTime = catchTimeFor(j, b);
+        const Vec3 gripVelocity = centerVelocity -
+                                  placement(src, from).dir(frameFor(src, from).rate(arrivalAngle(src, from))) * turning -
+                                  walkVelocity(j, catchTime);
+        return placement(j, catchTime).localDir(gripVelocity) * kCatchSoftness;
     }
 
     // The drive for j's release on beat b: v^2 / 2a at the hand's top acceleration, up to the
@@ -595,13 +627,13 @@ public:
         float weightSum = 0.0f;
         if (jugglers_ == 1) {
             const float w = gazeWeight(0.25f);
-            sum = placement(j).point(Vec3(0.0f, 1.2f, 0.5f)) * w;
+            sum = placement(j, t).point(Vec3(0.0f, 1.2f, 0.5f)) * w;
             weightSum = w;
         } else {
             for (int k = 0; k < jugglers_; ++k) {
                 if (k == j) continue;
                 const float w = gazeWeight(0.5f);
-                sum = sum + placement(k).point(Vec3(0.0f, 1.35f, 0.0f)) * w;
+                sum = sum + placement(k, t).point(Vec3(0.0f, 1.35f, 0.0f)) * w;
                 weightSum += w;
             }
         }
@@ -758,9 +790,10 @@ public:
             const float w = u * u * (3.0f - 2.0f * u);  // smoothstep: no kink at either end
             frame.dir = normalize(from.dir * (1.0f - w) + to.dir * w);
         }
-        out->center = placement(j).point(p + propOffset(frame, theta));
-        out->axis = placement(j).dir(frame.at(theta));
-        out->spinAxis = placement(j).dir(frame.spinAxis());
+        const Placement pl = placement(j, t);
+        out->center = pl.point(p + propOffset(frame, theta));
+        out->axis = pl.dir(frame.at(theta));
+        out->spinAxis = pl.dir(frame.spinAxis());
     }
 
     // Smooths the body with fewer samples (see bodyAt): a little rougher, and several times
@@ -773,7 +806,9 @@ private:
     int period_;
     int jugglers_;
     JuggleParams params_;
-    std::vector<Placement> placements_;
+    std::vector<Placement> placements_;  // standing still: where each juggler is
+    bool moving_ = false;                 // a choreography moves them
+    int cycle_ = 0;                       // ...repeating every cycle_ beats
     std::vector<float> turnTo_;  // [j * jugglers + other]: how far j's hands turn toward other
     struct ThrowInfo {
         int value = 0;
@@ -784,14 +819,39 @@ private:
         Vec3 launch, launchVelocity;  // world
         float flightBeats = 0.0f;  // 0 if not thrown (empty beat or a held 2)
     };
+    // Per-throw data used many times a frame by the body and gaze, worked out when first asked
+    // for: only the throws around the moment being drawn are (the span can be long, when the
+    // walking and the throws take a long time to line up).
     const ThrowInfo& throwInfo(int j, int beat) const {
-        return throws_[static_cast<size_t>(j * span_ + modPositive(beat, span_))];
+        const int b = modPositive(beat, span_);
+        const long long key = static_cast<long long>(j) * span_ + b;
+        const std::unordered_map<long long, ThrowInfo>::const_iterator found = throwCache_.find(key);
+        if (found != throwCache_.end()) return found->second;
+        ThrowInfo info;
+        const int k = j;
+        info.value = valueAt(k, b);
+        info.catchDwell = catchDwell(k, b);
+        info.drive = driveFor(k, b);
+        const float hf = heightFraction(k, b);
+        const float bodyDrive = std::max(0.0f, info.drive.distance - kMaxArmDrive);
+        // A body can only sink and rise so fast: with too little time (a short dwell at a slow
+        // tempo), it dips less.
+        const float bumpSeconds = std::min(info.drive.carrySeconds - info.drive.seconds, 1.6f * info.drive.seconds);
+        const float maxDip = kMaxBodySpeed * std::max(bumpSeconds, 0.0f);
+        info.dip = std::min(kCrouchPerBodyDrive * bodyDrive + kFervorBob * intensity_ * hf, maxDip);
+        info.sway = std::min(kMaxSway * hf * (0.4f + 0.6f * intensity_), 0.4f * maxDip);
+        if (info.value > 0 && !isHeld(k, b)) {
+            info.launch = launchPoint(k, b);
+            info.launchVelocity = launchVelocity(k, b, info.value);
+            info.flightBeats = static_cast<float>(catchTimeFor(destAt(k, b), b + info.value) - b);
+        }
+        return throwCache_.emplace(key, info).first->second;
     }
 
     float intensity_;
     std::vector<int> incomingValue_, incomingFrom_;
     int span_ = 0;
-    std::vector<ThrowInfo> throws_;
+    mutable std::unordered_map<long long, ThrowInfo> throwCache_;
 };
 
 }  // namespace
@@ -829,13 +889,42 @@ void jugglerPlacement(const JugglingLoop& loop, const JuggleParams& params, int 
     *yaw = kPi - angle;  // facing the middle
 }
 
+int choreographyCycle(const JugglingLoop& loop, const JuggleParams& params) {
+    const Choreography* c = params.choreography;
+    if (!c || !c->active() || loop.period <= 0) return 0;
+    if (c->cycle > 0) return c->cycle;
+    // A whole number of the pattern's periods, enough to hold every keyframe (a choreography
+    // can take longer than the pattern to come round).
+    int lastBeat = 0;
+    for (const std::vector<Keyframe>& keys : c->keys)
+        for (const Keyframe& k : keys) lastBeat = std::max(lastBeat, k.beat);
+    return (lastBeat / loop.period + 1) * loop.period;
+}
+
+void jugglerPlacementAt(const JugglingLoop& loop, const JuggleParams& params, int juggler, double beat,
+                        Vec3* position, float* yaw) {
+    const Choreography* c = params.choreography;
+    const int cycle = choreographyCycle(loop, params);
+    if (cycle > 0) {
+        const float scale = c->reference > 0.0 ? static_cast<float>(passingDistance(loop, params) / c->reference) : 1.0f;
+        if (choreographyPlacement(*c, juggler, beat, cycle, scale, position, yaw)) return;
+        if (juggler >= 0 && juggler < static_cast<int>(c->marks.size())) {  // on their own mark
+            const SpikeMark& m = c->marks[static_cast<size_t>(juggler)];
+            *position = Vec3(m.x * scale, 0.0f, m.z * scale);
+            *yaw = m.yaw;
+            return;
+        }
+    }
+    jugglerPlacement(loop, params, juggler, position, yaw);
+}
+
 SceneExtents computeSceneExtents(const JugglingLoop& sketchOrLoop, const JuggleParams& params, int onlyJuggler) {
     SceneExtents e;
     if (sketchOrLoop.empty()) return e;
     const JugglingLoop loop = physicsLoop(sketchOrLoop);
     Evaluator ev(loop, params, patternIntensity(loop, params));
     ev.useQuickBody();
-    const int span = loop.period % 2 == 0 ? loop.period : loop.period * 2;  // hands and throws both repeat
+    const int span = ev.span();  // hands, throws (and any walking) all repeat
     const float handThickness = 0.025f;
     e.lowestHandY = 1e9f;
     e.highestPropY = -1e9f;
@@ -849,25 +938,32 @@ SceneExtents computeSceneExtents(const JugglingLoop& sketchOrLoop, const JuggleP
     const float reach = propReach(params.prop);
     for (int j = 0; j < loop.jugglers; ++j) {
         if (onlyJuggler >= 0 && j != onlyJuggler) continue;
-        const Placement& pl = ev.placement(j);
         for (int right = 0; right < 2; ++right) {
-            sumZ += pl.point(ev.throwPointAt(j, right ? 0 : 1)).z;
+            sumZ += ev.placement(j, 0.0).point(ev.throwPointAt(j, right ? 0 : 1)).z;
             ++countZ;
         }
         // The body (shoulders, back and chest), which matters when jugglers face each other:
-        // seen from the side, their backs are the outermost things.
+        // seen from the side, their backs are the outermost things. (On every beat, in case
+        // they walk.)
         const Vec3 bodyPoints[] = {{0.25f, 0.0f, 0.0f}, {-0.25f, 0.0f, 0.0f}, {0.0f, 0.0f, -0.2f}, {0.0f, 0.0f, 0.15f}};
-        for (const Vec3& b : bodyPoints) {
-            includeX(pl.point(b).x, 0.05f);
-            e.nearZ = std::max(e.nearZ, pl.point(b).z + 0.05f);
+        for (int b = 0; b < span; ++b) {
+            const Placement pl = ev.placement(j, b);
+            for (const Vec3& p : bodyPoints) {
+                includeX(pl.point(p).x, 0.05f);
+                e.nearZ = std::max(e.nearZ, pl.point(p).z + 0.05f);
+            }
         }
         // Hands, and what they hold: sample their paths over one full repeat, 24 times a beat
         // (the paths are smooth, so that's within a few millimeters, and it's slow for long
         // passing patterns: every sample works out the body's motion). A hand that's empty at
         // the moment still gets a "held" prop here; that only makes the framing a bit roomier.
-        constexpr int kSamplesPerBeat = 24;
-        for (int i = 0; i <= span * kSamplesPerBeat; ++i) {
-            const double t = static_cast<double>(i) / kSamplesPerBeat;
+        // When the repeat is long (walking that takes a long time to line up with the throws),
+        // fewer samples a beat, at most kMaxSamples in all: the framing only needs to be close.
+        constexpr int kSamplesPerBeat = 24, kMaxSamples = 4096;
+        const int samples = std::min(span * kSamplesPerBeat, kMaxSamples);
+        for (int i = 0; i <= samples; ++i) {
+            const double t = static_cast<double>(span) * i / samples;
+            const Placement pl = ev.placement(j, t);
             for (int right = 0; right < 2; ++right) {
                 const Vec3 p = pl.point(ev.palm(j, right != 0, t));
                 e.lowestHandY = std::min(e.lowestHandY, p.y - handThickness);
@@ -893,7 +989,7 @@ SceneExtents computeSceneExtents(const JugglingLoop& sketchOrLoop, const JuggleP
             if (v <= 0 || ev.isHeld(j, b)) continue;  // empty, or held (covered by the hands above)
             if (onlyJuggler >= 0 && ev.destAt(j, b) != j) continue;  // a pass: framing one juggler
             const double catchTime = ev.catchTimeFor(ev.destAt(j, b), b + v);
-            const int kSamples = 64;
+            const int kSamples = std::clamp(4096 / span, 4, 64);  // fewer in a long repeat
             for (int i = 0; i <= kSamples; ++i) {
                 const Vec3 p = ev.flightPosition(j, b, v, b + (catchTime - b) * i / kSamples);
                 e.highestPropY = std::max(e.highestPropY, p.y + reach);
@@ -908,6 +1004,25 @@ SceneExtents computeSceneExtents(const JugglingLoop& sketchOrLoop, const JuggleP
     e.nearZ = std::max(e.nearZ, e.centerZ);
     e.ring = loop.jugglers >= 3 && onlyJuggler < 0;
     return e;
+}
+
+std::vector<ThrowSpin> throwSpins(const JugglingLoop& loop, const JuggleParams& params) {
+    std::vector<ThrowSpin> out;
+    if (loop.empty() || params.prop == PropType::Ball) return out;
+    for (const LoopThrow& t : loop.throws)
+        if (t.value == kOpenThrow) return out;
+    const Evaluator ev(loop, params, patternIntensity(loop, params));
+    out.resize(static_cast<size_t>(loop.jugglers * loop.period));
+    for (int j = 0; j < loop.jugglers; ++j) {
+        for (int b = 0; b < loop.period; ++b) {
+            const int v = ev.valueAt(j, b);
+            if (v <= 0 || ev.isHeld(j, b)) continue;
+            ThrowSpin& s = out[static_cast<size_t>(j * loop.period + b)];
+            s.spins = ev.spins(j, b, v);
+            s.flightBeats = static_cast<float>(ev.catchTimeFor(ev.destAt(j, b), b + v) - b);
+        }
+    }
+    return out;
 }
 
 JugglerScene evaluateScene(const JugglingLoop& sketchOrLoop, const BallOrbits& orbits, const JuggleParams& params,
@@ -925,13 +1040,10 @@ JugglerScene evaluateScene(const JugglingLoop& sketchOrLoop, const BallOrbits& o
     auto isOpen = [&](int j, int b) { return sketch && sketchOrLoop.at(j, b).value == kOpenThrow; };
     scene.prop = params.prop;
     for (int j = 0; j < loop.jugglers; ++j) {
-        const Placement& pl = ev.placement(j);
+        const Placement pl = ev.placement(j, t);
         JugglerState js;
-        Vec3 position;
-        float yaw = 0.0f;
-        jugglerPlacement(loop, params, j, &position, &yaw);
-        js.position = position;
-        js.yaw = yaw;
+        js.position = pl.position;
+        js.yaw = pl.yaw;
         js.palmRight = ev.palm(j, true, t);
         js.palmLeft = ev.palm(j, false, t);
         js.body = ev.bodyAt(j, t);
@@ -962,7 +1074,7 @@ JugglerScene evaluateScene(const JugglingLoop& sketchOrLoop, const BallOrbits& o
                 const double age = (t - b) * ev.secondsPerBeat() / kPuffSeconds;
                 if (age >= 0.0 && age < 1.0) {
                     Puff puff;
-                    puff.center = ev.placement(j).point(ev.palm(j, right, static_cast<double>(b)));
+                    puff.center = ev.placement(j, b).point(ev.palm(j, right, static_cast<double>(b)));
                     puff.age = static_cast<float>(age);
                     puff.ball = ball;
                     puff.appearing = false;
@@ -979,7 +1091,7 @@ JugglerScene evaluateScene(const JugglingLoop& sketchOrLoop, const BallOrbits& o
                 const double age = (t - appearAt) * ev.secondsPerBeat() / kPuffSeconds;
                 if (age >= 0.0 && age < 1.0) {
                     Puff puff;
-                    puff.center = ev.placement(j).point(ev.palm(j, right, appearAt));
+                    puff.center = ev.placement(j, appearAt).point(ev.palm(j, right, appearAt));
                     puff.age = static_cast<float>(age);
                     puff.ball = ball;
                     puff.appearing = true;
@@ -1020,6 +1132,8 @@ JugglerScene evaluateScene(const JugglingLoop& sketchOrLoop, const BallOrbits& o
                 flying.throwValue = v;
                 flying.thrower = j;
                 flying.catcher = ev.destAt(j, b);
+                flying.spins = ev.spins(j, b, v);
+                flying.flightBeats = static_cast<float>(catchTime - b);
                 ev.flightProp(j, b, v, t, &flying);
                 scene.balls.push_back(flying);
             }

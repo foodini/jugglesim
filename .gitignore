@@ -7,6 +7,7 @@ Claude outputs/
 *.pdb
 *.ilk
 *.exe
+tools/*.log
 
 # Visual Studio user state
 .vs/

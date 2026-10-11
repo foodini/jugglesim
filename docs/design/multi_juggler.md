@@ -138,11 +138,24 @@ out a performance; that needs pattern changes too, see *Units and sequences*). L
 - In many patterns the jugglers come back permuted after one cycle, and it can take several
   cycles to get everyone back to where they started.
 
-**Path links.** "J2 follows J1's path", with the same link syntax: `@1[k]` copies J1's throws
-*and* J1's path, k beats in. Where the copy stands: each spike mark maps to the next one (an
-option on the link, like `,marks+1`; name to decide), not a rotation by an angle, so it works
-for any arrangement of marks. Free keyframes (off any mark) have no shifted copy: refuse them in
-a linked path, or rotate about the center as a fallback (to decide).
+**Walk links** (built; were "path links"). "J2 walks like J1, k beats later, turned a fraction
+of a circle about the middle of the floor": J2 on beat b is where J1 is on beat b + k, rotated
+(facing too). Set graphically (*Walk Like...* on a juggler's right-click menu, on the ladder or
+the stage), not typed; the siteswap text stays pure siteswap.
+- A "one mark round" follower (Shooting Star) is just a time offset with no turn: everyone
+  walking the same circuit is where the leader was some beats ago. A turn covers patterns with
+  more than one circuit (Cuisinart: one pair's circuit is the other's turned half a circle).
+- Turns: none, 1/2, 1/3, 1/4, 1/5 of a circle, clockwise or counterclockwise seen from above,
+  about the middle of the floor (the grid's origin dot). An offset (shift) may come later;
+  mirroring marks for symmetric layouts too.
+- Chains add up (J3 walks like J2, who walks like J1); loops of links are refused.
+- Walk links are independent of throw links (`@1[12]`): neither sets the other. (Decided after
+  the choreography length was decoupled from the siteswap period; to revisit with experience.)
+- Linking a juggler deletes their own keyframes (after a warning): a clean break. Unlink writes
+  their walking out as keyframes, so nothing moves.
+- A follower's ladder diamonds are the leader's, moved round: drawn dim, not editable; their
+  strip says `J1+24ccw1/4`. Dragging a follower on the stage is refused, with a note.
+- Saved in the choreography text: `J2(=J1+24ccw1/4)`.
 - Throws and walking go together: in a Shooting Star the runner stops passing while walking
   (holding: `2 2 2 2` for a runner with 2 clubs), so one link has to carry both.
 - Pass targets stay per juggler (`3p+2`: two jugglers on), so they keep working while people move.
@@ -155,7 +168,9 @@ a linked path, or rotate about the center as a fallback (to decide).
   dropback (passing to someone behind you). Ugly animation is acceptable for now.
 
 **Also needed.**
-- A text form (spike marks, keyframes, path links) for the library and saved patterns.
+- Editing is graphical only. Saving uses a text form (spike marks, keyframes, path links) that's
+  human-readable with some effort: opening a choreography file should show, roughly, a time
+  series of the pattern units' siteswaps and the keyframes, with the spike marks listed once.
 - Camera framing over the whole floor the choreography uses, not just the current positions.
 - The Distance tweakable scales the whole layout of marks.
 - Warnings: walks faster than about 2 m/s, jugglers walking through each other, passes too long

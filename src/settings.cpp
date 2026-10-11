@@ -68,8 +68,41 @@ AppSettings loadSettings() {
             char* end = nullptr;
             const double rate = std::strtod(value.c_str(), &end);
             if (end != value.c_str()) settings.slowRate = static_cast<float>(std::clamp(rate, 0.05, 0.5));
+        } else if (key == "space_mouse_speed") {
+            char* end = nullptr;
+            const double speed = std::strtod(value.c_str(), &end);
+            if (end != value.c_str()) settings.spaceMouseSpeed = static_cast<float>(std::clamp(speed, 0.25, 4.0));
         } else if (key == "linked_jugglers") {
             settings.dimLinked = value == "dim";
+        } else if (key == "floor_grid") {
+            settings.floorGrid = value == "square"      ? FloorGridType::Square
+                                 : value == "radial"    ? FloorGridType::Radial
+                                 : value == "triangles" ? FloorGridType::Triangles
+                                                        : FloorGridType::None;
+        } else if (key == "grid_spacing") {
+            char* end = nullptr;
+            const double spacing = std::strtod(value.c_str(), &end);
+            if (end != value.c_str()) settings.gridSpacing = static_cast<float>(std::clamp(spacing, 0.25, 2.0));
+        } else if (key == "grid_spokes") {
+            char* end = nullptr;
+            const long spokes = std::strtol(value.c_str(), &end, 10);
+            if (end != value.c_str()) settings.gridSpokes = static_cast<int>(std::clamp(spokes, 3L, 32L));
+        } else if (key == "grid_major_every") {
+            char* end = nullptr;
+            const long every = std::strtol(value.c_str(), &end, 10);
+            if (end != value.c_str()) settings.gridMajorEvery = static_cast<int>(std::clamp(every, 2L, 12L));
+        } else if (key == "grid_spoke_major") {
+            char* end = nullptr;
+            const long every = std::strtol(value.c_str(), &end, 10);
+            if (end != value.c_str()) settings.gridSpokeMajor = static_cast<int>(std::clamp(every, 0L, 16L));
+        } else if (key == "grid_spokes_turned") {
+            settings.gridHalfTurn = value == "on";
+        } else if (key == "choreography_panel") {
+            settings.choreographyPanelCollapsed = value == "collapsed";
+        } else if (key == "keyframe_marks") {
+            settings.showKeyframeMarks = value == "on";
+        } else if (key == "path_beat_numbers") {
+            settings.pathBeatNumbers = value == "on";
         } else if (key == "throw_values") {
             settings.showThrowValues = value == "on";
         } else if (key == "ladder_width") {
@@ -98,8 +131,24 @@ bool saveSettings(const AppSettings& settings) {
     out << "tempo_panel = " << (settings.tempoPanelCollapsed ? "collapsed" : "open") << "\n";
     out << "colors = " << (settings.colorByOrbit ? "orbit" : "prop") << "\n";
     out << "throw_values = " << (settings.showThrowValues ? "on" : "off") << "\n";
+    {
+        const char* grid = settings.floorGrid == FloorGridType::Square      ? "square"
+                           : settings.floorGrid == FloorGridType::Radial    ? "radial"
+                           : settings.floorGrid == FloorGridType::Triangles ? "triangles"
+                                                                            : "none";
+        out << "floor_grid = " << grid << "\n";
+    }
+    out << "grid_spacing = " << settings.gridSpacing << "\n";
+    out << "grid_spokes = " << settings.gridSpokes << "\n";
+    out << "grid_major_every = " << settings.gridMajorEvery << "\n";
+    out << "grid_spoke_major = " << settings.gridSpokeMajor << "\n";
+    out << "grid_spokes_turned = " << (settings.gridHalfTurn ? "on" : "off") << "\n";
+    out << "choreography_panel = " << (settings.choreographyPanelCollapsed ? "collapsed" : "open") << "\n";
+    out << "keyframe_marks = " << (settings.showKeyframeMarks ? "on" : "off") << "\n";
+    out << "path_beat_numbers = " << (settings.pathBeatNumbers ? "on" : "off") << "\n";
     out << "linked_jugglers = " << (settings.dimLinked ? "dim" : "normal") << "\n";
     out << "slow_motion = " << settings.slowRate << "\n";
     out << "ladder_width = " << settings.ladderFraction << "\n";
+    out << "space_mouse_speed = " << settings.spaceMouseSpeed << "\n";
     return static_cast<bool>(out);
 }

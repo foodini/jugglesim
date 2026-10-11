@@ -18,6 +18,9 @@
     <ClCompile Include="src\app.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\choreography.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
     <ClCompile Include="src\color_vision.cpp">
       <Filter>src</Filter>
     </ClCompile>
@@ -96,6 +99,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\app.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\choreography.h">
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\color_vision.h">

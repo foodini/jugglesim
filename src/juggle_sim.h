@@ -28,6 +28,8 @@
 #include "math3d.h"
 #include "pattern.h"
 
+struct Choreography;
+
 #include <vector>
 
 // What's being juggled. (Per pattern for now; BallState carries it per prop, so mixed props
@@ -43,6 +45,9 @@ struct JuggleParams {
     double dwellBeats = 1.4;  // 0 < dwell < 2
     PropType prop = PropType::Ball;
     double distance = 0.0;    // between passing jugglers (m, body to body); 0 = automatic
+    // Where the jugglers stand over time (not owned; null or without spike marks: the default
+    // formation, standing still). See choreography.h.
+    const Choreography* choreography = nullptr;
 };
 
 // Passing distances (m, body to body).
@@ -53,11 +58,19 @@ double defaultPassingDistance(const JugglingLoop& loop);
 // The distance in use: params.distance, or the automatic one.
 double passingDistance(const JugglingLoop& loop, const JuggleParams& params);
 
-// Where juggler `juggler` stands and which way they face (yaw in radians about +Y: 0 faces +Z,
-// pi/2 faces +X). One juggler stands at the origin facing +Z; two face each other along X,
-// juggler 1 on the left (-X) as seen from the default camera.
+// Where juggler `juggler` stands in the default formation and which way they face (yaw in
+// radians about +Y: 0 faces +Z, pi/2 faces +X). One juggler stands at the origin facing +Z; two
+// face each other along X, juggler 1 on the left (-X) as seen from the default camera; more
+// stand round a ring (see the .cpp). Ignores any choreography.
 void jugglerPlacement(const JugglingLoop& loop, const JuggleParams& params, int juggler,
                       Vec3* position, float* yaw);
+// Where they are at `beat` with the choreography in params (if any): their keyframes, or with
+// none, standing on their own spike mark (mark j), or with no mark either, in the default
+// formation.
+void jugglerPlacementAt(const JugglingLoop& loop, const JuggleParams& params, int juggler, double beat,
+                        Vec3* position, float* yaw);
+// The beats the choreography in params repeats after (its cycle, or the loop's period); 0 for none.
+int choreographyCycle(const JugglingLoop& loop, const JuggleParams& params);
 
 constexpr float kBallRadius = 0.034f;  // a typical 68 mm juggling ball
 
@@ -87,6 +100,10 @@ struct BallState {
     int throwValue = 0;
     int thrower = -1;
     int catcher = -1;
+    // In flight: the whole turns a club or ring makes on this throw, and the flight's length in
+    // beats (spins / flightBeats is its spin rate in spins per beat, whatever the tempo).
+    int spins = 0;
+    float flightBeats = 0.0f;
 };
 
 // A ball's recent path, oldest point first. fade[i] goes from 0 (the oldest end, about to
@@ -186,5 +203,15 @@ float patternIntensity(const JugglingLoop& loop, const JuggleParams& params);
 // The loop may be a sketch (some throws open, kOpenThrow): a hand with an undecided throw just
 // circles empty, props pop in and vanish (see Puff), and props are numbered by path (orbits is
 // ignored). computeSceneExtents and patternIntensity accept sketches too.
+// Each throw's spin: the whole turns a club or ring makes, and its flight in beats, per
+// [juggler * period + beat] of the loop. Empty for balls and for sketches (and the loop
+// before choreography: with jugglers walking, a throw's flight can vary from repeat to repeat;
+// this is its first repeat).
+struct ThrowSpin {
+    int spins = 0;
+    float flightBeats = 0.0f;  // 0: not thrown (an empty hand, or a held 2)
+};
+std::vector<ThrowSpin> throwSpins(const JugglingLoop& loop, const JuggleParams& params);
+
 JugglerScene evaluateScene(const JugglingLoop& loop, const BallOrbits& orbits,
                            const JuggleParams& params, double beat);

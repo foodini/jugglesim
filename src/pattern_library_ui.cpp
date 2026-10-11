@@ -37,17 +37,25 @@ bool nameTaken(const std::vector<LibraryPattern>& mine, const std::string& name,
     return false;
 }
 
-// One pattern as a menu item: its name, with the siteswap beside it (in the shortcut column)
-// when the name is something else. Hovering shows the settings it carries.
+// One pattern as a menu item: its name, or (if it has none) its siteswap, cut short so a long
+// one can't widen the menu over its parent. Hovering shows the whole name and siteswap, and the
+// settings it carries.
 bool patternMenuItem(const LibraryPattern& p, bool mine, ImU32 myColor) {
-    const bool showSiteswap = !p.name.empty() && p.name != p.siteswap;
     if (mine) ImGui::PushStyleColor(ImGuiCol_Text, myColor);
-    const bool chosen = ImGui::MenuItem(menuLabel(p.displayName()).c_str(),
-                                        showSiteswap ? p.siteswap.c_str() : nullptr);
+    const bool chosen = ImGui::MenuItem(menuLabel(shortMenuText(p.displayName())).c_str());
     if (mine) ImGui::PopStyleColor();
-    const std::string settings = describePatternSettings(p.settings);
-    if (!settings.empty() && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort))
-        ImGui::SetTooltip("Also sets: %s", settings.c_str());
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+        const bool named = !p.name.empty() && p.name != p.siteswap;
+        std::string tip = named ? p.name + "\n" + p.siteswap : p.siteswap;
+        const std::string settings = describePatternSettings(p.settings);
+        if (!settings.empty()) tip += "\nAlso sets: " + settings;
+        if (ImGui::BeginTooltip()) {  // (wrapped: a siteswap can be very long)
+            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40.0f);
+            ImGui::TextUnformatted(tip.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::EndTooltip();
+        }
+    }
     return chosen;
 }
 
@@ -223,6 +231,17 @@ bool drawFind(PatternMenuState& state, const std::vector<const LibraryPattern*>&
 
 }  // namespace
 
+std::string shortMenuText(const std::string& text, int maxChars) {
+    // Characters, not bytes (a name can have UTF-8 in it): where each one starts.
+    std::vector<size_t> starts;
+    for (size_t i = 0; i < text.size(); ++i)
+        if ((static_cast<unsigned char>(text[i]) & 0xC0) != 0x80) starts.push_back(i);
+    if (static_cast<int>(starts.size()) <= maxChars) return text;
+    std::string cut = text.substr(0, starts[static_cast<size_t>(std::max(1, maxChars - 3))]);
+    while (!cut.empty() && cut.back() == ' ') cut.pop_back();
+    return cut + "...";
+}
+
 PatternChoice drawJuggleSimPatternsMenu(const std::vector<LibraryPattern>& builtIn,
                                         PatternMenuState& state, ColorVisionMode colorVision) {
     PatternChoice choice;
@@ -262,7 +281,7 @@ PatternChoice drawMyPatternsMenu(const std::vector<LibraryPattern>& mine,
         }
         ImGui::SeparatorText("Saved");
         if (sorted.empty())
-            ImGui::TextDisabled("None yet: File > Save to My Patterns adds the current pattern");
+            ImGui::TextDisabled("None yet: File > Save As adds the current pattern");
         else
             drawTreeLevel(sorted, kJugglerLevel, ctx, false);
     }
@@ -297,6 +316,8 @@ std::string describePatternSettings(const PatternSettings& s) {
             std::snprintf(buffer, sizeof(buffer), "%sautomatic distance", text.empty() ? "" : ", ");
         text += buffer;
     }
+    if (s.hasChoreography && !s.choreography.empty()) text += text.empty() ? "choreography" : ", choreography";
+    if (s.hasCamera) text += text.empty() ? "camera" : ", camera";
     return text;
 }
 
@@ -374,7 +395,7 @@ ManagePatternsRequest drawManagePatternsWindow(ManagePatternsWindow& window,
     if (window.renaming >= static_cast<int>(mine.size())) window.renaming = -1;
 
     if (mine.empty()) {
-        ImGui::TextWrapped("You haven't saved any patterns yet. File > Save to My Patterns adds "
+        ImGui::TextWrapped("You haven't saved any patterns yet. File > Save As adds "
                            "the current pattern, with its props, tempo and dwell.");
     } else {
         ImGui::TextDisabled("%d pattern%s. Click a column heading to sort.", static_cast<int>(mine.size()),
@@ -495,7 +516,8 @@ ManagePatternsRequest drawManagePatternsWindow(ManagePatternsWindow& window,
                 if (window.confirmDelete == i) centerNextWindow();
                 if (window.confirmDelete == i &&
                     ImGui::BeginPopupModal("Delete pattern", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-                    ImGui::Text("Delete \"%s\" (%s)?", p.displayName().c_str(), p.siteswap.c_str());
+                    ImGui::Text("Delete \"%s\" (%s)?", shortMenuText(p.displayName(), 60).c_str(),
+                                shortMenuText(p.siteswap, 60).c_str());
                     ImGui::TextUnformatted("This can't be undone.");
                     ImGui::Spacing();
                     if (ImGui::Button("Delete", ImVec2(em * 6.0f, 0.0f))) {

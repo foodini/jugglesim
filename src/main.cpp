@@ -10,7 +10,10 @@
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <string>
+#include <vector>
 
 // Declared (commented out) in imgui_impl_win32.h; must be forward-declared by the app.
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam,
@@ -19,11 +22,56 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 namespace {
 
 HWND g_hwnd = nullptr;
+bool g_closeRequested = false;  // the close box was clicked (see platformTakeCloseRequest)
 
 HDC g_hdc = nullptr;
 HGLRC g_hglrc = nullptr;
 int g_width = 1600;
 int g_height = 900;
+
+// The 3D mouse (SpaceMouse): the latest reports, read through Raw Input (WM_INPUT) while the
+// window is in front. Its axes say how far the cap is pushed (not how far it moved), from about
+// -350 to 350, and drop to 0 when it's let go. Report 1 is the move (x y z; on some newer
+// models all six axes), 2 the turn, 3 the buttons.
+struct SpaceMouseRaw {
+    bool seen = false;
+    int16_t move[3] = {0, 0, 0};
+    int16_t turn[3] = {0, 0, 0};
+    unsigned buttons = 0;
+    DWORD lastReport = 0;  // GetTickCount() of the last axis report
+};
+SpaceMouseRaw g_spaceMouse;
+
+int16_t reportAxis(const BYTE* p) {
+    return static_cast<int16_t>(static_cast<uint16_t>(p[0]) | (static_cast<uint16_t>(p[1]) << 8));
+}
+
+void readSpaceMouse(LPARAM lParam) {
+    UINT size = 0;
+    ::GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, nullptr, &size, sizeof(RAWINPUTHEADER));
+    if (size == 0) return;
+    std::vector<BYTE> buffer(size);
+    if (::GetRawInputData(reinterpret_cast<HRAWINPUT>(lParam), RID_INPUT, buffer.data(), &size, sizeof(RAWINPUTHEADER)) != size)
+        return;
+    const RAWINPUT* input = reinterpret_cast<const RAWINPUT*>(buffer.data());
+    if (input->header.dwType != RIM_TYPEHID) return;
+    const RAWHID& hid = input->data.hid;
+    for (DWORD r = 0; r < hid.dwCount; ++r) {
+        const BYTE* report = hid.bRawData + r * hid.dwSizeHid;
+        const DWORD length = hid.dwSizeHid;
+        if (length >= 7 && (report[0] == 1 || report[0] == 2)) {
+            int16_t* axes = report[0] == 1 ? g_spaceMouse.move : g_spaceMouse.turn;
+            for (int i = 0; i < 3; ++i) axes[i] = reportAxis(report + 1 + 2 * i);
+            if (report[0] == 1 && length >= 13)  // all six axes in one report
+                for (int i = 0; i < 3; ++i) g_spaceMouse.turn[i] = reportAxis(report + 7 + 2 * i);
+            g_spaceMouse.lastReport = ::GetTickCount();
+            g_spaceMouse.seen = true;
+        } else if (length >= 2 && report[0] == 3) {
+            g_spaceMouse.buttons = report[1];
+            g_spaceMouse.seen = true;
+        }
+    }
+}
 
 LRESULT WINAPI wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam)) return true;
@@ -38,6 +86,12 @@ LRESULT WINAPI wndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         case WM_SYSCOMMAND:
             if ((wParam & 0xfff0) == SC_KEYMENU) return 0;  // disable ALT application menu
             break;
+        case WM_INPUT:
+            readSpaceMouse(lParam);
+            break;  // (DefWindowProc cleans up after it)
+        case WM_CLOSE:
+            g_closeRequested = true;  // the app decides (it may ask about unsaved work first)
+            return 0;
         case WM_DESTROY:
             ::PostQuitMessage(0);
             return 0;
@@ -99,6 +153,36 @@ bool platformPollEvents() {
     return !quit;
 }
 
+SpaceMouseState platformSpaceMouse() {
+    SpaceMouseState s;
+    s.present = g_spaceMouse.seen;
+    // Reports keep coming while the cap is pushed; if they stop (the window lost the input),
+    // treat it as let go.
+    const bool fresh = ::GetTickCount() - g_spaceMouse.lastReport < 500;
+    for (int i = 0; i < 3; ++i) {
+        // The device's z points down and y toward you: flip them so z is up and y away.
+        const float sign = i == 0 ? 1.0f : -1.0f;
+        s.move[i] = fresh ? sign * std::clamp(g_spaceMouse.move[i] / 350.0f, -1.0f, 1.0f) : 0.0f;
+        s.turn[i] = fresh ? sign * std::clamp(g_spaceMouse.turn[i] / 350.0f, -1.0f, 1.0f) : 0.0f;
+    }
+    s.buttons = g_spaceMouse.buttons;
+    return s;
+}
+
+bool platformTakeCloseRequest() {
+    const bool requested = g_closeRequested;
+    g_closeRequested = false;
+    return requested;
+}
+
+void platformSetWindowTitle(const char* title) {
+    const int length = ::MultiByteToWideChar(CP_UTF8, 0, title, -1, nullptr, 0);
+    if (length <= 0) return;
+    std::vector<wchar_t> wide(static_cast<size_t>(length));
+    ::MultiByteToWideChar(CP_UTF8, 0, title, -1, wide.data(), length);
+    ::SetWindowTextW(g_hwnd, wide.data());
+}
+
 bool platformIsMinimized() { return ::IsIconic(g_hwnd) != FALSE; }
 
 void platformSleepMilliseconds(int milliseconds) { ::Sleep(static_cast<DWORD>(milliseconds)); }
@@ -150,6 +234,14 @@ int main() {
         return 1;
     }
     enableVSync();
+
+    // A 3D mouse (multi-axis controller: generic desktop page, usage 8), while we're in front.
+    RAWINPUTDEVICE spaceMouse = {};
+    spaceMouse.usUsagePage = 1;
+    spaceMouse.usUsage = 8;
+    spaceMouse.dwFlags = 0;
+    spaceMouse.hwndTarget = g_hwnd;
+    ::RegisterRawInputDevices(&spaceMouse, 1, sizeof(spaceMouse));  // (nothing to do if it fails)
 
     ::ShowWindow(g_hwnd, SW_SHOWDEFAULT);
     ::UpdateWindow(g_hwnd);

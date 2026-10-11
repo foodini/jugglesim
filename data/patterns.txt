@@ -5,6 +5,7 @@
 #   - settings are optional "key=value" pairs separated by spaces:
 #       props=balls|clubs|rings   tempo=<beats per minute>   dwell=<beats>
 #       distance=<meters between passing jugglers, 1-5>|auto
+#       choreo=<choreography>   camera=<x,y,z,yaw,pitch: a free camera, meters and degrees>
 #     A pattern without a setting leaves the current one alone when it's loaded.
 #   - Blank lines and lines starting with # are ignored.
 #

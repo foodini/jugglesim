@@ -26,6 +26,8 @@
 #include <string>
 #include <vector>
 
+struct ThrowSpin;  // juggle_sim.h
+
 // Zoom limits for the ladder (1 = default beat spacing).
 constexpr float kMinLadderZoom = 0.3f;
 constexpr float kMaxLadderZoom = 4.0f;
@@ -49,10 +51,18 @@ struct LadderEditState {
     Slot drawTo;
 
     // The right-click menu: what it was opened on.
-    enum class Context { None, Beat, Throw, Juggler };
+    enum class Context { None, Beat, Throw, Juggler, Keyframe };
     Context context = Context::None;
     int contextBeat = 0;            // Beat: the beat line clicked
-    int contextJuggler = 0;         // Juggler: whose number (strip header) was right-clicked
+    int contextJuggler = 0;         // Juggler: whose number (strip header) was right-clicked; Keyframe: whose
+    int contextKeyBeat = 0;         // Keyframe: its beat (in the choreography's cycle)
+    // Dragging a keyframe marker up or down the ladder to retime it: whose, from which beat (in
+    // the cycle), and the marker's beat on screen when the drag started (keyDragJuggler -1: none).
+    int keyDragJuggler = -1, keyDragBeat = 0, keyDragScreenBeat = 0;
+    // ...or, Ctrl+dragged: a copy of it on the same spot (a loiter between them), kept between the
+    // neighboring keyframes: keyDragMin..keyDragMax (on screen).
+    bool keyDragLoiter = false;
+    int keyDragMin = 0, keyDragMax = 0;
     Slot contextSlot;               // Throw: where the throw clicked is thrown from
     std::vector<int> pathHighlight; // slots to highlight (hovering "Delete path"): juggler * period + beat,
     int pathHighlightPeriod = 1;    // with this period (the props' cycle, which may be longer than the loop's)
@@ -62,6 +72,11 @@ struct LadderEditState {
     float zoom = 1.0f;
     bool beatOneVisible = true;    // as of the last frame drawn
     bool scrubbing = false;        // dragging the playhead in the beat-number column
+    // Following the playhead while playing (see LadderViewOptions::followPlayhead).
+    double followPausedUntil = 0.0;  // the user scrolled the ladder: don't follow until this time
+    // The throw the mouse is resting on (for its tooltip): juggler, beat, and since when.
+    int restJuggler = -1, restBeat = 0;
+    double restSince = 0.0;
 
     // Each juggler's strip can be collapsed to a narrow one (its throws still drawn, so passes
     // to and from it still show), to make room when there are many jugglers.
@@ -89,9 +104,26 @@ struct LadderToolbarRequest {
 LadderToolbarRequest drawLadderToolbar(const JugglingLoop& loop, const LadderEditState& edit, bool showValues,
                                        bool colorByOrbit, bool hasLinks = false, bool dimLinked = false);
 
+// A choreography keyframe, shown as a marker on its juggler's strip (see choreography.h).
+struct LadderKeyframe {
+    int juggler = 0;
+    int beat = 0;       // in the cycle
+    std::string where;  // for its tooltip: "mark 3", "a free spot"
+    bool longTurn = false;  // turns the long way round on the way to it
+    int mark = -1;          // the spike mark it's on (from 0), or -1: a free spot
+    int stayBeats = 0;      // >0: the juggler stays put (same spot, same facing) this many beats,
+                            // until their next keyframe (a loiter)
+    bool derived = false;   // a leader's keyframe, moved round by a walk link (shown dim, not edited)
+};
+
 // How to draw the ladder (things owned by the rest of the app).
 struct LadderViewOptions {
     bool showValues = false;    // label every throw with its value ("3", "4p")
+    bool showKeyframeMarks = false;  // label keyframes on spike marks with the mark ("M3")
+    // Walk links (choreography), per juggler: what their strip says ("walks like J1 +24 ccw1/4"),
+    // empty if none; and whether a juggler's menu offers Walk Like... at all.
+    std::vector<std::string> walkLabels;
+    bool walkLinks = false;
     bool colorByOrbit = false;  // one color per orbit instead of per prop
     int selectedJuggler = -1;   // shown highlighted in the strip headers (-1: none)
     // A throw picked out from elsewhere (hovering it in the siteswap text box), at every repeat:
@@ -102,6 +134,17 @@ struct LadderViewOptions {
     // Same as.../Unlink menu and dimming. May be null.
     const PatternForm* form = nullptr;
     bool dimLinked = false;  // draw linked jugglers' throws muted, so the parts written out stand out
+    // Choreography keyframes, drawn at every repeat of the choreography's cycle.
+    std::vector<LadderKeyframe> keyframes;
+    int keyframeCycle = 0;
+    // Scroll to keep the bright playhead on screen (while playing): the view glides down with
+    // it, and when it comes round to the copy above beat 1 the view goes back by the same
+    // amount, so the picture stays put and only the beat numbers change. Scrolling the ladder
+    // yourself pauses this for a couple of seconds.
+    bool followPlayhead = false;
+    // Each throw's spin (clubs and rings: throwSpins() in juggle_sim.h), for the tooltip when
+    // the mouse rests on a throw. Null or empty: none.
+    const std::vector<ThrowSpin>* spins = nullptr;
 };
 
 constexpr int kNoSelectionChange = -2;
@@ -124,9 +167,24 @@ struct LadderEditResult {
     // unlink unlinkJuggler (write their throws out). -1: nothing.
     int linkJuggler = -1, linkTo = -1, linkStart = 0;
     int unlinkJuggler = -1;
-    // Clicking or dragging in the beat-number column: move the playhead to scrubBeat (fractional;
-    // beat 0 is "beat 1"). scrubEnded: the drag just finished.
+    // From a juggler's menu: Walk Like... (open the walk link window for this juggler). -1: no.
+    int walkLikeJuggler = -1;
+    // A keyframe's menu: Delete, or turn the long way round (toggled). -1: nothing.
+    int deleteKeyframeJuggler = -1, deleteKeyframeBeat = 0;
+    int longTurnKeyframeJuggler = -1, longTurnKeyframeBeat = 0;
+    // A keyframe marker dragged to another beat: moveKeyframeJuggler's keyframe on beat
+    // moveKeyframeFrom goes to moveKeyframeTo (both in the cycle). -1: nothing.
+    int moveKeyframeJuggler = -1, moveKeyframeFrom = 0, moveKeyframeTo = 0;
+    // A keyframe Ctrl+dragged to make a loiter: a copy of loiterJuggler's keyframe on beat
+    // loiterFrom on beat loiterTo (both in the cycle); loiterBefore: it's the earlier of the two
+    // (the juggler arrives at the copy). -1: nothing.
+    int loiterJuggler = -1, loiterFrom = 0, loiterTo = 0;
+    bool loiterBefore = false;
+    // Clicking or dragging in the beat-number column: move the playhead to scrubBeat (a click:
+    // the nearest whole beat; a drag: fractional; beat 0 is "beat 1"). scrubEnded: the drag just finished.
     bool scrubbing = false, scrubEnded = false;
+    // Home (or Ctrl+0) over the ladder: back to beat 1, the playhead and the view together.
+    bool goToStart = false;
     double scrubBeat = 0.0;
 };
 

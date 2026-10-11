@@ -40,10 +40,14 @@ PatternChoice drawMyPatternsMenu(const std::vector<LibraryPattern>& mine,
 // they stand out wherever the two are listed together (e.g. Recent).
 ImU32 myPatternColor(ColorVisionMode colorVision);
 
+// A name or siteswap for a menu: cut to maxChars characters (ending "...") if it's longer, so a
+// long one can't make a menu so wide it covers the menu it came from.
+std::string shortMenuText(const std::string& text, int maxChars = 40);
+
 // "Clubs, 120 BPM, dwell 1.20 beats" (only the settings that are set), or "" if none.
 std::string describePatternSettings(const PatternSettings& settings);
 
-// File > Save to My Patterns...: a small modal dialog asking for a name.
+// File > Save As... (and Save, for a pattern not yet saved): a small modal dialog asking for a name.
 struct SavePatternDialog {
     bool openRequested = false;  // set to open it (fill in `name` with the default first)
     char name[128] = {};
