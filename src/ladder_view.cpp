@@ -553,6 +553,28 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
     // under the headers.
     dl->PushClipRect(ImVec2(origin.x, bodyTop), maxPt, true);
 
+    // A count directive locks the 3s between its beats: a throw from one of those spots (in the
+    // juggler written out, for a link) can't change. Such spots are washed grey (more strongly
+    // while a throw is held), can't be picked up, and drops that would change them are refused.
+    auto lockedSlot = [&](Slot s) {
+        if (options.countN < 2 || period <= 0) return false;
+        int j = s.juggler, b = s.beat;
+        int root = j, start = 0;
+        if (options.form && options.form->linked(j) && options.form->root(j, &root, &start)) {
+            j = root;
+            b += start;
+        }
+        if (j < 0 || j >= loop.jugglers || positiveMod(b, period) % options.countN == 0) return false;
+        const LoopThrow& t = loop.at(j, b);
+        return t.value == 3 && t.dest == j;
+    };
+    auto lockedWhy = [&](Slot s) {
+        return "J" + std::to_string(s.juggler + 1) + "'s beat " + std::to_string(positiveMod(s.beat, period) + 1) +
+               " is one of the " + std::to_string(options.countN) + "-count's 3s (only beats 1, " +
+               std::to_string(options.countN + 1) + ", " + std::to_string(2 * options.countN + 1) +
+               ", ... change; the count is under the siteswap grid)";
+    };
+
     // Background: alternate shades every loop period, so the repeat stands out. Plain grays,
     // independent of color-vision mode, kept very dark so throw colors keep their contrast.
     if (period > 0) {
@@ -562,6 +584,16 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
             const int periodIndex = b >= 0 ? b / period : -((-b + period - 1) / period);
             dl->AddRectFilled(ImVec2(origin.x, top), ImVec2(maxPt.x, top + beatSpacing),
                               periodShades[positiveMod(periodIndex, 2)]);
+        }
+    }
+
+    if (options.countN >= 2 && period > 0) {
+        const ImU32 wash = IM_COL32(150, 152, 160, (chain.active || edit.drawing) ? 50 : 26);
+        for (int b = bFirst; b <= bLast; ++b) {
+            const float top = beatY(b) - beatSpacing * 0.5f;
+            for (int j = 0; j < jugglers; ++j)
+                if (lockedSlot(Slot{j, b}))
+                    dl->AddRectFilled(ImVec2(stripLeft(j), top), ImVec2(stripLeft(j) + widthOf(j), top + beatSpacing), wash);
         }
     }
 
@@ -604,6 +636,33 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         return chain.active ? editThrowAt(chain, s) : loop.at(s.juggler, positiveMod(s.beat, period));
     };
     auto loopSlot = [&](Slot s) { return s.juggler * period + positiveMod(s.beat, period); };
+    // The throw landing in an arrival slot (with the chain's edits, if one is open): its
+    // departure slot. False if nothing lands there.
+    auto landerOf = [&](Slot target, Slot* from) {
+        for (int d = target.beat; d >= target.beat - 35; --d)
+            for (int j = 0; j < jugglers; ++j) {
+                const LoopThrow t = throwAt(Slot{j, d});
+                if (t.value == kNoThrow || t.value == kOpenThrow) continue;
+                if (landingSlot(Slot{j, d}, t) == target) {
+                    *from = Slot{j, d};
+                    return true;
+                }
+            }
+        return false;
+    };
+    // Whether dropping or drawing onto target would change a locked throw: the one that lands
+    // there (a held catch, which displaces it) or the one thrown from there (a held throw).
+    bool lockedTargetHover = false;
+    Slot lockedTargetSlot;
+    auto targetLocked = [&](Slot target, bool arrival) {
+        if (options.countN < 2) return false;
+        Slot from = target;
+        if (arrival && !landerOf(target, &from)) return false;
+        if (!lockedSlot(from)) return false;
+        lockedTargetHover = true;
+        lockedTargetSlot = from;
+        return true;
+    };
     // Drawing stops when the spot it was drawing from has been decided some other way (undo,
     // typing, or the sketch being completed).
     if (edit.drawing && edit.drawEnd == HeldEnd::Arrival &&
@@ -881,6 +940,11 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         if (edit.hovering) edit.hoverSlot = drawn[static_cast<size_t>(hoverIndex)].from;
         edit.hoverEnd = hoverEnd;
 
+        // A locked throw (one of a count's 3s) can't be picked up.
+        if (leftClicked && hoverIndex >= 0 && lockedSlot(drawn[static_cast<size_t>(hoverIndex)].from)) {
+            result.note = "Can't: " + lockedWhy(drawn[static_cast<size_t>(hoverIndex)].from) + ".";
+            leftClicked = false;
+        }
         if (leftClicked && sketch && (hoverIndex >= 0 || hoverZero)) {
             // In a sketch, picking up a throw takes it out (its spot becomes "?"), to be drawn
             // again: by its catch, from where it was thrown to wherever it should land; by its
@@ -917,7 +981,7 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         // would be thrown from (it still lands in drawTo).
         float nearestD = 0.0f;
         const Slot nearest = nearestSlot(&nearestD);
-        if (nearestD <= snapRadius && drawnThrowFor(nearest, edit.drawTo, nullptr)) {
+        if (nearestD <= snapRadius && drawnThrowFor(nearest, edit.drawTo, nullptr) && !targetLocked(nearest, false)) {
             haveTarget = true;
             target = nearest;
         }
@@ -943,7 +1007,7 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         // Drawing: the nearest spot within snapping distance is where the prop would land.
         float nearestD = 0.0f;
         const Slot nearest = nearestSlot(&nearestD);
-        if (nearestD <= snapRadius && drawnThrowFor(edit.drawFrom, nearest, nullptr)) {
+        if (nearestD <= snapRadius && drawnThrowFor(edit.drawFrom, nearest, nullptr) && !targetLocked(nearest, true)) {
             haveTarget = true;
             target = nearest;
         }
@@ -1005,6 +1069,8 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         }
         if (haveTarget && !editDropThrow(chain, target, nullptr))
             haveTarget = false;  // not a legal drop: the rubber band just follows the mouse
+        if (haveTarget && target != chain.hole && targetLocked(target, arrivalMode))
+            haveTarget = false;  // it would change one of a count's 3s
         edit.targeting = haveTarget;
         edit.hoverTarget = target;
 
@@ -1116,8 +1182,8 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         }
     }
 
-    // Idle hover highlight: just the throw under the mouse.
-    if (hoverIndex >= 0) {
+    // Idle hover highlight: just the throw under the mouse (not a locked one: it can't be picked up).
+    if (hoverIndex >= 0 && !lockedSlot(drawn[static_cast<size_t>(hoverIndex)].from)) {
         const DrawnThrow& h = drawn[static_cast<size_t>(hoverIndex)];
         const Curve& c = h.curve;
         drawBezierHalfHighlight(dl, c.p0, c.c1, c.c2, c.p1, hoverEnd == HeldEnd::Departure,
@@ -1509,13 +1575,18 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
             ImGui::SetTooltip("%s Then click where it goes next (Esc stops).", what.c_str());
         else
             ImGui::SetTooltip("%s Joins the path that carries on from here: done.", what.c_str());
+    } else if (lockedTargetHover && (chain.active || edit.drawing)) {
+        ImGui::SetTooltip("Can't go here: %s.", lockedWhy(lockedTargetSlot).c_str());
     } else if (hoverInbound && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         ImGui::SetTooltip("Nothing lands here yet. Click to draw a throw that's caught here,\n"
                           "then click where it's thrown from.");
     } else if (hoverOpen && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         ImGui::SetTooltip("Not decided yet. Click to draw a throw from here.");
     } else if (sketch && hoverIndex >= 0 && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-        ImGui::SetTooltip("Click to draw this throw again.\nRight-click to delete it or its whole path.");
+        if (lockedSlot(drawn[static_cast<size_t>(hoverIndex)].from))
+            ImGui::SetTooltip("Locked: %s.", lockedWhy(drawn[static_cast<size_t>(hoverIndex)].from).c_str());
+        else
+            ImGui::SetTooltip("Click to draw this throw again.\nRight-click to delete it or its whole path.");
     }
     // Resting on a throw (not editing): what it is, and with clubs or rings, how it spins.
     {
@@ -1548,7 +1619,10 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
                     what += rate;
                 }
             }
-            what += "\nClick near either end to edit it; right-click for more.";
+            if (lockedSlot(rest->from))
+                what += "\nLocked: " + lockedWhy(rest->from) + ".";
+            else
+                what += "\nClick near either end to edit it; right-click for more.";
             ImGui::SetTooltip("%s", what.c_str());
         }
     }
@@ -1614,8 +1688,8 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
                 ImGui::TextDisabled("J%d", j + 1);
             }
             ImGui::Separator();
-            // Same as...: another juggler, starting from one of their beats. Starts that wouldn't
-            // make a pattern (or sketch) are greyed out, saying why.
+            // Same as...: another juggler, starting from one of their beats. Starts that leave the
+            // pattern with an error are marked (it may take more than one link to come right).
             const PatternForm emptyForm;
             if (ImGui::BeginMenu("Same as", jugglers > 1)) {
                 for (int k = 0; k < jugglers; ++k) {
@@ -1627,11 +1701,12 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
                         PatternForm newForm;
                         JugglingLoop newLoop;
                         std::string why;
-                        const bool ok = linkJuggler(form ? *form : emptyForm, loop, j, k, d, &newForm, &newLoop, &why);
+                        const bool ok = linkJuggler(form ? *form : emptyForm, loop, j, k, d, &newForm, &newLoop, &why, true);
+                        const bool problem = ok && !why.empty();
                         // "From beat 5, 3p+2 (@1[4])": where J(j) starts in J(k)'s throws.
                         const std::string what = "From beat " + std::to_string(d + 1) + ", " +
                                                  throwLabel(loop.at(k, d), k, jugglers, options.relativeTargets) + " (" +
-                                                 linkText(k, d, period) + ")";
+                                                 linkText(k, d, period) + ")" + (problem ? "  - error" : "");
                         char item[64];
                         std::snprintf(item, sizeof(item), "%s", what.c_str());
                         if (ImGui::MenuItem(item, nullptr, false, ok)) {
@@ -1639,7 +1714,9 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
                             result.linkTo = k;
                             result.linkStart = d;
                         }
-                        reasonTooltip(ok ? std::string() : "Can't: " + why);
+                        reasonTooltip(!ok ? "Can't: " + why
+                                          : problem ? "Leaves an error (more links or edits can fix it): " + why
+                                                    : std::string());
                     }
                     ImGui::EndMenu();
                 }

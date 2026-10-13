@@ -13,7 +13,7 @@ can trace any point on a throw straight across to its beat number.
   column), side by side: J1, J2, ... up to J6. Every juggler throws with the right hand on beat
   1. Click a juggler's number over their strip to select them (the same selection as in the 3D
   view; see [juggler.md](juggler.md)); click it again to deselect.
-- **Linked jugglers** (`@2[3]`, see *The siteswap box*) say what they copy under their number;
+- **Linked jugglers** (`@2[3]`, see *The siteswap grid*) say what they copy under their number;
   right-click a juggler's number for *Same as* and *Unlink*. **L** dims linked jugglers' throws.
 - **Choreography keyframes** (where a juggler stands on a beat; see *Choreography* in
   [juggler.md](juggler.md)) are diamonds on the juggler's strip: drag one up or down to move it
@@ -34,7 +34,7 @@ can trace any point on a throw straight across to its beat number.
     wider.
   - **Passes** run from one juggler's strip to another's. A 3p from the right hand lands in
     the partner's left; a 4p in their right. With three or more jugglers, a pass's label says
-    who it goes to (`3p2`, or `3p+1`; see *The siteswap box*).
+    who it goes to (`3p2`, or `3p+1`; see *The siteswap grid*).
   - **Empty beats** (0) are shown as a small hollow circle in the column.
 - **Throw values.** The **3p** button on the toolbar, the **V** key or *View > Throw Values*
   labels every throw with its value, a little way along it from where it's thrown: `3`, `4p`
@@ -167,8 +167,8 @@ siteswap can write (35) is refused, with the reason.
 
 ## Sketching
 
-A **sketch** is a pattern with throws not decided yet, shown as **?** (in the text box too:
-`<3p 3p 3p ? ? ?|? ? ? ? ? ?>`). It's how you build a pattern up from nothing, the way you might
+A **sketch** is a pattern with throws not decided yet, shown as **?** on the ladder and as blank
+cells in the siteswap grid (and as `?` in siteswap text: `<3p 3p 3p ? ? ?|? ? ? ? ? ?>`). It's how you build a pattern up from nothing, the way you might
 on paper.
 
 - *File > New Pattern...* starts one: choose 1 to 6 jugglers and the period, and every throw is
@@ -235,19 +235,22 @@ carries. The props in the 3D view follow the same setting. Sketches are always c
 ## Undo and redo
 
 **Ctrl+Z** undoes and **Ctrl+Y** (or **Ctrl+Shift+Z**) redoes, also under the *Edit* menu.
-Each of these is one step: a finished edit chain on the ladder, a change of period, a
-siteswap typed into the text box (recorded when you press Enter or click away, so undoing
-`531` doesn't step back through `53` and `5`), a pattern loaded from the library, beats added or
-deleted, a throw drawn or deleted in a sketch, or a change
-to the props, tempo, dwell or passing distance (recorded once you've stopped adjusting it for
-a moment, so dragging a slider is one step). While you're typing in the text box, Ctrl+Z
-undoes typing instead.
+Each of these is one step: a finished edit chain on the ladder, a change of period, a throw
+typed into a cell of the siteswap grid (or any other edit there: clearing cells, a paste, a
+column inserted), a change of count, a pattern loaded from the library, beats added or deleted,
+a throw drawn or deleted in a sketch, or a change to the props, tempo, dwell or passing distance
+(recorded once you've stopped adjusting it for a moment, so dragging a slider is one step).
+Ctrl+Z works the same while the grid has the keyboard; a throw still being typed is finished
+first, and is the step undone.
 
-## The siteswap box
+## The siteswap grid
 
-Along the bottom of the window, the full width, is a text box for siteswap notation. Typing a
-valid siteswap replaces the pattern. When the pattern is changed some other way (for example
-with the period control), the text is rewritten to match. Vanilla siteswap (asynchronous, one juggler, no multiplexes) and
+Along the bottom of the window, the full width, is the **siteswap grid**: the pattern as a
+spreadsheet of throws, one row per juggler (J1, J2, ...) and one column per beat, with the beat
+numbers along the top (the beat playing now is underlined). Editing it is described under
+*Editing in the grid* below. Underneath, patterns are still siteswap text, which is what's
+saved, copied and pasted, and what this section describes. When the pattern is changed some
+other way (on the ladder, with the period control), the grid follows. Vanilla siteswap (asynchronous, one juggler, no multiplexes) and
 passing for up to 6 jugglers are supported so far; sync and multiplex notation are recognized
 and reported as not yet supported.
 
@@ -289,8 +292,10 @@ first throw the copy starts: `@2[0]`, written just `@2`, is the same as J2 on th
 from 0, and as in Python, a negative number counts back from the end: `@2[-1]` starts with J2's
 last throw. (It's written back counting from the start: with 5 throws, `[-1]` becomes `[4]`.)
 
-The line under the siteswap box shows the number to use: with the cursor at a throw it says, for
-example, "J1, beat 5 [4]", and **Ctrl+click** writes the link for you (see *Help while typing*).
+The line under the siteswap grid shows the number to use: with the cursor on a throw it says, for
+example, "J1, beat 5 [4]", and **Ctrl+click** writes the link for you (see *Editing in the grid*).
+In the grid a linked juggler's row header says what they copy (`J2 @1[8]`), and their cells show
+the throws that come out, greyed (they're edited through the juggler written out).
 
 A one-count feast for five, each juggler a copy of the one before, starting 3 beats in:
 
@@ -311,12 +316,13 @@ loop, and at least one juggler has to have their throws written out.
 **Editing a linked juggler edits all of them.** Change a throw on the ladder, in the juggler
 written out or in any copy, and the change goes to the part written out and from there to every
 copy. If a copy would then collide (two props in one hand at once), the edit is refused and the
-line under the siteswap box says why. Adding or deleting beats isn't possible with links yet:
+line under the siteswap grid says why. Adding or deleting beats isn't possible with links yet:
 unlink first.
 
 On the ladder, a linked juggler's strip says what it copies under their number (`= J1[3]`).
 **Right-click a juggler's number** for **Same as** (pick a juggler and the beat to start from;
-starts that wouldn't make a pattern are greyed out, saying why) and **Unlink** (write their throws out in
+starts that leave the pattern with an error are marked "error", saying why, but allowed: a
+pattern often takes several links to come right) and **Unlink** (write their throws out in
 full, to edit on their own). The toolbar's rings button, **L** or *View > Dim Linked Jugglers*
 mutes the linked jugglers' throws, so the parts written out stand out.
 
@@ -334,52 +340,88 @@ Passing patterns are drawn and edited on the ladder like any other (see above).
 **?** is a throw not decided yet: JuggleSim's own extension, for sketches (see *Sketching*
 above). Other programs won't read it.
 
-### Help while typing
+### Editing in the grid
 
-- **Autofill.** Typing `<` in front of a solo pattern makes it a passing pattern with a second
-  juggler still to decide: `531` becomes `<5 3 1|? ? ?>`. `<3` becomes `<3|?>`, and each throw
-  you add to one juggler's part adds a `?` at the same place in the other's (`<5 3 1|5 3 1>`
-  with a `7` typed at the front becomes `<7 5 3 1|? 5 3 1>`). Deleting a real throw also
-  deletes the `?`s at the same place in the other parts; deleting a `?` deletes just that `?`,
-  and never touches anyone else's throws. If the very next thing you do after deleting a real
-  throw is type a throw in the same place, you were replacing it, and the `?`s come back:
-  backspacing the 7 in `<7 5 3 1|? 5 3 1>` and typing `8` gives `<8 5 3 1|? 5 3 1>`. (Moving the
-  cursor first, or any other edit, keeps the deletion.) A `|` typed at the end adds a juggler,
-  all `?`, and so does a pass to a juggler the pattern doesn't have yet: `<3p+2` becomes
-  `<3p+2|?|?>`. Typing `@` at the start of a part of `?`s replaces them with a link. A missing
-  `>` is added.
-  Passing patterns are written in the standard style: spaces between throws, none around the
-  bars.
-- **Up/Down** change the throw at the cursor: `?`, then 0, 1, 2, … up to 35 (z), skipping 25 and
-  33 (whose letters, p and x, mean other things). A 0 can't be a pass, so it loses its `p`.
-- **Shift+Up/Down** change where the throw at the cursor goes: a self becomes a pass to the
-  next juggler (Up) or the one before (Down), then the one after that, and so on round to a self
-  again. It's written in the pattern's style (`3p2`, or `3p+1` if the pattern uses relative
-  targets; a bare `p` with two jugglers).
+The grid works like a spreadsheet. **Click a cell** (or a juggler's header, for their whole row,
+or a beat number, for the whole column) and the grid has the keyboard until you click somewhere
+else or press **Esc**. Meanwhile the single-key shortcuts (V, M, T, ...) are off, since throws
+are letters too; **Space** still plays and pauses, and **Ctrl+S** and **Ctrl+Z** still work.
+
+- **Typing a throw replaces the cell's throw**, and a throw finishes by itself as soon as the
+  next key can't be part of it: type `5`, `3`, `1` and they land in three cells. `p` makes it a
+  pass; with two jugglers the pass is finished there (`3p`), and with three or more it finishes
+  with its target: a juggler's number (`3p2`) or `+` or `-` and how many along (`3p+1`). So a
+  whole row goes in without Tab or the arrows (`5p333p33`), and at the end of a row typing
+  carries on in the next juggler's. A throw being typed shows in the jugglers and on the ladder
+  as you type it (a self until its pass is complete); **Esc** puts the cell back as it was, and
+  **Enter**, an arrow or a click finishes it. A pass left without its target stays a pass, and
+  shows as an error.
+- **Blank cells** are throws not decided yet (a sketch), in a dim warning colour; **errors**
+  (two throws landing in one hand at once, or a throw off the count, below) are in a bright one,
+  with black text. The colours follow *View > Color Vision*: red, or bright green for red-weak
+  eyes, or greys.
+- **Backspace** or **Delete** clears the selected cells to blanks. A column never goes away
+  unless you delete it: clicking a blank and typing fills it.
+- **Arrows** move (**Shift+arrows** select), **Tab** / **Shift+Tab** go to the next / previous
+  cell to edit (on into the next juggler's row), **Home** / **End** to the start / end of the row
+  (**Ctrl+Home** / **Ctrl+End**: of the whole grid). Dragging selects too.
+- **Ctrl+Up** / **Ctrl+Down** change the throw: blank, then 0, 1, 2, … up to 35 (z), skipping 25
+  and 33 (whose letters, p and x, mean other things). A 0 can't be a pass, so it loses its `p`.
+- **Ctrl+Shift+Up** / **Ctrl+Shift+Down** change where it goes: a self becomes a pass to the next
+  juggler (Up) or the one before (Down), then the one after that, and so on round to a self
+  again, written in the pattern's style (`3p2`, or `3p+1` if the pattern uses relative targets;
+  a bare `p` with two jugglers).
 - **Ctrl+T** (**Cmd+T** on a Mac) swaps where two throws land — the *siteswap* operation that
-  turns one pattern into another. Select two throws in one juggler's part, or just put the
-  cursor after them: `531` with `31` selected becomes `522`. (Throws `d` beats apart swap
-  landings by trading `d` between them: the first becomes the second's value + `d`, the second
-  the first's − `d`.) Doing it again swaps them back. The pattern repeats, so with the cursor
-  just after a part's first throw, it swaps with the part's last throw (the one before it, in
-  the repeat before): `531` becomes `036`, and `<3p 3 3 3|3p 3 3 3>` becomes
-  `<2 3 3 4p|3p 3 3 3>`. At the very start of a part, the last two throws swap. If it can't be done (a `?`, or a throw that would go below 0), the line
-  under the box says why.
-- **Ctrl+R** and **Ctrl+L** (**Cmd+R** / **Cmd+L** on a Mac) rotate the pattern right or left:
-  the same pattern, started a beat earlier or later. `7531` becomes `1753` (right) or `5317`
-  (left). Every juggler's part rotates together: `<3p 5 3 1|3p 5 3 1>` becomes
-  `<1 3p 5 3|1 3p 5 3>`. Rotating by an odd number of beats swaps which hand starts.
-- **Ctrl+click** (**Cmd+click** on a Mac) a throw in another juggler's part to make the part
-  the cursor is in a copy of that juggler, starting with the throw you clicked. With the cursor
-  in J2's part, clicking J1's throw on beat 9 makes J2 `@1[8]`: on beat 1, J2 throws what J1
-  throws on beat 9. Whatever J2's part held (throws, `?`s, another link) is replaced; a
-  `,LRswap` stays. The cursor doesn't move, so you can click again to try another start.
-- **Where the cursor is** shows at the right of the line under the box while you type: the
-  juggler, beat (with the number a link to it would use) and hand of the throw the cursor is in
-  or just after ("J1, beat 5 [4], right hand: 3p+2"), or what the link there means ("J2: J1's
-  throws, starting 8 beats in (from J1's beat 9)").
+  turns one pattern into another: the two cells at the ends of the selection (in one row), or
+  the cell and the one before it. `531` with `3` and `1` selected becomes `522`. (Throws `d`
+  beats apart swap landings by trading `d` between them: the first becomes the second's value +
+  `d`, the second the first's − `d`.) The pattern repeats, so from a row's first cell it swaps
+  with the row's last: `531` becomes `036`. If it can't be done (a blank, or a throw that would
+  go below 0), the line under the grid says why.
+- **Ctrl+R** and **Ctrl+L** rotate the pattern right or left: the same pattern, started a beat
+  earlier or later (a whole count at a time, with a count directive). `7531` becomes `1753`
+  (right) or `5317` (left). Every juggler's row rotates together.
+- **Ctrl+C**, **Ctrl+X** and **Ctrl+V** copy, cut and paste as siteswap text, so patterns go to
+  and from forums and other programs. A paste fills cells from the one you're on: pasting
+  `<5 3 1|5 3 1|5 3 1>` on J2's beat 5 puts `5 3 1` on beats 5, 6 and 7 of J2, J3 and J4. If it
+  runs past the last beat or juggler you're asked whether to make the pattern bigger or not
+  paste. **Ctrl+A** selects everything, and pasting over everything replaces the whole pattern
+  (links and all).
+- **Ctrl+click** (**Cmd+click** on a Mac) a throw in another juggler's row to make the cursor's
+  juggler a copy of that juggler, starting with the throw you clicked: with the cursor in J2's
+  row, clicking J1's beat 9 makes J2 `@1[8]`. A `,LRswap` stays. A link that leaves throws
+  colliding is made all the same (the collisions show as errors), since it can take links for
+  several jugglers before the pattern comes right.
+- **Right-click a cell** to insert a column left or right of it, or delete its column (every
+  juggler's), or cut, copy, paste and clear. **Delete Beat n and All After** cuts the pattern off
+  there, and **Shorten to Repeat** cuts a pattern written out longer than it needs (`531531`)
+  down to the shortest length it repeats at (`531`; a whole number of counts, with a count). **Right-click a juggler** (J1, J2, ...) to add a
+  juggler above or below, remove them, make them the **Same as** another juggler from any of their
+  beats (as on the ladder), **Unlink**
+  them, or swap their hands. Adding a third juggler to a two-juggler pattern writes its bare
+  `p`s out with their targets (`3p2`), so they still go where they did.
+- **Where the cursor is** shows at the right of the line under the grid: the juggler, beat (with
+  the number a link to it would use), hand and throw ("J1, beat 5 [4], right hand: 3p+2").
 - **Pointing at a throw** describes it ("J1, beat 3, right hand: 4p, a pass to J2's right
   hand, caught on beat 7") and picks it out on the ladder at every repeat.
-- **Mistakes are underlined**: when two throws land in the same hand at the same time, both
-  get a zigzag underline, along with the message below the box.
-- **Enter** (or clicking away) tidies the text into the standard form.
+
+### Count directives
+
+Most passing patterns pass on every n-th beat and throw 3s in between. The **Count** button
+under the grid (*No count*, *2-count*, ... *8-count*) says so: with a **4-count**, only beats 1,
+5, 9, ... are edited; the 3s between are greyed out, drawn narrow, and skipped by the arrows,
+Tab and typing (type `4p4p` and the passes land four beats apart). Inserting and deleting
+columns offers a whole count at a time (*Insert a 4-count Left/Right*, *Delete This 4-count*);
+anything else is at your own risk, and what it puts off the count shows as errors. Ctrl+R and
+Ctrl+L rotate a whole count at a time, and pasting on a count beat asks whether to paste into the
+beats in a row or onto the count's beats.
+
+You can switch from any count to any other. If the pattern doesn't already fit the new count,
+you're asked how to get there: **Fill In** moves the beats that matter (the old count's, and
+any beat that isn't all 3s) to the new count's beats with 3s between; **Keep Throws** leaves
+everything where it is (rounding the period up to a whole number of counts), and shows what's
+off the count as errors to fix by hand. On the ladder, the 3s between the count's beats are
+**locked**: their spots are washed grey (more strongly while you're holding a throw), they can't
+be picked up (resting on one says why), and a held throw won't go anywhere that would change one
+(the tooltip says why). Adding or deleting beats goes a whole count at a time. The count
+is saved with the pattern (`count=4`), and *File > New Pattern...* can start with one.

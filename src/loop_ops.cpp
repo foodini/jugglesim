@@ -198,7 +198,7 @@ bool projectEdit(const PatternForm& form, const JugglingLoop& before, const Jugg
 }
 
 bool linkJuggler(const PatternForm& form, const JugglingLoop& loop, int j, int to, int start, PatternForm* newForm,
-                 JugglingLoop* newLoop, std::string* why) {
+                 JugglingLoop* newLoop, std::string* why, bool allowProblems) {
     if (j < 0 || to < 0 || j >= loop.jugglers || to >= loop.jugglers || j == to) return false;
     PatternForm f = form;
     if (f.jugglers != loop.jugglers || static_cast<int>(f.links.size()) != loop.jugglers) {
@@ -219,7 +219,7 @@ bool linkJuggler(const PatternForm& form, const JugglingLoop& loop, int j, int t
     const std::string problem = loopProblem(out);
     if (!problem.empty()) {
         if (why) *why = problem;
-        return false;
+        if (!allowProblems) return false;
     }
     *newForm = f;
     *newLoop = out;

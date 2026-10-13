@@ -133,6 +133,9 @@ struct LadderViewOptions {
     // How the pattern was typed: which jugglers are links ("@2[3]"), for their strip headers, the
     // Same as.../Unlink menu and dimming. May be null.
     const PatternForm* form = nullptr;
+    // A count directive ("4-count", from the siteswap grid; 0: none). The 3s between its beats
+    // are locked: washed grey, and no edit may change them.
+    int countN = 0;
     bool dimLinked = false;  // draw linked jugglers' throws muted, so the parts written out stand out
     // Choreography keyframes, drawn at every repeat of the choreography's cycle.
     std::vector<LadderKeyframe> keyframes;
@@ -151,6 +154,7 @@ constexpr int kNoSelectionChange = -2;
 
 // What the user did this frame. The caller applies it.
 struct LadderEditResult {
+    std::string note;           // why something the user tried can't be done (shown under the grid)
     bool startedChain = false;  // the user picked up a throw this frame (editing a pattern)
     bool startedDrawing = false;  // the user started drawing in a sketch this frame
     bool committed = false;     // the pattern changed: an edit chain closed, a throw was drawn

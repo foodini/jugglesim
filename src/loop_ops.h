@@ -45,9 +45,10 @@ bool projectEdit(const PatternForm& form, const JugglingLoop& before, const Jugg
 // Makes juggler `j` a link ("Same as..."): juggler `to`'s throws, starting from to's
 // throws[start] (so j's beat b is to's beat b + start). The
 // new form and loop; false, with the reason, for a loop of links or a result that isn't a
-// pattern or sketch.
+// pattern or sketch. With `allowProblems`, a result with a problem (throws colliding) is made all
+// the same, with the problem in *why: a pattern often takes several links to come right.
 bool linkJuggler(const PatternForm& form, const JugglingLoop& loop, int j, int to, int start, PatternForm* newForm,
-                 JugglingLoop* newLoop, std::string* why);
+                 JugglingLoop* newLoop, std::string* why, bool allowProblems = false);
 // The form with juggler `j` no longer a link (their throws written out in full).
 PatternForm unlinkJuggler(const PatternForm& form, int j);
 

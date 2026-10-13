@@ -119,7 +119,8 @@ src/
   pattern_library_ui.* pattern menus (adaptive tree, Find, Recent), Save and Manage dialogs
   resource.h          resource IDs (see jugglesim.rc)
   siteswap.h/.cpp     siteswap parsing/validation (vanilla, and passing for up to 6 jugglers)
-  siteswap_edit.*     help typing in the siteswap box: autofill, Up/Down, swap, rotate, tidy
+  siteswap_edit.*     the siteswap grid's model: text to grid and back, counts, columns, swap, rotate
+  siteswap_grid.*     the siteswap grid along the bottom: drawing it, typing, menus, paste
   ladder_view.h/.cpp  ladder diagram + its toolbar + drag editing, drawn with ImGui
   ladder_edit.h/.cpp  the edit chain behind ladder editing (pure logic, no drawing)
   loop_ops.h/.cpp     loop operations: ? sketches, beat insert/delete, paths and orbits, drawing

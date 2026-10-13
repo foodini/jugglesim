@@ -92,6 +92,13 @@ void parseSettings(const std::string& text, LibraryPattern* pattern) {
         } else if (key == "choreo") {
             s.hasChoreography = true;
             s.choreography = value;
+        } else if (key == "count") {
+            if (parseNumber(value, &number) && number >= 2.0 && number <= 16.0 && number == std::floor(number)) {
+                s.hasCount = true;
+                s.count = static_cast<int>(number);
+            } else {
+                pattern->otherSettings.emplace_back(key, value);
+            }
         } else if (key == "camera") {
             // x,y,z,yaw,pitch (m, degrees)
             double v[5];
@@ -167,6 +174,7 @@ std::string formatPatternLine(const LibraryPattern& pattern) {
     if (s.hasDwell) add("dwell", formatNumber(s.dwell));
     if (s.hasDistance) add("distance", s.distance > 0.0 ? formatNumber(s.distance) : std::string("auto"));
     if (s.hasChoreography && !s.choreography.empty()) add("choreo", s.choreography);
+    if (s.hasCount && s.count >= 2) add("count", std::to_string(s.count));
     if (s.hasCamera) {
         char buffer[160];
         std::snprintf(buffer, sizeof(buffer), "%.3f,%.3f,%.3f,%.1f,%.1f", s.camera[0], s.camera[1], s.camera[2],

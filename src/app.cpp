@@ -30,6 +30,7 @@
 #include "choreography.h"
 #include "siteswap.h"
 #include "siteswap_edit.h"
+#include "siteswap_grid.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"  // to open a slider's text field on double-click (fineSlider)
@@ -1784,109 +1785,18 @@ struct Playback {
 };
 constexpr double kStepBeats = 1.0 / 12.0;  // one arrow-key press; Shift steps a whole beat
 
-// ---- The siteswap text box's helpers (the text work itself is in siteswap_edit.h)
+// ---- The siteswap grid's messages (the grid itself is siteswap_grid.h)
 
-// What the text box's callback works with, kept between frames.
+// What the line under the siteswap grid says for a while: a problem (why something couldn't be
+// done), or a note that isn't one ("Saved ...").
 struct SiteswapBox {
-    std::string before;          // the text before this frame's edit (for autofill)
-    bool swapRequested = false;  // Ctrl+T (Cmd+T on a Mac) this frame
-    int rotateRequested = 0;     // Ctrl+R (+1, right) or Ctrl+L (-1, left) this frame
-    std::string note;            // why the last swap didn't happen
+    std::string note;            // why the last edit didn't happen
     double noteUntil = 0.0;      // (shown until then)
     std::string info;            // a note that isn't a problem ("Saved ..."), shown in plain text
     double infoUntil = 0.0;      // (shown until then)
-    bool wasActive = false;      // the box had the keyboard last frame
-    bool replacedWhole = false;  // an edit replaced the whole text at once (a paste over it)
-    SiteswapAutofillMemory memory;  // a column deletion the next keystroke may take back
-    int cursor = 0;              // where the cursor is (as of the last callback)
-    int linkClick = -1;          // Ctrl+click this frame: the character clicked (-1: none)
-    bool linkClicked = false;    // ...whether there was one
-    bool linkDrag = false;       // the mouse is still down after a Ctrl+click (don't select)
-    ImVec2 lastMin, lastMax;     // where the box was last frame
-    float lastTextLeft = 0.0f;   // ...and where its text started
 };
 
-// The text box's callback: autofill after an edit, Up/Down to change the throw at the cursor,
-// and the swap.
-int siteswapBoxCallback(ImGuiInputTextCallbackData* data) {
-    SiteswapBox* box = static_cast<SiteswapBox*>(data->UserData);
-    const std::string text(data->Buf, static_cast<size_t>(data->BufTextLen));
-    SiteswapEdit edit;
-    bool apply = false;
-    if (data->EventFlag == ImGuiInputTextFlags_CallbackEdit) {
-        // Nothing kept from before at either end, and more than one character arrived at once:
-        // the whole pattern was replaced (pasted over), so playback starts again from beat 1.
-        size_t prefix = 0, suffix = 0;
-        while (prefix < box->before.size() && prefix < text.size() && box->before[prefix] == text[prefix]) ++prefix;
-        while (suffix < box->before.size() - prefix && suffix < text.size() - prefix &&
-               box->before[box->before.size() - 1 - suffix] == text[text.size() - 1 - suffix])
-            ++suffix;
-        if (prefix == 0 && suffix == 0 && text.size() > 1) box->replacedWhole = true;
-        apply = autofillSiteswap(box->before, text, data->CursorPos, &edit, &box->memory);
-    } else if (data->EventFlag == ImGuiInputTextFlags_CallbackHistory) {
-        box->memory.forget();
-        const int delta = data->EventKey == ImGuiKey_UpArrow ? 1 : -1;
-        if (ImGui::GetIO().KeyShift) {
-            // Shift+Up/Down: where the throw goes (self, then a pass to each juggler in turn).
-            std::string why;
-            apply = stepPassTarget(text, data->CursorPos, delta, &edit, &why);
-            if (!apply && !why.empty()) {
-                box->note = why;
-                box->noteUntil = ImGui::GetTime() + 4.0;
-            }
-        } else {
-            apply = bumpThrowAtCursor(text, data->CursorPos, delta, &edit);
-        }
-    }
-    // Moving the cursor away means the deletion wasn't the start of a replacement.
-    if (data->EventFlag == ImGuiInputTextFlags_CallbackAlways && box->memory.armed &&
-        (data->CursorPos != box->memory.cursor || data->SelectionStart != data->SelectionEnd))
-        box->memory.forget();
-    if (!apply && box->swapRequested) {
-        box->memory.forget();
-        std::string why;
-        apply = swapThrows(text, data->SelectionStart, data->SelectionEnd, data->CursorPos, &edit, &why);
-        if (!apply) {
-            box->note = why;
-            box->noteUntil = ImGui::GetTime() + 4.0;
-        }
-    }
-    box->swapRequested = false;
-    if (!apply && box->rotateRequested != 0) {
-        box->memory.forget();
-        std::string why;
-        apply = rotateThrows(text, box->rotateRequested, data->CursorPos, &edit, &why);
-        if (!apply) {
-            box->note = why;
-            box->noteUntil = ImGui::GetTime() + 4.0;
-        }
-    }
-    box->rotateRequested = 0;
-    if (!apply && box->linkClicked) {
-        // Ctrl+click on a throw: the part the cursor is in becomes a copy of that juggler.
-        box->memory.forget();
-        std::string why;
-        apply = linkToClickedThrow(text, data->CursorPos, box->linkClick, &edit, &why);
-        if (!apply) {
-            box->note = why;
-            box->noteUntil = ImGui::GetTime() + 5.0;
-        }
-    }
-    box->linkClicked = false;
-    if (apply && static_cast<int>(edit.text.size()) < data->BufSize) {
-        data->DeleteChars(0, data->BufTextLen);
-        data->InsertChars(0, edit.text.c_str());
-        data->CursorPos = std::min(edit.cursor, data->BufTextLen);
-        data->SelectionStart = data->SelectionEnd = data->CursorPos;
-        box->before = edit.text;
-    } else {
-        box->before = text;
-    }
-    box->cursor = data->CursorPos;
-    return 0;
-}
-
-// A throw described for the text box's tooltip: "J1, beat 3, right hand: 4p, a pass to J2's
+// A throw described for the siteswap grid's tooltip: "J1, beat 3, right hand: 4p, a pass to J2's
 // left hand, caught on beat 7." Beats count from 1, as on the ladder; each juggler's first
 // throw is from the right hand (the left, if their hands are swapped).
 std::string describeThrow(const JugglingLoop& loop, int juggler, int beat) {
@@ -1917,52 +1827,6 @@ std::string describeThrow(const JugglingLoop& loop, int juggler, int beat) {
     return text;
 }
 
-// The x position of character `index` of the text box's text (as drawn, scrolled or not).
-float siteswapCharacterX(const char* text, int index, float textLeft) {
-    return textLeft + ImGui::CalcTextSize(text, text + index).x;
-}
-
-// Where the text box's cursor is, for the line under it: "J1, beat 5 [4], right hand: 3p+2" (the
-// throw it's in or just after, as typed), or what a link there means. Empty if neither.
-std::string cursorReadout(const char* text, int cursor, const JugglingLoop& loop) {
-    const std::string s(text);
-    size_t first = 0;
-    while (first < s.size() && std::isspace(static_cast<unsigned char>(s[first]))) ++first;
-    const bool passing = first < s.size() && s[first] == '<';
-    int juggler = 0, beat = 0;
-    if (throwAtCursor(s, cursor, &juggler, &beat)) {
-        std::string out = passing ? "J" + std::to_string(juggler + 1) + ", " : std::string();
-        out += "beat " + std::to_string(beat + 1);
-        if (passing) out += " [" + std::to_string(beat) + "]";  // (as a link to it would say: "@1[4]")
-        if (!loop.empty() && juggler < loop.jugglers && beat < loop.period)
-            out += loop.rightHandBeat(juggler, beat) ? ", right hand" : ", left hand";
-        int start = 0, end = 0;
-        if (charactersOfThrow(s, juggler, beat, &start, &end)) out += ": " + s.substr(static_cast<size_t>(start), static_cast<size_t>(end - start));
-        return out;
-    }
-    int to = 0, start = 0;
-    bool lrSwap = false;
-    if ((cursor > 0 && linkAtCharacter(s, cursor - 1, &juggler, &to, &start, &lrSwap)) ||
-        linkAtCharacter(s, cursor, &juggler, &to, &start, &lrSwap)) {
-        std::string out = "J" + std::to_string(juggler + 1) + ": " + linkWords(to, start, loop.period);
-        if (lrSwap) out += ", hands swapped";
-        return out;
-    }
-    return std::string();
-}
-
-// The character of the text box's text at x (-1: none).
-int siteswapCharacterAt(const char* text, float x, float textLeft) {
-    const int length = static_cast<int>(std::strlen(text));
-    float left = textLeft;
-    for (int i = 0; i < length; ++i) {
-        const float right = left + ImGui::CalcTextSize(text + i, text + i + 1).x;
-        if (x >= left && x < right) return i;
-        left = right;
-    }
-    return -1;
-}
-
 // The keyboard shortcuts sheet (? or Help > Keyboard Shortcuts): every key and mouse action,
 // by where it works.
 void drawShortcutsWindow(bool* open) {
@@ -1975,7 +1839,7 @@ void drawShortcutsWindow(bool* open) {
         std::vector<Entry> entries;
     };
     static const std::vector<Group> kGroups = {
-        {"Anywhere (not while typing in the siteswap box)",
+        {"Anywhere (Space, Ctrl+S and Ctrl+Z work in the siteswap grid too)",
          {{"Space", "Play / pause"},
           {"Left / Right", "Step back / forward 1/12 of a beat (pauses)"},
           {"Shift+Left / Shift+Right", "Step a whole beat"},
@@ -2023,13 +1887,19 @@ void drawShortcutsWindow(bool* open) {
           {"Right-click", "Menus: a throw, a beat line, a juggler's number, a keyframe"},
           {"Drag a keyframe diamond", "Move it to another beat"},
           {"Rest on a throw", "What it is (with clubs or rings, its spin)"}}},
-        {"Siteswap box",
-         {{"Up / Down", "Change the throw at the cursor"},
-          {"Shift+Up / Shift+Down", "Change where it goes (self, then each juggler)"},
-          {"Ctrl+T", "Swap where two throws land (the two selected, or the two before the cursor)"},
-          {"Ctrl+R / Ctrl+L", "Rotate the pattern right / left"},
-          {"Ctrl+click a throw", "Make the cursor's part a copy of that juggler, starting with that throw"},
-          {"Enter", "Tidy the text (and make it one undo step)"},
+        {"Siteswap grid",
+         {{"Type a throw", "Replaces the cell's throw; the next throw typed goes in the next cell (531: three cells)"},
+          {"p, then the target", "A pass (3p, 3p2, 3p+1); with two jugglers it's done at the p"},
+          {"Arrows, Tab, Home / End", "Move (Shift+arrows: select); the greyed 3s of a count are skipped"},
+          {"Backspace, Delete", "Clear the selected cells (blank: not decided yet)"},
+          {"Ctrl+Up / Ctrl+Down", "The throw one higher / lower"},
+          {"Ctrl+Shift+Up / Down", "Where it goes (self, then each juggler)"},
+          {"Ctrl+T", "Swap where two throws land (the selection's ends, or the cell and the one before)"},
+          {"Ctrl+R / Ctrl+L", "Rotate the pattern right / left (a whole count at a time)"},
+          {"Ctrl+A, Ctrl+C, Ctrl+X, Ctrl+V", "Select all, copy, cut, paste (siteswap text; select all to paste a whole pattern)"},
+          {"Ctrl+click a throw", "Make the cursor's juggler a copy of that juggler, from that throw on"},
+          {"Right-click", "A cell: insert or delete columns; a juggler (J1...): add, remove, link"},
+          {"Esc", "Stop typing a throw (puts the cell back), then give the keyboard back"},
           {"Rest on a throw", "What it does"}}},
     };
     ImGui::SetNextWindowSize(ImVec2(ImGui::GetFontSize() * 46.0f, ImGui::GetFontSize() * 40.0f), ImGuiCond_FirstUseEver);
@@ -2100,6 +1970,8 @@ int runApp() {
     // pattern is kept but not shown.
     char siteswapText[4096] = "531";  // (room for 6 jugglers x 100 beats or so)
     SiteswapBox siteswapBox;
+    SiteswapGridState siteswapGrid;  // the siteswap grid along the bottom (cursor, typing, dialogs)
+    int patternCount = 0;            // its count directive ("4-count"), 0: none
     Playback playback;
     int siteswapHoverThrow = -1;  // the throw under the mouse in the text box (for the ladder)
     Siteswap parsed = parseSiteswap(siteswapText);
@@ -2255,6 +2127,8 @@ int runApp() {
     auto currentPatternSettings = [&]() -> PatternSettings {
         PatternSettings current;
         current.hasProp = current.hasTempo = current.hasDwell = current.hasDistance = current.hasChoreography = true;
+        current.hasCount = true;
+        current.count = patternCount;
         current.choreography = choreography.active() ? choreographyToText(choreography) : std::string();
         current.prop = juggleParams.prop;
         current.tempo = juggleParams.bpm;
@@ -2285,6 +2159,7 @@ int runApp() {
         if (apply.hasTempo) juggleParams.bpm = apply.tempo;
         if (apply.hasDwell) juggleParams.dwellBeats = apply.dwell;
         if (apply.hasDistance) juggleParams.distance = apply.distance;
+        if (apply.hasCount) patternCount = apply.count;
         if (apply.hasCamera) {
             camera.free = true;
             camera.topView = false;
@@ -2334,12 +2209,13 @@ int runApp() {
         recordSettingsChange();
         history.record(text);
     };
-    // Typing in the siteswap box becomes an undo step when the box loses focus, but a change
-    // made some other way (on the ladder, the period buttons, the library) can come first. Each
-    // of those calls this, so what was typed is a step of its own and undoing the change goes
-    // back to it rather than to whatever was there before the typing.
+    // A throw being typed into the siteswap grid is shown as it's typed, and becomes an undo step
+    // once it's finished; but a change made some other way (the ladder, undo, the library) can
+    // come first. Each of those calls this, so what was typed is a step of its own and undoing the
+    // change goes back to it.
     auto commitTyping = [&]() {
-        if ((parsed.valid || parsed.sketch) && history.current != siteswapText) recordPattern(siteswapText);
+        if (history.current != siteswapText) recordPattern(siteswapText);
+        siteswapGrid.editing = false;
     };
 
     // Replaces the pattern with the one written in `text` (used by undo/redo).
@@ -2365,10 +2241,20 @@ int runApp() {
             siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
             return;
         }
-        if (openThrowCount(l) == 0) l = loopWithPeriod(l, loopShortestPeriod(l));
+        GridCount gridCount;
+        gridCount.n = patternCount;
+        if (openThrowCount(l) == 0) l = loopWithPeriod(l, countPeriodFor(loopShortestPeriod(l), gridCount));
         std::string text;
         // Written the way the pattern was typed: targets as they were, links as links.
         if (!loopToText(l, &text, &parsed.form)) return;
+        // A count directive: the 3s between its beats stay as they are.
+        SiteswapGrid gridBefore, gridAfter;
+        if (gridCount.active() && gridFromText(siteswapText, &gridBefore) && gridFromText(text, &gridAfter) &&
+            !countAllowsChange(gridBefore, gridAfter, gridCount, &why)) {
+            siteswapBox.note = "Can't: " + why + ".";
+            siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+            return;
+        }
         const Siteswap check = parseSiteswap(text);
         if (!check.valid && !check.sketch) return;  // shouldn't happen; keep what we have
         std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
@@ -2379,11 +2265,35 @@ int runApp() {
         if (check.sketch) sketchLoop = check.loop;
         recordPattern(text);
     };
+    // Makes juggler j a copy of juggler `to` from to's beat `start` on ("Same as", from the ladder
+    // or the grid), or writes a linked juggler's throws out again. One undo step.
+    auto relink = [&](int j, int to, int start, bool unlink) {
+        PatternForm newForm;
+        JugglingLoop newLoop = parsed.loop;
+        std::string why, text;
+        bool ok = true;
+        if (!unlink)
+            ok = linkJuggler(parsed.form, parsed.loop, j, to, start, &newForm, &newLoop, &why, true);
+        else
+            newForm = unlinkJuggler(parsed.form, j);
+        if (ok && !parsed.loop.empty() && loopToText(newLoop, &text, &newForm)) {
+            commitTyping();
+            cancelLadderEdit(ladderEdit);
+            showPatternText(text);
+            recordPattern(text);
+        } else {
+            siteswapBox.note = "Can't: " + (why.empty() ? std::string("the pattern has to be readable first") : why);
+            siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+        }
+    };
+    auto linkJugglers = [&](int j, int to, int start) { relink(j, to, start, false); };
+    auto unlinkJugglers = [&](int j) { relink(j, 0, 0, true); };
     auto undo = [&]() {
         if (ladderEdit.chain.active) {  // an open chain is just cancelled, like Esc
             cancelLadderEdit(ladderEdit);
             return;
         }
+        commitTyping();  // a throw being typed is the step to undo
         recordSettingsChange();  // a change still settling is the one to undo
         if (history.undo.empty()) return;
         const HistoryStep step = history.undo.back();
@@ -2395,6 +2305,7 @@ int runApp() {
         settingsRecorded();
     };
     auto redo = [&]() {
+        commitTyping();
         recordSettingsChange();  // a change still settling is a new step, which ends redo
         if (history.redo.empty()) return;
         cancelLadderEdit(ladderEdit);
@@ -2434,6 +2345,7 @@ int runApp() {
         const PatternSettings before = currentPatternSettings();
         showPatternText(chosen.siteswap);
         choreography = Choreography();  // unless the pattern brings its own
+        patternCount = 0;               // ...and no count directive, unless it brings one
         camera.free = false;            // ...and the automatic framing, unless it brings a camera
         applyPatternSettings(chosen.settings);
         history.recordWithSettings(siteswapText, before, currentPatternSettings());
@@ -2450,6 +2362,7 @@ int runApp() {
         bool openRequested = false;
         int jugglers = 2;
         int period = 6;
+        int count = 0;  // a count directive (0: none): blanks only on its beats, 3s between
     } newPatternDialog;
     ManagePatternsWindow manageWindow;
     std::string fileError;  // shown in a message box when set
@@ -2618,12 +2531,16 @@ int runApp() {
                              (playback.slow ? static_cast<double>(settings.slowRate) : 1.0);
 
         // --- Keyboard shortcuts (not while typing: the text box has its own undo, etc.) ---
+        // While the siteswap grid has the keyboard, keys are its (throws are letters too), so the
+        // single-key shortcuts are off, as they are for a text box; Space, Ctrl+S and undo work.
+        const bool gridHasKeys = siteswapGridHasKeyboard(siteswapGrid);
+        if (gridHasKeys) io.WantTextInput = true;
         // Ctrl+S / Ctrl+Shift+S: Save / Save As (even while typing a siteswap).
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup)) {
             commitTyping();
             (io.KeyShift ? saveAsRequested : saveRequested) = true;
         }
-        if (!io.WantTextInput && io.KeyCtrl) {
+        if ((!io.WantTextInput || gridHasKeys) && io.KeyCtrl) {
             if (ImGui::IsKeyPressed(ImGuiKey_Z) && !io.KeyShift) undo();
             else if (ImGui::IsKeyPressed(ImGuiKey_Y) || (ImGui::IsKeyPressed(ImGuiKey_Z) && io.KeyShift)) redo();
             // Ctrl+1 to Ctrl+6: collapse or expand that juggler's ladder strip.
@@ -2653,6 +2570,8 @@ int runApp() {
         if (!io.WantTextInput)
             for (const ImWchar c : io.InputQueueCharacters)
                 if (c == '?') showShortcuts = !showShortcuts;
+        if (gridHasKeys && !io.KeyCtrl && !loiter.open && ImGui::IsKeyPressed(ImGuiKey_Space, false))
+            playback.playing = !playback.playing;
         if (!io.WantTextInput && !io.KeyCtrl && !loiter.open) {
             if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) playback.playing = !playback.playing;
             if (ImGui::IsKeyPressed(ImGuiKey_B, false)) goToStart();
@@ -2909,8 +2828,12 @@ int runApp() {
         const float leftWidth = std::floor(std::clamp(W * settings.ladderFraction, minPaneWidth, W - minPaneWidth));
         // The siteswap entry is a pane of its own along the bottom, the full width of the window
         // (long passing patterns need the room); the ladder and juggler panes sit above it.
-        const float entryHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeight() +
-                                  style.WindowPadding.y * 2.0f;
+        int gridRows = 1;
+        {
+            SiteswapGrid shownGrid;
+            if (gridFromText(siteswapText, &shownGrid)) gridRows = std::max(1, shownGrid.jugglers());
+        }
+        const float entryHeight = siteswapGridHeight(gridRows) + style.WindowPadding.y * 2.0f;
         const float bodyBottom = H - entryHeight;
         const ImGuiWindowFlags paneFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                                            ImGuiWindowFlags_NoSavedSettings |
@@ -2941,7 +2864,11 @@ int runApp() {
                 settings.showThrowValues = !settings.showThrowValues;
                 saveSettings(settings);
             }
-            if (request.newPeriodBeats > 0) {
+            if (request.newPeriodBeats > 0 && patternCount >= 2 && request.newPeriodBeats % patternCount != 0) {
+                siteswapBox.note = "Can't: this is a " + std::to_string(patternCount) + "-count, so the period goes up and down " +
+                                   std::to_string(patternCount) + " beats at a time.";
+                siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+            } else if (request.newPeriodBeats > 0) {
                 cancelLadderEdit(ladderEdit);
                 commitTyping();
                 const JugglingLoop longer = loopWithPeriod(ladderLoop, request.newPeriodBeats);
@@ -2967,6 +2894,7 @@ int runApp() {
             ladderOptions.highlightThrow = siteswapHoverThrow;
             ladderOptions.relativeTargets = parsed.form.relative;
             ladderOptions.form = &parsed.form;
+            ladderOptions.countN = patternCount;
             ladderOptions.dimLinked = settings.dimLinked;
             ladderOptions.followPlayhead = playback.playing;
             {
@@ -3016,6 +2944,10 @@ int runApp() {
             // Picking up a throw pauses the jugglers (don't confuse them mid-edit); drawing in a
             // sketch doesn't, so you can watch props pop in as you go.
             if (edited.startedChain) playback.playing = false;
+            if (!edited.note.empty()) {
+                siteswapBox.note = edited.note;
+                siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+            }
             ladderPreview = edited.hasPreview;
             if (ladderPreview) ladderPreviewLoop = edited.preview;
             if (edited.selectJuggler != kNoSelectionChange) {
@@ -3057,157 +2989,50 @@ int runApp() {
                 playback.beat = edited.scrubBeat;
             }
             // A juggler's menu: Same as... (make them a link) or Unlink (write them out).
-            if (edited.linkJuggler >= 0 || edited.unlinkJuggler >= 0) {
-                PatternForm newForm;
-                JugglingLoop newLoop = parsed.loop;
-                std::string why, text;
-                bool ok = true;
-                if (edited.linkJuggler >= 0)
-                    ok = linkJuggler(parsed.form, parsed.loop, edited.linkJuggler, edited.linkTo, edited.linkStart,
-                                     &newForm, &newLoop, &why);
-                else
-                    newForm = unlinkJuggler(parsed.form, edited.unlinkJuggler);
-                if (ok && loopToText(newLoop, &text, &newForm)) {
-                    commitTyping();
-                    cancelLadderEdit(ladderEdit);
-                    showPatternText(text);
-                    recordPattern(text);
-                } else if (!why.empty()) {
-                    siteswapBox.note = "Can't: " + why;
-                    siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
-                }
-            }
+            if (edited.linkJuggler >= 0) linkJugglers(edited.linkJuggler, edited.linkTo, edited.linkStart);
+            if (edited.unlinkJuggler >= 0) unlinkJugglers(edited.unlinkJuggler);
         }
         ImGui::End();
 
-        // Siteswap entry (along the bottom, full width).
+        // The siteswap grid (along the bottom, full width).
         ImGui::SetNextWindowPos(ImVec2(0.0f, bodyBottom));
         ImGui::SetNextWindowSize(ImVec2(W, entryHeight));
-        if (ImGui::Begin("Siteswap entry", nullptr, paneFlags)) {
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted("Siteswap");
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(-FLT_MIN);
-            // Autofill as you type, Up/Down change the throw at the cursor, Ctrl+T (Cmd+T on a
-            // Mac) swaps where two throws land (the two selected, or the two before the cursor),
-            // and Ctrl+R / Ctrl+L rotate the pattern.
-            siteswapBox.before = siteswapText;
-            siteswapBox.swapRequested = siteswapBox.wasActive && io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_T, false);
-            // Ctrl+R / Ctrl+L rotate the pattern right or left (the same pattern, started a
-            // beat earlier or later). These repeat while held.
-            siteswapBox.rotateRequested = 0;
-            if (siteswapBox.wasActive && io.KeyCtrl && !io.KeyShift) {
-                if (ImGui::IsKeyPressed(ImGuiKey_R)) siteswapBox.rotateRequested = 1;
-                else if (ImGui::IsKeyPressed(ImGuiKey_L)) siteswapBox.rotateRequested = -1;
-            }
-            // Ctrl+click (Cmd+click on a Mac) on a throw makes the part the cursor is in a copy of
-            // that juggler, starting with that throw ("@1[8]"). The text box doesn't see the click (so
-            // the cursor stays put), nor the drag after it (so nothing gets selected).
-            const bool savedClicked = io.MouseClicked[0];
-            const ImU16 savedClickCount = io.MouseClickedCount[0];
-            const ImVec2 savedDelta = io.MouseDelta;
-            siteswapBox.linkClicked = false;
-            if (siteswapBox.wasActive && io.KeyCtrl && io.MouseClicked[0] &&
-                ImGui::IsMouseHoveringRect(siteswapBox.lastMin, siteswapBox.lastMax)) {
-                siteswapBox.linkClicked = true;
-                siteswapBox.linkClick = siteswapCharacterAt(siteswapText, io.MousePos.x, siteswapBox.lastTextLeft);
-                siteswapBox.linkDrag = true;
-                io.MouseClicked[0] = false;
-                io.MouseClickedCount[0] = 0;
-            }
-            if (!io.MouseDown[0]) siteswapBox.linkDrag = false;
-            if (siteswapBox.linkDrag) io.MouseDelta = ImVec2(0.0f, 0.0f);
-            const ImGuiInputTextFlags boxFlags = ImGuiInputTextFlags_CallbackEdit | ImGuiInputTextFlags_CallbackHistory |
-                                                 ImGuiInputTextFlags_CallbackAlways;
-            bool boxChanged = ImGui::InputText("##siteswap", siteswapText, sizeof(siteswapText), boxFlags,
-                                               siteswapBoxCallback, &siteswapBox);
-            io.MouseClicked[0] = savedClicked;
-            io.MouseClickedCount[0] = savedClickCount;
-            io.MouseDelta = savedDelta;
-            const ImGuiID boxId = ImGui::GetItemID();
-            const ImVec2 boxMin = ImGui::GetItemRectMin();
-            const ImVec2 boxMax = ImGui::GetItemRectMax();
-            const bool boxHovered = ImGui::IsItemHovered();
-            siteswapBox.wasActive = ImGui::IsItemActive();
-            if (!siteswapBox.wasActive) siteswapBox.memory.forget();
-            // Typing is one undo step, recorded when you press Enter or leave the box (so
-            // undoing "531" doesn't step back through "53" and "5"). The text is tidied then
-            // ("<3p3|3p 3" becomes "<3p 3|3p 3>").
-            const bool boxDone = ImGui::IsItemDeactivatedAfterEdit();
-            if (boxDone) {
-                const std::string tidy = tidySiteswap(siteswapText);
-                if (tidy != siteswapText && tidy.size() < sizeof(siteswapText)) {
-                    std::snprintf(siteswapText, sizeof(siteswapText), "%s", tidy.c_str());
-                    boxChanged = true;
+        siteswapHoverThrow = -1;
+        if (ImGui::Begin("Siteswap entry", nullptr, paneFlags | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+            const SiteswapGridResult g =
+                drawSiteswapGrid(siteswapGrid, siteswapText, parsed, patternCount, settings.colorVision, playback.beat);
+            if (g.newCount >= 0) {
+                // A new count directive (and the throws moved to fit it, if asked): one undo step.
+                commitTyping();
+                recordSettingsChange();
+                const PatternSettings before = currentPatternSettings();
+                patternCount = g.newCount;
+                if (g.changed) showPatternText(g.text);
+                history.recordWithSettings(g.changed ? g.text : history.current, before, currentPatternSettings());
+                settingsRecorded();
+            } else {
+                if (g.commit) {
+                    if (g.commitText != siteswapText) showPatternText(g.commitText);
+                    recordPattern(g.commitText);
                 }
+                if (g.changed && g.text != siteswapText) showPatternText(g.text);
             }
-            if (siteswapBox.replacedWhole) {
-                playback.beat = 0.0;
-                siteswapBox.replacedWhole = false;
+            if (g.restart) playback.beat = 0.0;
+            if (g.linkJuggler >= 0) linkJugglers(g.linkJuggler, g.linkTo, g.linkStart);
+            if (g.unlinkJuggler >= 0) unlinkJugglers(g.unlinkJuggler);
+            if (!g.note.empty()) {
+                siteswapBox.note = g.note;
+                siteswapBox.noteUntil = ImGui::GetTime() + 5.0;
             }
-            if (boxChanged) {
-                cancelLadderEdit(ladderEdit);
-                parsed = parseSiteswap(siteswapText);
-                patternValid = parsed.valid;
-                sketching = parsed.sketch;
-                if (parsed.valid) pattern = patternFromSiteswap(parsed);
-                if (parsed.sketch) sketchLoop = parsed.loop;
-            }
-            if (boxDone && (parsed.valid || parsed.sketch)) recordPattern(siteswapText);
-
-            // Where the text is drawn (scrolled, while it's being edited and too long to fit).
-            float textLeft = boxMin.x + ImGui::GetStyle().FramePadding.x;
-            if (ImGuiInputTextState* state = ImGui::GetInputTextState(boxId)) textLeft -= state->Scroll.x;
-            const float textBottom = boxMax.y - ImGui::GetStyle().FramePadding.y + 1.0f;
-            siteswapBox.lastMin = boxMin;
-            siteswapBox.lastMax = boxMax;
-            siteswapBox.lastTextLeft = textLeft;
-            ImDrawList* boxDraw = ImGui::GetWindowDrawList();
-            boxDraw->PushClipRect(boxMin, boxMax, true);
-            // Throws that are the problem (two landing together): a zigzag underline, in the
-            // error color, like a spelling mistake.
-            for (const Siteswap::ThrowRef& r : parsed.problemThrows) {
-                int start = 0, end = 0;
-                if (!charactersOfThrow(siteswapText, r.juggler, r.beat, &start, &end)) continue;
-                const float x0 = siteswapCharacterX(siteswapText, start, textLeft);
-                const float x1 = siteswapCharacterX(siteswapText, end, textLeft);
-                const float step = 2.5f;
-                ImVec2 points[64];
-                int count = 0;
-                for (float x = x0; x <= x1 + 0.01f && count < 64; x += step, ++count)
-                    points[count] = ImVec2(std::min(x, x1), textBottom - ((count % 2) ? 2.5f : 0.0f));
-                boxDraw->AddPolyline(points, count, errorTextColor(settings.colorVision), 0, 1.5f);
-            }
-            // Hovering a throw describes it and picks it out on the ladder.
-            siteswapHoverThrow = -1;
+            // Resting on a throw describes it and picks it out on the ladder.
             const Siteswap& shown = parsed;
-            if (boxHovered && !shown.loop.empty()) {
-                const int index = siteswapCharacterAt(siteswapText, io.MousePos.x, textLeft);
-                int juggler = 0, beat = 0;
-                if (index >= 0 && throwAtCharacter(siteswapText, index, &juggler, &beat) &&
-                    juggler < shown.loop.jugglers && beat < shown.loop.period) {
-                    int start = 0, end = 0;
-                    if (charactersOfThrow(siteswapText, juggler, beat, &start, &end))
-                        boxDraw->AddLine(ImVec2(siteswapCharacterX(siteswapText, start, textLeft), textBottom + 1.0f),
-                                         ImVec2(siteswapCharacterX(siteswapText, end, textLeft), textBottom + 1.0f),
-                                         ImGui::GetColorU32(ImGuiCol_Text), 1.0f);
-                    if (shown.valid || shown.sketch) siteswapHoverThrow = juggler * shown.loop.period + beat;
-                    ImGui::SetTooltip("%s", describeThrow(shown.loop, juggler, beat).c_str());
-                } else {
-                    // A link ("@2[3]"): what it means.
-                    int to = 0, start = 0;
-                    bool lrSwap = false;
-                    if (index >= 0 && linkAtCharacter(siteswapText, index, &juggler, &to, &start, &lrSwap)) {
-                        std::string what = "J" + std::to_string(juggler + 1) + ": " + linkWords(to, start, shown.loop.period);
-                        if (lrSwap) what += ", with hands swapped";
-                        what += ".\nThe number in brackets is how many beats into their throws the copy starts\n"
-                                "([0] is their first throw, [-1] their last). Editing either one (on the ladder) edits both.";
-                        ImGui::SetTooltip("%s", what.c_str());
-                    }
-                }
+            if (g.hoverJuggler >= 0 && !shown.loop.empty() && g.hoverJuggler < shown.loop.jugglers) {
+                const int beat = g.hoverBeat % shown.loop.period;
+                if (shown.valid || shown.sketch) siteswapHoverThrow = g.hoverJuggler * shown.loop.period + beat;
+                ImGui::SetTooltip("%s", describeThrow(shown.loop, g.hoverJuggler, beat).c_str());
             }
-            boxDraw->PopClipRect();
 
+            // The status line, beside the Count button.
             if (!siteswapBox.note.empty() && ImGui::GetTime() < siteswapBox.noteUntil)
                 ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(errorTextColor(settings.colorVision)), "%s",
                                    siteswapBox.note.c_str());
@@ -3217,24 +3042,21 @@ int runApp() {
                 ImGui::TextDisabled("%d jugglers, %d objects, period %d", pattern.jugglers, ballCount(pattern),
                                     loopPeriodBeats(pattern));
             else if (patternValid)
-                ImGui::TextDisabled("%d objects, period %d", ballCount(pattern),
-                                    loopPeriodBeats(pattern));
+                ImGui::TextDisabled("%d objects, period %d", ballCount(pattern), loopPeriodBeats(pattern));
             else if (sketching)
-                ImGui::TextDisabled("Sketch: %d throw%s not decided yet (?), period %d", parsed.openThrows,
+                ImGui::TextDisabled("Sketch: %d throw%s not decided yet, period %d", parsed.openThrows,
                                     parsed.openThrows == 1 ? "" : "s", sketchLoop.period);
             else if (!parsed.error.empty())
                 ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(errorTextColor(settings.colorVision)),
                                    "%s", parsed.error.c_str());
             else
                 ImGui::TextUnformatted("");
-            // While typing: where the cursor is ("J1, beat 5, right hand: 3p+2"), at the right.
-            const std::string readout = siteswapBox.wasActive ? cursorReadout(siteswapText, siteswapBox.cursor, parsed.loop)
-                                                              : std::string();
-            if (!readout.empty()) {
+            // Where the cursor is ("J1, beat 5, right hand: 3p+2"), at the right.
+            if (!g.readout.empty()) {
                 ImGui::SameLine();
-                const float width = ImGui::CalcTextSize(readout.c_str()).x;
+                const float width = ImGui::CalcTextSize(g.readout.c_str()).x;
                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.0f, ImGui::GetContentRegionAvail().x - width));
-                ImGui::TextUnformatted(readout.c_str());
+                ImGui::TextUnformatted(g.readout.c_str());
             }
         }
         ImGui::End();
@@ -4418,8 +4240,9 @@ int runApp() {
         if (ImGui::BeginPopupModal("New Pattern", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             const float em = ImGui::GetFontSize();
             ImGui::PushTextWrapPos(em * 26.0f);
-            ImGui::TextUnformatted("Starts a blank ladder: every throw is \"?\" (not decided yet). "
-                                   "Click a ? to draw a throw from it, then where it's caught, and so on.");
+            ImGui::TextUnformatted("Starts a blank pattern: every throw is blank (not decided yet). Type throws "
+                                   "into the grid, or on the ladder click a ? to draw a throw from it, then where "
+                                   "it's caught, and so on.");
             ImGui::PopTextWrapPos();
             ImGui::Spacing();
             ImGui::AlignTextToFramePadding();
@@ -4439,13 +4262,32 @@ int runApp() {
             newPatternDialog.period = std::clamp(newPatternDialog.period, 1, kMaxLoopBeats);
             ImGui::SameLine();
             ImGui::TextDisabled("beats");
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Count");
+            ImGui::SameLine(em * 5.0f);
+            ImGui::SetNextItemWidth(em * 8.0f);
+            const std::string countName =
+                newPatternDialog.count >= 2 ? std::to_string(newPatternDialog.count) + "-count" : std::string("None");
+            if (ImGui::BeginCombo("##count", countName.c_str())) {
+                if (ImGui::Selectable("None", newPatternDialog.count < 2)) newPatternDialog.count = 0;
+                for (int n = 2; n <= 8; ++n)
+                    if (ImGui::Selectable((std::to_string(n) + "-count").c_str(), newPatternDialog.count == n))
+                        newPatternDialog.count = n;
+                ImGui::EndCombo();
+            }
+            if (newPatternDialog.count >= 2) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("(the period becomes a multiple of %d)", newPatternDialog.count);
+            }
             ImGui::Spacing();
             if (ImGui::Button("Create", ImVec2(em * 6.0f, 0.0f))) {
                 JugglingLoop blank;
+                const int n = newPatternDialog.count;
                 blank.jugglers = newPatternDialog.jugglers;
-                blank.period = newPatternDialog.period;
+                blank.period = n >= 2 ? (newPatternDialog.period + n - 1) / n * n : newPatternDialog.period;
                 for (int j = 0; j < blank.jugglers; ++j)
-                    for (int b = 0; b < blank.period; ++b) blank.throws.push_back({kOpenThrow, j});
+                    for (int b = 0; b < blank.period; ++b)
+                        blank.throws.push_back({n >= 2 && b % n != 0 ? 3 : kOpenThrow, j});
                 std::string text;
                 if (loopToText(blank, &text)) {
                     commitTyping();
@@ -4455,6 +4297,7 @@ int runApp() {
                     showPatternText(text);
                     choreography = Choreography();  // a new pattern starts in the default formation
                     camera.free = false;
+                    patternCount = n >= 2 ? n : 0;
                     openPatternName.clear();
                     history.recordWithSettings(text, before, currentPatternSettings());
                     settingsRecorded();

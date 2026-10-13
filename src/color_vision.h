@@ -41,6 +41,12 @@ void dashPatternLengths(DashPattern dash, const float** lengths, int* count);
 // Color for error text. Error text always says what is wrong in words; this is just emphasis.
 ImU32 errorTextColor(ColorVisionMode mode);
 
+// The siteswap grid's warning colour, in two brightnesses: dim for a blank cell (a throw not
+// decided yet), bright for a throw that's wrong (with black text on it). Red, or for red-weak
+// eyes bright green, or (monochrome) greys.
+ImU32 blankCellColor(ColorVisionMode mode);
+ImU32 errorCellColor(ColorVisionMode mode);
+
 // A window showing every mode's ball styles side by side, for checking which palette reads
 // best. Pass the open flag from the View menu.
 void drawColorVisionPreview(bool* open, ColorVisionMode current);

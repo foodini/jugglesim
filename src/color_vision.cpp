@@ -107,6 +107,24 @@ void dashPatternLengths(DashPattern dash, const float** lengths, int* count) {
     }
 }
 
+ImU32 blankCellColor(ColorVisionMode mode) {
+    switch (mode) {
+        case ColorVisionMode::Protan:
+        case ColorVisionMode::Deutan: return rgb(0x1F7A35);
+        case ColorVisionMode::Monochrome: return rgb(0x7A7A7A);
+        default: return rgb(0x8A2828);
+    }
+}
+
+ImU32 errorCellColor(ColorVisionMode mode) {
+    switch (mode) {
+        case ColorVisionMode::Protan:
+        case ColorVisionMode::Deutan: return rgb(0x52FF72);
+        case ColorVisionMode::Monochrome: return rgb(0xF2F2F2);
+        default: return rgb(0xFF5C4D);
+    }
+}
+
 ImU32 errorTextColor(ColorVisionMode mode) {
     switch (mode) {
         case ColorVisionMode::Protan:

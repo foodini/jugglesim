@@ -112,10 +112,6 @@ float propReach(PropType prop) {
         default: return kBallRadius;
     }
 }
-// Only used to pick a whole number of spins for each throw (single, double, ...); the actual
-// spin rate is that number of turns divided by the throw's own flight time, so the prop
-// always arrives at the catching hand the right way round.
-constexpr float kNaturalSpinRate = 1.7f;  // turns per second
 // Clubs and rings spin about the line through the shoulders, the top turning back toward the
 // juggler as they leave the hand (clockwise, seen from the juggler's left). The axis is turned
 // about 7 degrees (counterclockwise seen from above for the right hand, clockwise for the
@@ -427,14 +423,15 @@ public:
         if (sign) *sign = s;
         return f;
     }
-    // Whole turns the throw j makes on beat b (value v) makes in the air: about
-    // kNaturalSpinRate turns a second of flight, at least one. 1s go across flat (no turn);
-    // held 2s don't fly.
+    // Whole turns the throw j makes on beat b (value v) makes in the air, as jugglers throw
+    // them whatever the tempo: half the value, rounded down (a single on a 3, a double on a 4 or
+    // 5, a triple on a 6 or 7, ...). 1s go across flat (no turn); held 2s don't fly. The spin
+    // rate is then those turns over the throw's own flight time, so the prop always arrives the
+    // right way round.
     int spins(int j, int b, int v) const {
         if (prop() == PropType::Ball || v <= 1 || isHeld(j, b)) return 0;
         if (v == 2 && destAt(j, b) == j) return 0;
-        const float turns = flightSeconds(j, b, v) * kNaturalSpinRate;
-        return std::max(1, static_cast<int>(std::lround(turns)));
+        return std::max(1, v / 2);
     }
     // Spin rate in the air (radians/second, thrower's frame): the spins plus getting from the
     // release angle to the arrival angle, over exactly the flight time.

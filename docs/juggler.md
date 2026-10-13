@@ -16,8 +16,8 @@ The bar along the bottom of the juggler pane has the transport controls:
 | step forward | **Right** (**Shift+Right**: a whole beat) | Pauses and steps forward 1/12 of a beat |
 | Slow | **S** | Slow motion on or off, at the speed beside it (0.05 to 0.5 of normal) |
 
-The same commands are in the **Playback** menu. The keys don't act while you're typing in the
-siteswap box.
+The same commands are in the **Playback** menu. While the siteswap grid has the keyboard, only
+Space works (the other keys are its).
 
 Next to the buttons is the current beat (beat 1 is the right hand's first throw, as on the
 ladder). **Drag** it left or right to move through time, or **double-click** it to type the beat
@@ -26,7 +26,7 @@ to go to; either pauses. On the ladder, **click a beat number** to go to exactly
 smoothly; this pauses too. The slow-motion speed is
 remembered; dragging its slider turns slow motion on.
 
-Loading a pattern from the library, starting a new one, or pasting over the whole siteswap box
+Loading a pattern from the library, starting a new one, or pasting a whole pattern over the siteswap grid
 starts again from beat 1.
 
 Stepping works in both directions, by any amount: the juggler's position at any moment is
@@ -74,7 +74,7 @@ To look around:
 - **Middle-drag** (or **Shift+right-drag**) pans: the floor under the mouse moves with it. This
   makes the camera **free** (below).
 - **A 3D mouse** (a 3Dconnexion SpaceMouse; Windows only for now) moves the camera whatever
-  has the keyboard, the ladder, the siteswap box or a menu, and makes the camera **free**
+  has the keyboard, the ladder, the siteswap grid or a menu, and makes the camera **free**
   (below). You grab the stage, like an object in your hand: **spin** the cap to turn it round,
   **tilt** it toward or away from you to see it from higher or lower (never past straight down
   or up), **push** it away to move back and **pull** it toward you to move in. **Sliding** it
@@ -132,7 +132,7 @@ props are colored by orbit, as on the ladder.
 
 ## Several jugglers
 
-A passing pattern (see the siteswap box in [the ladder notes](ladder.md)) shows every juggler,
+A passing pattern (see the siteswap grid in [the ladder notes](ladder.md)) shows every juggler,
 each with their number over their head (J1, J2, ..., as on the ladder; numbers that would
 overlap, say for two jugglers in the same place, are moved apart, with a thin line down to their
 juggler if they're moved far). Two jugglers face each
@@ -326,9 +326,9 @@ ladder, and every flight leaves the same dashed trail.
   its ball's dash pattern (dark where the ladder line has gaps), so you can see it spin and
   tell rings apart without color. A ring whose ladder line is solid gets two narrow dark
   bands.
-- **Spins.** Each throw of a club or ring makes a whole number of turns: about as many as
-  a juggler would naturally give it for its flight time (at the default tempo, a single on a 3
-  and a double on a 5; higher throws get more). The prop then turns at exactly the rate that
+- **Spins.** Each throw of a club or ring makes a whole number of turns, as jugglers throw
+  them whatever the tempo: half the throw's value, rounded down (a single on a 3, a double on a
+  4 or 5, a triple on a 6 or 7, and so on; passes the same, so a `4p` is a double). The prop then turns at exactly the rate that
   brings it round in time for the catch. 1s go across flat, without turning; 2s are held.
   Pause and rest the mouse on a club or ring in the air to see its throw and spin rate, in
   spins a beat (so it doesn't depend on the tempo); the ladder shows the same when you rest the

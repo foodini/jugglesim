@@ -75,6 +75,9 @@
     <ClCompile Include="src\siteswap_edit.cpp">
       <Filter>src</Filter>
     </ClCompile>
+    <ClCompile Include="src\siteswap_grid.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
     <ClCompile Include="third_party\imgui\imgui.cpp">
       <Filter>third_party\imgui</Filter>
     </ClCompile>
@@ -162,6 +165,9 @@
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\siteswap_edit.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClInclude Include="src\siteswap_grid.h">
       <Filter>src</Filter>
     </ClInclude>
     <ClInclude Include="src\timing.h">

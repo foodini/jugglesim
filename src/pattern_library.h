@@ -38,13 +38,17 @@ struct PatternSettings {
     // the pattern unsaved.
     bool hasCamera = false;
     double camera[5] = {0.0, 0.0, 0.0, 0.0, 0.0};  // x, y, z, yaw, pitch
+    // A count directive for the siteswap grid ("4-count": only beats 1, 5, 9, ... edited, 3s
+    // between); 0: none. Saved only when there is one.
+    bool hasCount = false;
+    int count = 0;
 
     bool operator==(const PatternSettings& o) const {
         return hasProp == o.hasProp && prop == o.prop && hasTempo == o.hasTempo &&
                tempo == o.tempo && hasDwell == o.hasDwell && dwell == o.dwell &&
                hasDistance == o.hasDistance && distance == o.distance &&
                hasChoreography == o.hasChoreography && choreography == o.choreography &&
-               hasCamera == o.hasCamera &&
+               hasCamera == o.hasCamera && hasCount == o.hasCount && (!hasCount || count == o.count) &&
                (!hasCamera || std::equal(camera, camera + 5, o.camera));
     }
     bool operator!=(const PatternSettings& o) const { return !(*this == o); }

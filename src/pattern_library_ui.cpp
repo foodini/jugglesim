@@ -317,6 +317,7 @@ std::string describePatternSettings(const PatternSettings& s) {
         text += buffer;
     }
     if (s.hasChoreography && !s.choreography.empty()) text += text.empty() ? "choreography" : ", choreography";
+    if (s.hasCount && s.count >= 2) text += (text.empty() ? "" : ", ") + std::to_string(s.count) + "-count";
     if (s.hasCamera) text += text.empty() ? "camera" : ", camera";
     return text;
 }
