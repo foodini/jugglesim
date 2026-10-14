@@ -109,7 +109,7 @@ src/
   gl_funcs.h/.cpp     tiny loader for the OpenGL 3.3 functions we use (no GLAD/GLEW)
   math3d.h            Vec3 / Mat4 (no GLM)
   mesh.h/.cpp         procedural meshes: sphere, cylinder, frustum, cube, lathe, ring sectors
-  renderer.h/.cpp     lit solid-color shader, plus additive "glow" ribbons for trails
+  renderer.h/.cpp     lit solid-color shader (and see-through ghosts), plus additive "glow" ribbons
   juggler_figure.*    stick-figure pose, arm and leg IK, and drawing
   prop_figure.*       ball, club and ring meshes and drawing
   juggle_sim.h/.cpp   where hands, body and props are at any moment (closed-form physics)
@@ -121,6 +121,8 @@ src/
   siteswap.h/.cpp     siteswap parsing/validation (vanilla, and passing for up to 6 jugglers)
   siteswap_edit.*     the siteswap grid's model: text to grid and back, counts, columns, swap, rotate
   siteswap_grid.*     the siteswap grid along the bottom: drawing it, typing, menus, paste
+  sound.h/.cpp        the plip (a short sound when something's refused), made as a WAV in memory
+  sound_mac.mm        macOS: plays it with AVFoundation (Windows uses PlaySound, in main.cpp)
   ladder_view.h/.cpp  ladder diagram + its toolbar + drag editing, drawn with ImGui
   ladder_edit.h/.cpp  the edit chain behind ladder editing (pure logic, no drawing)
   loop_ops.h/.cpp     loop operations: ? sketches, beat insert/delete, paths and orbits, drawing

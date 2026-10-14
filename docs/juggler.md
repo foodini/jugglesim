@@ -227,6 +227,17 @@ on a stage floor) and **keyframes**. This is the first stage; see the design not
   multiple of the other (a 3-beat siteswap with an 8-beat walk, say), a warning in the top-left
   of the juggler pane says how long it takes them to line up again (24 beats). **Dismiss** it if
   that's what you meant; it comes back only if something changes and it applies again.
+- **Rotated repeats** (*Repeat* in the Choreography panel), for patterns that go round the
+  floor in turns, like Havana: block out one stretch and have it come round again turned about
+  the middle of the floor. *As is* (the default) just repeats it; a turn repeats it with
+  everyone turned that much further each time, till they're back where they started: **+60°**,
+  **+72°**, **+90°** or **+120° (CCW)**, counterclockwise seen from above (so with +90°, J1
+  starts the next time round where J4 started); **180°**; or **-120°** to **-60° (CW)**,
+  clockwise. The panel shows the whole: "96 x 3 = 288 beats in all". Only the beats written
+  out (1 to *Length*) are edited: the keyframes in the repeats are those, turned, shown on the
+  ladder as dim diamonds that can't be moved, and only the real spike marks are on the floor.
+  Placing a juggler or moving a keyframe into a repeat says so instead, and a loiter can't run
+  past the end of the beats written out. Paths and walk links run over the whole thing.
 - **On the ladder,** keyframes are diamonds on the juggler's strip, and a white line down the
   strip joins two where the juggler loiters between them (walking and turning aren't drawn).
   *View > Keyframe Marks* (**K**) labels each diamond on a spike mark with the mark ("M3").
@@ -239,11 +250,16 @@ on a stage floor) and **keyframes**. This is the first stage; see the design not
 - **Walk links:** to block out one juggler and have others copy them, right-click another
   juggler (their number on the ladder, or them on the stage) and choose **Walk Like...**. Pick the
   **leader**, an **offset** in beats (J2 does on each beat what the leader does that many beats
-  later; the 1/2, 1/3 and 1/4 buttons are those fractions of the choreography's length), and a
-  **turn** about the middle of the floor: none, or 1/2 to 1/5 of a circle, clockwise or
-  counterclockwise seen from above. Changes show as you make them. A follower's diamonds on the
+  later; the 1/2, 1/3 and 1/4 buttons are those fractions of the choreography's length, rotated
+  repeats and all), and a **turn** about the middle of the floor, the same choices as for
+  rotated repeats (+: counterclockwise seen from above, -: clockwise). With rotated repeats, an
+  offset into a repeat is also shown the short way ("= the leader 2 beats later, rotated a
+  further +90° (CCW)"). Changes show as you make them, and before that, holding
+  the mouse over a choice (a leader, the offset's - and + or a fraction button, a turn in the
+  list) shows a glowing ghost of the juggler where it would put them on this beat, with the path
+  they'd walk; the ghost shows through anyone in front of it. A follower's diamonds on the
   ladder are the leader's, moved round (dim, not editable), and their strip says which leader
-  (`J1+24ccw1/4`). Followers can follow followers. Linking a juggler who has keyframes deletes
+  (`walks like J1 +24, +90° (CCW)`). Followers can follow followers. Linking a juggler who has keyframes deletes
   them (it asks first); **Unlink** writes the follower's walking out as their own keyframes, so
   nothing moves.
 - **Paths:** each juggler with keyframes has their path drawn on the floor: where they walk over

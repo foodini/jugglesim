@@ -9,6 +9,7 @@
 // until the user quits. Afterwards the platform shuts its backend down and closes the window.
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 // Handles pending window-system events (input goes to ImGui's platform backend). Returns
@@ -45,6 +46,10 @@ void platformFramebufferSize(int* width, int* height);
 
 // Shows the frame just drawn.
 void platformSwapBuffers();
+
+// Plays a short sound (a complete WAV file in memory, which must stay valid while it plays),
+// without waiting for it. A platform without sound does nothing.
+void platformPlaySound(const unsigned char* wav, size_t bytes);
 
 // Tells the user about an error that stops the app from starting.
 void platformShowError(const char* title, const char* message);

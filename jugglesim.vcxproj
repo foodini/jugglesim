@@ -50,7 +50,7 @@
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>opengl32.lib;dwmapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>opengl32.lib;dwmapi.lib;winmm.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -97,6 +97,7 @@
     <ClCompile Include="src\siteswap.cpp" />
     <ClCompile Include="src\siteswap_edit.cpp" />
     <ClCompile Include="src\siteswap_grid.cpp" />
+    <ClCompile Include="src\sound.cpp" />
     <ClCompile Include="third_party\imgui\imgui.cpp" />
     <ClCompile Include="third_party\imgui\imgui_demo.cpp" />
     <ClCompile Include="third_party\imgui\imgui_draw.cpp" />
@@ -129,6 +130,7 @@
     <ClInclude Include="src\siteswap.h" />
     <ClInclude Include="src\siteswap_edit.h" />
     <ClInclude Include="src\siteswap_grid.h" />
+    <ClInclude Include="src\sound.h" />
     <ClInclude Include="src\timing.h" />
   </ItemGroup>
   <ItemGroup>

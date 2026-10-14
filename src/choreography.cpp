@@ -99,6 +99,31 @@ bool Choreography::dependsOn(int juggler, int other) const {
     return false;
 }
 
+std::string turnText(int degrees) {
+    degrees = normalTurn(degrees);
+    if (degrees == 180) return "180\xC2\xB0";
+    return (degrees > 0 ? "+" : "") + std::to_string(degrees) + "\xC2\xB0" + (degrees > 0 ? " (CCW)" : degrees < 0 ? " (CW)" : "");
+}
+
+int normalTurn(int degrees) {
+    degrees %= 360;
+    if (degrees > 180) degrees -= 360;
+    if (degrees <= -180) degrees += 360;
+    return degrees;
+}
+
+namespace {
+// A spot turned about the middle of the floor (counterclockwise seen from above when positive).
+void turnSpot(float turn, float* x, float* z, float* yaw) {
+    if (turn == 0.0f) return;
+    const float ct = std::cos(turn), st = std::sin(turn);
+    const float nx = *x * ct + *z * st, nz = -*x * st + *z * ct;
+    *x = nx;
+    *z = nz;
+    *yaw = wrapAngle(*yaw + turn);
+}
+}  // namespace
+
 void setWalkLink(Choreography* c, int juggler, const WalkLink& link) {
     if (juggler < 0) return;
     if (static_cast<int>(c->links.size()) <= juggler) c->links.resize(static_cast<size_t>(juggler) + 1);
@@ -109,22 +134,32 @@ void setWalkLink(Choreography* c, int juggler, const WalkLink& link) {
 std::vector<Keyframe> effectiveKeyframes(const Choreography& c, int juggler, int cycle) {
     const WalkLink l = c.link(juggler);
     if (!l.active() || cycle <= 0 || c.dependsOn(l.leader, juggler)) {
-        return juggler >= 0 && juggler < static_cast<int>(c.keys.size()) ? c.keys[static_cast<size_t>(juggler)]
-                                                                         : std::vector<Keyframe>();
+        const std::vector<Keyframe> own = juggler >= 0 && juggler < static_cast<int>(c.keys.size())
+                                              ? c.keys[static_cast<size_t>(juggler)]
+                                              : std::vector<Keyframe>();
+        if (c.repeats() == 1 || cycle <= 0) return own;
+        // The rotated repeats: copies on free spots, turned once more each time.
+        std::vector<Keyframe> out = own;
+        for (int r = 1; r < c.repeats(); ++r)
+            for (const Keyframe& k : own) {
+                Keyframe m = k;
+                m.beat = k.beat + r * cycle;
+                keyframeSpot(c, k, &m.x, &m.z, &m.yaw);
+                turnSpot(c.repeatTurn() * static_cast<float>(r), &m.x, &m.z, &m.yaw);
+                m.mark = -1;
+                out.push_back(m);
+            }
+        return out;
     }
-    const float turn = l.turnRadians();
-    const float ct = std::cos(turn), st = std::sin(turn);
+    const int full = choreographyFullCycle(c, cycle);
     std::vector<Keyframe> out;
     for (const Keyframe& k : effectiveKeyframes(c, l.leader, cycle)) {
         Keyframe m = k;
-        m.beat = ((k.beat - l.offset) % cycle + cycle) % cycle;
-        if (l.turnNum % std::max(1, l.turnDen) != 0) {
-            float x = 0.0f, z = 0.0f, yaw = 0.0f;
-            keyframeSpot(c, k, &x, &z, &yaw);
+        m.beat = ((k.beat - l.offset) % full + full) % full;
+        if (normalTurn(l.turnDegrees) != 0) {
+            keyframeSpot(c, k, &m.x, &m.z, &m.yaw);
+            turnSpot(l.turnRadians(), &m.x, &m.z, &m.yaw);
             m.mark = -1;
-            m.x = x * ct + z * st;
-            m.z = -x * st + z * ct;
-            m.yaw = wrapAngle(yaw + turn);
         }
         out.push_back(m);
     }
@@ -171,18 +206,31 @@ bool choreographyPlacement(const Choreography& c, int juggler, double beat, int 
     }
     if (!c.hasKeys(juggler) || cycle <= 0) return false;
     const std::vector<Keyframe>& keys = c.keys[static_cast<size_t>(juggler)];
-    const double t = beat - std::floor(beat / cycle) * cycle;  // in [0, cycle)
+    // Which time round (of the rotated repeats) the beat is in, and where in the beats written out.
+    const int full = choreographyFullCycle(c, cycle);
+    const double inFull = beat - std::floor(beat / full) * full;  // in [0, full)
+    const int rep = std::min(c.repeats() - 1, static_cast<int>(inFull / cycle));
+    const double t = inFull - static_cast<double>(rep) * cycle;  // in [0, cycle)
     // The keyframes either side of t (round the cycle).
     size_t next = 0;
     while (next < keys.size() && keys[next].beat <= t) ++next;
     const Keyframe& k1 = keys[next % keys.size()];
     const Keyframe& k0 = keys[(next + keys.size() - 1) % keys.size()];
     double b0 = k0.beat, b1 = k1.beat;
-    if (b0 > t) b0 -= cycle;  // the last keyframe, a cycle back
-    if (b1 <= t) b1 += cycle;  // the first keyframe, a cycle on
+    int rep0 = rep, rep1 = rep;
+    if (b0 > t) {  // the last keyframe, a cycle back (the time round before: turned one less)
+        b0 -= cycle;
+        rep0 = rep - 1;
+    }
+    if (b1 <= t) {  // the first keyframe, a cycle on (the next time round: turned one more)
+        b1 += cycle;
+        rep1 = rep + 1;
+    }
     float x0 = 0.0f, z0 = 0.0f, y0 = 0.0f, x1 = 0.0f, z1 = 0.0f, y1 = 0.0f;
     keyframeSpot(c, k0, &x0, &z0, &y0);
     keyframeSpot(c, k1, &x1, &z1, &y1);
+    turnSpot(c.repeatTurn() * static_cast<float>(rep0), &x0, &z0, &y0);
+    turnSpot(c.repeatTurn() * static_cast<float>(rep1), &x1, &z1, &y1);
     float u = 0.0f;
     if (keys.size() > 1 && b1 > b0) {
         u = static_cast<float>((t - b0) / (b1 - b0));
@@ -221,9 +269,17 @@ bool removeKeyframe(Choreography* c, int juggler, int beat) {
     return keys.size() != before;
 }
 
-void removeSpikeMark(Choreography* c, int mark) {
+void removeSpikeMark(Choreography* c, int mark, int jugglers) {
     if (mark < 0 || mark >= static_cast<int>(c->marks.size())) return;
     const SpikeMark gone = c->marks[static_cast<size_t>(mark)];
+    // Jugglers on their own mark (no keyframes, no walk link) from this one on: pinned there.
+    for (int j = mark; j < std::min(jugglers, static_cast<int>(c->marks.size())); ++j) {
+        if (c->hasKeys(j) || c->link(j).active()) continue;
+        Keyframe k;
+        k.beat = 0;
+        k.mark = j;
+        setKeyframe(c, j, k);
+    }
     for (std::vector<Keyframe>& keys : c->keys) {
         for (Keyframe& k : keys) {
             if (k.mark == mark) {
@@ -242,6 +298,8 @@ void removeSpikeMark(Choreography* c, int mark) {
 std::string choreographyToText(const Choreography& c) {
     std::string out = "D" + number(c.reference);
     if (c.cycle > 0) out += "/C" + std::to_string(c.cycle);
+    if (c.repeatDegrees != 0)  // rotated repeats ("r+90", "r-120", "r180")
+        out += "r" + std::string(c.repeatDegrees > 0 && c.repeatDegrees != 180 ? "+" : "") + std::to_string(c.repeatDegrees);
     for (size_t m = 0; m < c.marks.size(); ++m) {
         const SpikeMark& mark = c.marks[m];
         out += "/M" + std::to_string(m + 1) + "(" + number(mark.x) + "," + number(mark.z) + "," +
@@ -252,9 +310,8 @@ std::string choreographyToText(const Choreography& c) {
         if (!l.active()) continue;
         out += "/J" + std::to_string(j + 1) + "(=J" + std::to_string(l.leader + 1) + (l.offset >= 0 ? "+" : "") +
                std::to_string(l.offset);
-        if (l.turnNum != 0)
-            out += std::string(l.turnNum > 0 ? "ccw" : "cw") + std::to_string(std::abs(l.turnNum)) + "/" +
-                   std::to_string(l.turnDen);
+        if (l.turnDegrees != 0)  // turned: "r+90", "r-90", "r180"
+            out += "r" + std::string(l.turnDegrees > 0 && l.turnDegrees != 180 ? "+" : "") + std::to_string(l.turnDegrees);
         out += ")";
     }
     for (size_t j = 0; j < c.keys.size(); ++j) {
@@ -283,6 +340,13 @@ bool choreographyFromText(const std::string& text, Choreography* result) {
             if (!r.real(&c.reference) || c.reference < 0.0) return false;
         } else if (r.take('C')) {
             if (!r.integer(&c.cycle) || c.cycle < 0) return false;
+            if (r.take('r')) {  // rotated repeats: r<degrees> ("r+90", "r-120", "r180")
+                int degrees = 0;
+                if (!r.integer(&degrees)) return false;
+                degrees = normalTurn(degrees);
+                if (degrees == 0 || 360 % std::abs(degrees) != 0 || 360 / std::abs(degrees) > 12) return false;
+                c.repeatDegrees = degrees;
+            }
         } else if (r.take('M')) {
             int index = 0;
             SpikeMark m;
@@ -292,28 +356,16 @@ bool choreographyFromText(const std::string& text, Choreography* result) {
         } else if (r.take('J')) {
             int juggler = 0;
             if (!r.integer(&juggler) || juggler < 1 || juggler > 64 || !r.take('(')) return false;
-            if (r.take('=')) {  // a walk link: =J<leader>+<offset>, then maybe ccw<n>/<d> or cw<n>/<d>
+            if (r.take('=')) {  // a walk link: =J<leader>+<offset>, then maybe r<degrees>
                 WalkLink l;
                 int leader = 0;
                 if (!r.take('J') || !r.integer(&leader) || leader < 1 || leader > 64 || leader == juggler ||
                     !r.integer(&l.offset))
                     return false;
                 l.leader = leader - 1;
-                int sign = 0;
-                if (r.take('c')) {
-                    if (r.take('c')) {
-                        if (!r.take('w')) return false;
-                        sign = 1;
-                    } else if (r.take('w')) {
-                        sign = -1;
-                    } else {
-                        return false;
-                    }
-                }
-                if (sign != 0) {
-                    if (!r.integer(&l.turnNum) || !r.take('/') || !r.integer(&l.turnDen) || l.turnNum < 0 || l.turnDen < 1)
-                        return false;
-                    l.turnNum *= sign;
+                if (r.take('r')) {  // turned: r<degrees> ("r+90", "r-90", "r180")
+                    if (!r.integer(&l.turnDegrees)) return false;
+                    l.turnDegrees = normalTurn(l.turnDegrees);
                 }
                 if (!r.take(')')) return false;
                 if (static_cast<int>(c.links.size()) < juggler) c.links.resize(static_cast<size_t>(juggler));

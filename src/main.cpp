@@ -10,6 +10,8 @@
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 
+#include <mmsystem.h>  // PlaySound (winmm.lib; after windows.h, which gl_funcs.h brings in)
+
 #include <algorithm>
 #include <cstdint>
 #include <string>
@@ -198,6 +200,11 @@ void platformSwapBuffers() { ::SwapBuffers(g_hdc); }
 
 void platformShowError(const char* title, const char* message) {
     ::MessageBoxA(nullptr, message, title, MB_ICONERROR);
+}
+
+void platformPlaySound(const unsigned char* wav, size_t bytes) {
+    if (!wav || bytes == 0) return;
+    ::PlaySoundA(reinterpret_cast<LPCSTR>(wav), nullptr, SND_MEMORY | SND_ASYNC | SND_NODEFAULT);
 }
 
 // The built-in pattern library (data/patterns.txt), compiled into the executable as a

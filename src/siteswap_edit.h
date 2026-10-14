@@ -68,6 +68,10 @@ struct GridCount {
 
 // A beat between the count's beats that holds the filler: greyed out and locked.
 bool isFillerCell(const SiteswapGrid& grid, int row, int beat, const GridCount& count);
+// Where a cell's throw is written: the cell itself, or, in a linked row ("@2[3]"), the cell it
+// copies (links followed: J3's beat b is J2's beat b + 3, taken round the period). False if a
+// link can't be followed.
+bool gridCellSource(const SiteswapGrid& grid, int row, int beat, int* sourceRow, int* sourceBeat);
 // A cell the user can change: not in a linked row, not a filler cell.
 bool isEditableCell(const SiteswapGrid& grid, int row, int beat, const GridCount& count);
 // Whether the grid already is an n-count: its period a multiple of n, and the filler on every

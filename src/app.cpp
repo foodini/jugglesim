@@ -31,6 +31,7 @@
 #include "siteswap.h"
 #include "siteswap_edit.h"
 #include "siteswap_grid.h"
+#include "sound.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"  // to open a slider's text field on double-click (fineSlider)
@@ -39,6 +40,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cfloat>
+#include <climits>
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
@@ -439,12 +441,11 @@ int pickSpikeMark(const Choreography& c, float scale, const Mat4& viewProj, ImVe
     return best;
 }
 
-// What a walk link says, for the ladder and tooltips: "walks like J1 +24 ccw 1/4".
+// What a walk link says, for the ladder and tooltips: "walks like J1 +24, +90° (CCW)".
 std::string walkLinkLabel(const WalkLink& l) {
     if (!l.active()) return std::string();
     std::string s = "walks like J" + std::to_string(l.leader + 1) + " " + (l.offset >= 0 ? "+" : "") + std::to_string(l.offset);
-    if (l.turnNum != 0)
-        s += std::string(l.turnNum > 0 ? " ccw " : " cw ") + std::to_string(std::abs(l.turnNum)) + "/" + std::to_string(l.turnDen);
+    if (normalTurn(l.turnDegrees) != 0) s += ", " + turnText(l.turnDegrees);
     return s;
 }
 
@@ -483,21 +484,24 @@ Vec3 pathSpot(const Choreography& c, int juggler, double beat, int cycle, float 
     return p + right * (0.04f * speed);
 }
 
-ChoreographyPaths choreographyPaths(const Choreography& c, int jugglers, int cycle, float scale) {
+// `written`: the beats written out; the paths run over the whole choreography (rotated repeats
+// and all).
+ChoreographyPaths choreographyPaths(const Choreography& c, int jugglers, int written, float scale) {
     ChoreographyPaths paths;
     paths.lines.resize(static_cast<size_t>(std::max(0, jugglers)));
-    if (cycle <= 0) return paths;
+    if (written <= 0) return paths;
+    const int cycle = choreographyFullCycle(c, written);
     for (int j = 0; j < jugglers; ++j) {
         if (!c.walks(j)) continue;
         constexpr int kSamplesPerBeat = 12;
         std::vector<Vec3>& line = paths.lines[static_cast<size_t>(j)];
         for (int i = 0; i <= cycle * kSamplesPerBeat; ++i)
-            line.push_back(pathSpot(c, j, static_cast<double>(i) / kSamplesPerBeat, cycle, scale, nullptr));
+            line.push_back(pathSpot(c, j, static_cast<double>(i) / kSamplesPerBeat, written, scale, nullptr));
         // Each beat's spot, unmoved, to find the stand-stills.
         std::vector<Vec3> at(static_cast<size_t>(cycle));
         std::vector<float> facing(static_cast<size_t>(cycle));
         for (int b = 0; b < cycle; ++b)
-            choreographyPlacement(c, j, b, cycle, scale, &at[static_cast<size_t>(b)], &facing[static_cast<size_t>(b)]);
+            choreographyPlacement(c, j, b, written, scale, &at[static_cast<size_t>(b)], &facing[static_cast<size_t>(b)]);
         auto same = [&](int b0, int b1) {
             return length(at[static_cast<size_t>(b0)] - at[static_cast<size_t>(b1)]) < 0.001f &&
                    std::fabs(std::remainder(facing[static_cast<size_t>(b0)] - facing[static_cast<size_t>(b1)], 2.0f * kPi)) < 0.01f;
@@ -525,7 +529,7 @@ ChoreographyPaths choreographyPaths(const Choreography& c, int jugglers, int cyc
             PathPoint pt;
             pt.juggler = j;
             pt.firstBeat = b;
-            pt.position = pathSpot(c, j, b, cycle, scale, &pt.yaw);
+            pt.position = pathSpot(c, j, b, written, scale, &pt.yaw);
             paths.points.push_back(pt);
         }
         // The juggler's number on their path: in the middle of their longest walk.
@@ -544,7 +548,7 @@ ChoreographyPaths choreographyPaths(const Choreography& c, int jugglers, int cyc
             }
         }
         if (bestMiddle >= 0.0) {
-            paths.labelSpots.push_back(pathSpot(c, j, bestMiddle, cycle, scale, nullptr));
+            paths.labelSpots.push_back(pathSpot(c, j, bestMiddle, written, scale, nullptr));
             paths.labelJugglers.push_back(j);
         }
     }
@@ -1480,13 +1484,39 @@ bool drawTweakablesPanel(JuggleParams& params, const JugglingLoop& loop, bool& c
 // drops) snap to. Returns true if a setting changed (so the caller can save them).
 constexpr int kMaxChoreographyLength = 1024;  // beats (longer routines: chain choreographies, later)
 
+// A combo of turns (kTurnChoices, after "as is"/"none" for no turn). True when *degrees changes.
+// *hovered (if given) is set to the turn under the mouse while the list is open (else left alone).
+bool turnCombo(const char* id, const char* noTurn, int* degrees, int* hovered = nullptr) {
+    const std::string current = *degrees == 0 ? std::string(noTurn) : turnText(*degrees);
+    bool changed = false;
+    if (ImGui::BeginCombo(id, current.c_str(), ImGuiComboFlags_HeightLarge)) {
+        if (ImGui::Selectable(noTurn, *degrees == 0) && *degrees != 0) {
+            *degrees = 0;
+            changed = true;
+        }
+        if (hovered && ImGui::IsItemHovered()) *hovered = 0;
+        for (const int choice : kTurnChoices) {
+            if (choice == -120) ImGui::Separator();  // (the clockwise ones)
+            const std::string label = turnText(choice);
+            if (ImGui::Selectable(label.c_str(), normalTurn(*degrees) == choice) && normalTurn(*degrees) != choice) {
+                *degrees = choice;
+                changed = true;
+            }
+            if (hovered && ImGui::IsItemHovered()) *hovered = choice;
+        }
+        ImGui::EndCombo();
+    }
+    return changed;
+}
+
 struct ChoreographyPanelState {
     FineSliderState spacing, spokes, major;
 };
 
-// *newLength is set (else left alone) when the user asks for a new choreography length.
+// *newLength is set (else left alone) when the user asks for a new choreography length, and
+// *newRepeatDegrees (with *repeatChanged) for new rotated repeats (0: as is).
 bool drawChoreographyPanel(AppSettings& settings, ImVec2 topRight, ChoreographyPanelState& state, int length,
-                           int* newLength) {
+                           int* newLength, int repeatDegrees, bool* repeatChanged, int* newRepeatDegrees) {
     const float em = ImGui::GetFontSize();
     ImGui::SetNextWindowPos(topRight, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
     ImGui::SetNextWindowBgAlpha(0.8f);
@@ -1533,6 +1563,29 @@ bool drawChoreographyPanel(AppSettings& settings, ImVec2 topRight, ChoreographyP
                 ImGui::SetTooltip("How many beats the choreography takes before it repeats. It doesn't have to\n"
                                   "match the siteswap's period. Type a number and press Enter, or use -/+\n"
                                   "(Ctrl: 4 at a time).");
+            // Repeating rotated: the beats written out come round again with everyone turned
+            // about the middle of the floor, till they're back where they started.
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Repeat");
+            ImGui::SameLine(labelWidth0);
+            ImGui::SetNextItemWidth(em * 8.0f);
+            int degrees = repeatDegrees;
+            if (turnCombo("##repeat", "as is", &degrees)) {
+                *repeatChanged = true;
+                *newRepeatDegrees = degrees;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+                ImGui::SetTooltip("Rotated: after its Length the choreography comes round again with everyone\n"
+                                  "turned about the middle of the floor (the dot), until they're back where they\n"
+                                  "started. + is counterclockwise seen from above (J1 ends up toward J4's spot),\n"
+                                  "- clockwise. Only the beats in the Length are edited; the rest are them turned.");
+            if (repeatDegrees != 0) {
+                const int times = 360 / std::abs(repeatDegrees);
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted("");
+                ImGui::SameLine(labelWidth0);
+                ImGui::TextDisabled("%d x %d = %d beats in all", length, times, length * times);
+            }
 
             const float labelWidth = std::max(em * 3.5f, ImGui::CalcTextSize("Mid spokes").x + ImGui::GetStyle().ItemSpacing.x * 2.0f);
             const float sliderWidth = em * 14.0f;
@@ -1637,6 +1690,90 @@ bool drawChoreographyPanel(AppSettings& settings, ImVec2 topRight, ChoreographyP
 Vec3 colorToVec3(ImU32 c) {
     const ImVec4 f = ImGui::ColorConvertU32ToFloat4(c);
     return Vec3(f.x, f.y, f.z);
+}
+
+// A ghost of a juggler (the Walk Like... window's preview: where a choice would put them),
+// drawn over everything so it shows even inside another juggler: a see-through body, ripples
+// spreading out from its feet, a soft pulsing halo, sparks rising, and the path it would walk.
+struct WalkGhost {
+    bool show = false;
+    JugglerPose pose;
+    Mat4 placement;
+    std::vector<Vec3> path;  // on the floor, round the whole choreography
+};
+
+void renderWalkGhost(Renderer& renderer, const Primitives& prims, const WalkGhost& ghost, const CameraView& camera,
+                     const GLRect& rect, double time) {
+    if (!ghost.show || rect.w <= 0 || rect.h <= 0) return;
+    glViewport(rect.x, rect.y, rect.w, rect.h);
+    // Over everything: only the ghost's own depth counts from here on.
+    glEnable(GL_SCISSOR_TEST);
+    glScissor(rect.x, rect.y, rect.w, rect.h);
+    glClear(GL_DEPTH_BUFFER_BIT);
+    glDisable(GL_SCISSOR_TEST);
+    const Mat4 viewProj = cameraViewProj(camera, static_cast<float>(rect.w) / static_cast<float>(rect.h));
+    const Vec3 color(0.55f, 0.90f, 1.00f);
+
+    JugglerStyle style;
+    style.bodyColor = color;
+    style.handColor = color;
+    renderer.beginScene(viewProj, {-0.4f, -1.0f, -0.6f});
+    renderer.setGhostPass(Renderer::GhostPass::Depth);
+    drawJuggler(renderer, prims, ghost.pose, ghost.placement, style);
+    const float pulse = 0.5f + 0.5f * std::sin(static_cast<float>(time) * 5.0f);
+    renderer.setGhostPass(Renderer::GhostPass::SeeThrough, 0.38f + 0.12f * pulse);
+    drawJuggler(renderer, prims, ghost.pose, ghost.placement, style);
+    renderer.setGhostPass(Renderer::GhostPass::Off);
+    renderer.endScene();
+
+    std::vector<GlowVertex> glow;
+    const Vec3 feet = transformPoint(ghost.placement, Vec3(0.0f, 0.0f, 0.0f));
+    // The path it would walk: dashed, just above the floor.
+    if (ghost.path.size() >= 2) {
+        std::vector<Vec3> raised;
+        raised.reserve(ghost.path.size());
+        for (const Vec3& p : ghost.path) raised.push_back(Vec3(p.x, 0.03f, p.z));
+        const std::vector<float> fade(raised.size(), 1.0f);
+        const float dash[] = {3.0f, 2.0f};
+        appendRibbon(glow, raised, fade, color, 0.55f, 0.035f, camera.position, dash, 2, 0.05f);
+    }
+    // Ripples: rings spreading out from the feet and fading, one every 0.3 s.
+    for (int r = 0; r < 3; ++r) {
+        const float phase = static_cast<float>(std::fmod(time / 0.9 + r / 3.0, 1.0));
+        const float radius = 0.25f + 0.75f * phase;
+        std::vector<Vec3> ring;
+        for (int i = 0; i <= 48; ++i) {
+            const float a = static_cast<float>(i) / 48.0f * 6.2831853f;
+            ring.push_back(Vec3(feet.x + radius * std::cos(a), 0.03f, feet.z + radius * std::sin(a)));
+        }
+        const std::vector<float> fade(ring.size(), 1.0f - phase);
+        appendRibbon(glow, ring, fade, color, 0.7f, 0.04f, camera.position, nullptr, 0, 1.0f);
+    }
+    // A soft halo round the body, and sparks rising from the feet.
+    const Vec3 forward = normalize(camera.target - camera.position);
+    const Vec3 right = normalize(cross(forward, Vec3(0.0f, 1.0f, 0.0f)));
+    const Vec3 up = cross(right, forward);
+    auto blob = [&](Vec3 center, float radius, float alpha) {
+        const int kSegments = 16;
+        for (int i = 0; i < kSegments; ++i) {
+            const float a0 = static_cast<float>(i) / kSegments * 6.2831853f;
+            const float a1 = static_cast<float>(i + 1) / kSegments * 6.2831853f;
+            const Vec3 p0 = center + (right * std::cos(a0) + up * std::sin(a0)) * radius;
+            const Vec3 p1 = center + (right * std::cos(a1) + up * std::sin(a1)) * radius;
+            glow.push_back({center.x, center.y, center.z, color.x, color.y, color.z, alpha});
+            glow.push_back({p0.x, p0.y, p0.z, color.x, color.y, color.z, 0.0f});
+            glow.push_back({p1.x, p1.y, p1.z, color.x, color.y, color.z, 0.0f});
+        }
+    };
+    blob(feet + Vec3(0.0f, 1.05f, 0.0f), 0.85f, 0.16f + 0.10f * pulse);
+    for (int k = 0; k < 10; ++k) {
+        const float phase = static_cast<float>(std::fmod(time / 1.6 + k * 0.1, 1.0));
+        const float angle = static_cast<float>(k) * 2.39996f;  // spread round (the golden angle)
+        const float radius = 0.22f + 0.08f * static_cast<float>(k % 3);
+        const Vec3 at = feet + Vec3(radius * std::cos(angle), 0.1f + 1.9f * phase, radius * std::sin(angle));
+        blob(at, 0.035f, 0.9f * (1.0f - phase));
+    }
+    renderer.drawGlow(viewProj, glow);
 }
 
 // `selected` is the selected juggler (-1 for none): drawn in gold (lighter than the others,
@@ -2026,6 +2163,9 @@ int runApp() {
         double errorUntil = 0.0;
     };
     LoiterPopup loiter;
+    // The plip (see sound.h): wanted this frame; and the notes already plipped for.
+    bool plipWanted = false;
+    double lastNoteUntil = 0.0, lastLoiterErrorUntil = 0.0;
     int markDrag = -1;              // the spike mark being dragged, or -1
     int jugglerDrag = -1;           // the juggler being dragged to a new spot (a keyframe), or -1
     int viewPress = -1;             // the mouse button pressed in the juggler view (0 left, 1 right, 2 middle)
@@ -2108,6 +2248,10 @@ int runApp() {
         int juggler = -1;
         int confirmLeader = -1;  // asking whether to link to this leader (deleting their keyframes)
         bool confirmRequested = false;
+        // The choice under the mouse (a leader, an offset, a turn): the link it would make, shown
+        // on the stage as a ghost of the juggler (see WalkGhost) until the mouse moves off.
+        bool previewing = false;
+        WalkLink preview;
     };
     WalkLikeWindow walkLike;
     auto openWalkLike = [&](int juggler) {
@@ -2793,6 +2937,12 @@ int runApp() {
                     ImGui::MenuItem("Preview all modes...", nullptr, &showColorPreview);
                     ImGui::EndMenu();
                 }
+                if (ImGui::MenuItem("Sounds", nullptr, settings.sounds)) {
+                    settings.sounds = !settings.sounds;
+                    saveSettings(settings);
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+                    ImGui::SetTooltip("A short plip when something you just did is refused, or breaks the pattern.");
                 ImGui::Separator();
                 ImGui::MenuItem("ImGui demo window", nullptr, &showImGuiDemo);
                 ImGui::EndMenu();
@@ -2910,7 +3060,8 @@ int runApp() {
             }
             {
                 const JugglingLoop ladderLoop = shownLoop();
-                ladderOptions.keyframeCycle = choreographyCycle(ladderLoop, juggleParams);
+                const int written = choreographyCycle(ladderLoop, juggleParams);  // (the beats written out)
+                ladderOptions.keyframeCycle = choreographyFullCycle(choreography, written);
                 ladderOptions.showKeyframeMarks = settings.showKeyframeMarks;
                 ladderOptions.walkLinks = choreographyMode && ladderLoop.jugglers > 1;
                 const int cycle = ladderOptions.keyframeCycle;
@@ -2918,8 +3069,8 @@ int runApp() {
                 for (int j = 0; j < ladderLoop.jugglers; ++j)
                     ladderOptions.walkLabels[static_cast<size_t>(j)] = walkLinkLabel(choreography.link(j));
                 for (size_t j = 0; j < static_cast<size_t>(std::max(0, ladderLoop.jugglers)); ++j) {
-                    const std::vector<Keyframe> keys = effectiveKeyframes(choreography, static_cast<int>(j), cycle);
-                    const bool derived = choreography.link(static_cast<int>(j)).active();
+                    const std::vector<Keyframe> keys = effectiveKeyframes(choreography, static_cast<int>(j), written);
+                    const bool linked = choreography.link(static_cast<int>(j)).active();
                     for (size_t i = 0; i < keys.size(); ++i) {
                         const Keyframe& k = keys[i];
                         LadderKeyframe lk;
@@ -2928,7 +3079,7 @@ int runApp() {
                         lk.where = k.mark >= 0 ? "on spike mark " + std::to_string(k.mark + 1) : "a free spot";
                         lk.longTurn = k.longTurn;
                         lk.mark = k.mark;
-                        lk.derived = derived;
+                        lk.derived = linked || k.beat >= written;  // (a link's, or a rotated repeat's: locked)
                         if (cycle > 0) {
                             const Keyframe& next = keys[(i + 1) % keys.size()];
                             const int gap = keys.size() == 1 ? cycle : ((next.beat - k.beat) % cycle + cycle) % cycle;
@@ -2938,7 +3089,7 @@ int runApp() {
                     }
                 }
             }
-            const LadderEditResult edited =
+            LadderEditResult edited =
                 drawLadderDiagram(sketching ? sketchLoop : (patternValid ? patternLoop(pattern) : JugglingLoop()),
                                   settings.colorVision, ladderEdit, playback.beat, ladderOptions);
             // Picking up a throw pauses the jugglers (don't confuse them mid-edit); drawing in a
@@ -2954,7 +3105,11 @@ int runApp() {
                 selectedJuggler = edited.selectJuggler;
                 if (selectedJuggler < 0) frameSelected = false;
             }
-            if (edited.committed) applyLoop(edited.loop);
+            if (edited.committed) {
+                const bool wasWorking = parsed.valid || parsed.sketch;
+                applyLoop(edited.loop);
+                if (wasWorking && !parsed.valid && !parsed.sketch) plipWanted = true;  // (it broke it)
+            }
             if (edited.goToStart) goToStart();
             if (edited.walkLikeJuggler >= 0) openWalkLike(edited.walkLikeJuggler);
             if (edited.deleteKeyframeJuggler >= 0)
@@ -2967,6 +3122,17 @@ int runApp() {
                 return nullptr;
             };
             if (Keyframe* k = keyframeAt(edited.longTurnKeyframeJuggler, edited.longTurnKeyframeBeat)) k->longTurn = !k->longTurn;
+            // With rotated repeats, keyframes stay in the beats written out.
+            const int writtenBeats = choreographyCycle(shownLoop(), juggleParams);
+            auto pastWritten = [&](int beat) {
+                if (choreography.repeats() == 1 || beat < writtenBeats) return false;
+                siteswapBox.note = "Can't: beat " + std::to_string(beat + 1) + " is in a rotated repeat (only beats 1-" +
+                                   std::to_string(writtenBeats) + " are written out; the rest are them turned).";
+                siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+                return true;
+            };
+            if (edited.moveKeyframeJuggler >= 0 && pastWritten(edited.moveKeyframeTo)) edited.moveKeyframeJuggler = -1;
+            if (edited.loiterJuggler >= 0 && pastWritten(edited.loiterTo)) edited.loiterJuggler = -1;
             if (Keyframe* k = keyframeAt(edited.moveKeyframeJuggler, edited.moveKeyframeFrom)) {
                 Keyframe moved = *k;
                 moved.beat = edited.moveKeyframeTo;
@@ -3024,6 +3190,7 @@ int runApp() {
                 siteswapBox.note = g.note;
                 siteswapBox.noteUntil = ImGui::GetTime() + 5.0;
             }
+            if (g.plip) plipWanted = true;
             // Resting on a throw describes it and picks it out on the ladder.
             const Siteswap& shown = parsed;
             if (g.hoverJuggler >= 0 && !shown.loop.empty() && g.hoverJuggler < shown.loop.jugglers) {
@@ -3185,9 +3352,24 @@ int runApp() {
 
         // Choreography mode: the paths the jugglers walk.
         const bool showPaths = choreographyMode && choreography.active() && !loop.empty();
-        const int pathCycle = showPaths ? std::max(1, choreographyCycle(loop, juggleParams)) : 0;
+        const int pathLength = showPaths ? std::max(1, choreographyCycle(loop, juggleParams)) : 0;  // (written out)
+        const int pathCycle = choreographyFullCycle(choreography, pathLength);                    // (rotated repeats too)
+        // With rotated repeats, only the beats written out are edited: the rest are them turned.
+        // Whether `beat` falls in a rotated repeat (and if so, a note saying so).
+        auto inRotatedRepeat = [&](long beat) {
+            if (loop.empty() || choreography.repeats() == 1) return false;
+            const int written = std::max(1, choreographyCycle(loop, juggleParams));
+            const int whole = choreographyFullCycle(choreography, written);
+            const int b = static_cast<int>(((beat % whole) + whole) % whole);
+            if (b < written) return false;
+            siteswapBox.note = "Beat " + std::to_string(b + 1) + " is in a rotated repeat (beats " + std::to_string(written + 1) +
+                               "-" + std::to_string(whole) + " are beats 1-" + std::to_string(written) +
+                               " turned): place jugglers on beat " + std::to_string(b % written + 1) + " instead.";
+            siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+            return true;
+        };
         const ChoreographyPaths paths =
-            showPaths ? choreographyPaths(choreography, loop.jugglers, pathCycle, choreographyScale(loop)) : ChoreographyPaths();
+            showPaths ? choreographyPaths(choreography, loop.jugglers, pathLength, choreographyScale(loop)) : ChoreographyPaths();
         int hoveredPathPoint = -1;
 
         // Mouse input for the 3D view: an invisible window over the juggler pane (the 3D view
@@ -3297,6 +3479,8 @@ int runApp() {
                                            ": move J" + std::to_string(choreography.link(underMouse).leader + 1) +
                                            ", or unlink J" + std::to_string(underMouse + 1) + " (right-click them: Walk Like...).";
                         siteswapBox.noteUntil = ImGui::GetTime() + 5.0;
+                    } else if (underMouse >= 0 && !loop.empty() && inRotatedRepeat(std::lround(playback.beat))) {
+                        // (Not in a rotated repeat: the note says where to do it.)
                     } else if (underMouse >= 0 && !loop.empty()) {
                         // A juggler: dragging them puts them somewhere new (a keyframe).
                         jugglerDrag = underMouse;
@@ -3445,6 +3629,8 @@ int runApp() {
                                                ": move J" + std::to_string(choreography.link(who).leader + 1) + " instead, or unlink J" +
                                                std::to_string(who + 1) + ".";
                             siteswapBox.noteUntil = ImGui::GetTime() + 5.0;
+                        } else if (inRotatedRepeat(std::lround(playback.beat))) {
+                            // (The note says where to do it.)
                         } else {
                             const int cycle = std::max(1, choreographyCycle(loop, juggleParams));
                             const long beat = std::lround(playback.beat);
@@ -3460,9 +3646,9 @@ int runApp() {
                                 openLoiterPopup(who, k, io.MousePos);
                             playback.playing = false;
                             playback.beat = static_cast<double>(beat);
-                            siteswapBox.note = "J" + std::to_string(who + 1) + " on mark " + std::to_string(markDrag + 1) +
+                            siteswapBox.info = "J" + std::to_string(who + 1) + " on mark " + std::to_string(markDrag + 1) +
                                                " on beat " + std::to_string(k.beat + 1) + ".";
-                            siteswapBox.noteUntil = ImGui::GetTime() + 4.0;
+                            siteswapBox.infoUntil = ImGui::GetTime() + 4.0;
                         }
                     }
                     markDrag = -1;
@@ -3497,9 +3683,10 @@ int runApp() {
                             SpikeMark& m = choreography.marks[static_cast<size_t>(markMenuMark)];
                             if (std::hypot(m.x, m.z) > 1e-3f) m.yaw = std::atan2(-m.x, -m.z);
                         }
-                        if (ImGui::MenuItem("Delete Spike Mark")) removeSpikeMark(&choreography, markMenuMark);
+                        if (ImGui::MenuItem("Delete Spike Mark"))
+                            removeSpikeMark(&choreography, markMenuMark, loop.empty() ? 0 : loop.jugglers);
                         if (ImGui::IsItemHovered())
-                            ImGui::SetTooltip("Keyframes on it stay where it was (as free keyframes).");
+                            ImGui::SetTooltip("Nobody moves: anyone standing on it stays where it was (without a mark).");
                         if (ImGui::MenuItem("Add Another Spike Mark Here")) {
                             // Same place, facing the same way for now (turn it by its arrow).
                             choreography.marks.push_back(choreography.marks[static_cast<size_t>(markMenuMark)]);
@@ -3659,9 +3846,17 @@ int runApp() {
             saveSettings(settings);
         if (choreographyMode && choreography.active() && !loop.empty()) {
             int newLength = -1;
+            bool repeatChanged = false;
+            int newRepeatDegrees = 0;
             if (drawChoreographyPanel(settings, ImVec2(W - panelMargin, tweakablesBottom + panelMargin * 0.5f),
-                                      choreographyPanel, choreographyCycle(loop, juggleParams), &newLength))
+                                      choreographyPanel, choreographyCycle(loop, juggleParams), &newLength,
+                                      choreography.repeatDegrees, &repeatChanged, &newRepeatDegrees))
                 saveSettings(settings);
+            if (repeatChanged) {
+                // (The length is written down first, so it stays put whatever the siteswap does.)
+                if (choreography.cycle == 0) choreography.cycle = choreographyCycle(loop, juggleParams);
+                choreography.repeatDegrees = newRepeatDegrees;
+            }
             if (newLength > 0) {
                 // Shorter than a keyframe's beat: ask first (those keyframes go).
                 bool strands = false;
@@ -3711,7 +3906,7 @@ int runApp() {
         {
             std::vector<std::pair<std::string, std::string>> warnings;  // key, text
             if (choreography.active() && !loop.empty() && !ladderPreview) {
-                const int cycle = choreographyCycle(loop, juggleParams);
+                const int cycle = choreographyFullCycle(choreography, choreographyCycle(loop, juggleParams));
                 const int period = loop.period;
                 if (cycle > 0 && period > 0 && cycle % period != 0 && period % cycle != 0) {
                     long a = cycle, b = period;
@@ -3905,6 +4100,7 @@ int runApp() {
             }
         }
         // The Walk Like... window (see WalkLikeWindow).
+        walkLike.previewing = false;
         if (walkLike.open) {
             const JugglingLoop loop = shownLoop();
             const int j = walkLike.juggler;
@@ -3919,6 +4115,12 @@ int runApp() {
                 if (ImGui::Begin(title, &walkLike.open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
                     WalkLink link = choreography.link(j);
                     bool changed = false;
+                    // Hovering a choice: show where it would put them.
+                    auto previewIf = [&](const WalkLink& would) {
+                        if (!ImGui::IsItemHovered() || would.leader < 0) return;
+                        walkLike.previewing = true;
+                        walkLike.preview = would;
+                    };
                     // Leader: anyone whose walking doesn't already depend on this juggler.
                     ImGui::TextUnformatted("Leader:");
                     for (int k = 0; k < loop.jugglers; ++k) {
@@ -3937,6 +4139,11 @@ int runApp() {
                                 changed = true;
                             }
                         }
+                        if (!loops) {
+                            WalkLink would = link.active() ? link : WalkLink();
+                            would.leader = k;
+                            previewIf(would);
+                        }
                         ImGui::EndDisabled();
                         if (loops && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                             ImGui::SetTooltip("J%d already walks like J%d (perhaps through others).", k + 1, j + 1);
@@ -3947,63 +4154,88 @@ int runApp() {
                     ImGui::TextUnformatted("Offset:");
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(em * 7.0f);
+                    // (Offsets run over the whole choreography, rotated repeats and all.)
+                    const int full = choreographyFullCycle(choreography, cycle);
                     int offset = link.offset;
-                    if (ImGui::InputInt("beats##offset", &offset, 1, 4)) {
-                        link.offset = ((offset % cycle) + cycle) % cycle;
+                    if (ImGui::InputInt("##offset", &offset, 0, 0)) {
+                        link.offset = ((offset % full) + full) % full;
                         changed = true;
                     }
-                    if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("J%d does on each beat what the leader does this many beats later\n"
-                                          "(like a siteswap link's [k]). The choreography is %d beats long.",
-                                          j + 1, cycle);
+                    if (ImGui::IsItemHovered()) {
+                        if (full != cycle)
+                            ImGui::SetTooltip("J%d does on each beat what the leader does this many beats later\n"
+                                              "(like a siteswap link's [k]). The choreography is %d beats written out,\n"
+                                              "%d in all with its rotated repeats, so the offset can be up to %d.",
+                                              j + 1, cycle, full, full - 1);
+                        else
+                            ImGui::SetTooltip("J%d does on each beat what the leader does this many beats later\n"
+                                              "(like a siteswap link's [k]). The choreography is %d beats long.",
+                                              j + 1, cycle);
+                    }
+                    // - and + (Ctrl: 4 at a time), each previewing where it would put them.
+                    {
+                        const float button = ImGui::GetFrameHeight();
+                        const int step = ImGui::GetIO().KeyCtrl ? 4 : 1;
+                        for (const int sign : {-1, 1}) {
+                            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+                            ImGui::PushItemFlag(ImGuiItemFlags_ButtonRepeat, true);
+                            const int to = ((link.offset + sign * step) % full + full) % full;
+                            if (ImGui::Button(sign < 0 ? "-##offset" : "+##offset", ImVec2(button, button))) {
+                                link.offset = to;
+                                changed = true;
+                            }
+                            ImGui::PopItemFlag();
+                            WalkLink would = link;
+                            would.offset = to;
+                            previewIf(would);
+                        }
+                        ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+                        ImGui::TextUnformatted("beats");
+                    }
                     for (const int part : {2, 3, 4}) {
-                        if (cycle % part != 0) continue;
+                        if (full % part != 0) continue;
                         ImGui::SameLine();
                         char label[16];
-                        std::snprintf(label, sizeof(label), "1/%d (%d)", part, cycle / part);
+                        std::snprintf(label, sizeof(label), "1/%d (%d)", part, full / part);
                         if (ImGui::SmallButton(label)) {
-                            link.offset = cycle / part;
+                            link.offset = full / part;
                             changed = true;
                         }
+                        WalkLink would = link;
+                        would.offset = full / part;
+                        previewIf(would);
+                    }
+                    // Past the beats written out, the leader's path is a rotated repeat: the same as
+                    // a shorter offset with that much more turn. Shown, as a check.
+                    if (full != cycle && link.offset >= cycle) {
+                        const int times = link.offset / cycle, rest = link.offset % cycle;
+                        const std::string further = turnText(times * choreography.repeatDegrees);
+                        ImGui::TextDisabled("  = the leader %d beats later, rotated a further %s", rest, further.c_str());
                     }
                     // Turn about the middle of the floor.
                     ImGui::AlignTextToFramePadding();
                     ImGui::TextUnformatted("Turned:");
-                    const int den = link.turnNum == 0 ? 0 : link.turnDen;
-                    const char* const names[] = {"none", "1/2", "1/3", "1/4", "1/5"};
-                    const int dens[] = {0, 2, 3, 4, 5};
-                    for (int i = 0; i < 5; ++i) {
-                        ImGui::SameLine();
-                        if (ImGui::RadioButton(names[i], den == dens[i]) && den != dens[i]) {
-                            const int sign = link.turnNum < 0 ? -1 : 1;
-                            link.turnDen = dens[i] == 0 ? 1 : dens[i];
-                            link.turnNum = dens[i] == 0 ? 0 : sign;
-                            changed = true;
-                        }
-                    }
-                    ImGui::AlignTextToFramePadding();
-                    ImGui::TextUnformatted("        ");
                     ImGui::SameLine();
-                    ImGui::BeginDisabled(link.turnNum == 0);
-                    if (ImGui::RadioButton("counterclockwise", link.turnNum > 0) && link.turnNum < 0) {
-                        link.turnNum = -link.turnNum;
-                        changed = true;
+                    ImGui::SetNextItemWidth(em * 8.0f);
+                    int hoveredTurn = INT_MIN;
+                    if (turnCombo("##turned", "none", &link.turnDegrees, &hoveredTurn)) changed = true;
+                    if (hoveredTurn != INT_MIN && link.active()) {
+                        walkLike.previewing = true;
+                        walkLike.preview = link;
+                        walkLike.preview.turnDegrees = hoveredTurn;
                     }
                     ImGui::SameLine();
-                    if (ImGui::RadioButton("clockwise", link.turnNum < 0) && link.turnNum > 0) {
-                        link.turnNum = -link.turnNum;
-                        changed = true;
-                    }
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("(seen from above, about the middle of the floor)");
-                    ImGui::EndDisabled();
+                    ImGui::TextDisabled("about the middle of the floor (+: counterclockwise seen from above)");
                     ImGui::EndDisabled();
                     if (changed && link.active()) setWalkLink(&choreography, j, link);
                     ImGui::Spacing();
                     ImGui::BeginDisabled(!link.active());
                     if (ImGui::Button("Unlink", ImVec2(em * 6.0f, 0.0f))) {
                         // Their walking written out as their own keyframes, so nothing moves.
-                        const std::vector<Keyframe> baked = effectiveKeyframes(choreography, j, cycle);
+                        // (Only the beats written out: the rotated repeats follow from them.)
+                        std::vector<Keyframe> baked = effectiveKeyframes(choreography, j, cycle);
+                        baked.erase(std::remove_if(baked.begin(), baked.end(), [&](const Keyframe& k) { return k.beat >= cycle; }),
+                                    baked.end());
                         setWalkLink(&choreography, j, WalkLink());
                         if (static_cast<int>(choreography.keys.size()) <= j) choreography.keys.resize(static_cast<size_t>(j) + 1);
                         choreography.keys[static_cast<size_t>(j)] = baked;
@@ -4039,6 +4271,27 @@ int runApp() {
                 ImGui::End();
             }
         }
+        // The Walk Like... window's preview: where the choice under the mouse would put them, now.
+        WalkGhost walkGhost;
+        if (walkLike.open && walkLike.previewing) {
+            const JugglingLoop loop = shownLoop();
+            const int j = walkLike.juggler;
+            const int cycle = loop.empty() ? 0 : choreographyCycle(loop, juggleParams);
+            if (cycle > 0 && j >= 0 && j < static_cast<int>(scene.jugglers.size()) && j < loop.jugglers) {
+                Choreography trial = choreography;
+                setWalkLink(&trial, j, walkLike.preview);
+                JuggleParams params = juggleParams;
+                params.choreography = &trial;
+                Vec3 at;
+                float yaw = 0.0f;
+                jugglerPlacementAt(loop, params, j, playback.beat, &at, &yaw);
+                walkGhost.show = true;
+                walkGhost.pose = posedJuggler(scene.jugglers[static_cast<size_t>(j)], scene.prop);
+                walkGhost.placement = Mat4::translation(at) * Mat4::rotationY(yaw);
+                const ChoreographyPaths trialPaths = choreographyPaths(trial, loop.jugglers, cycle, choreographyScale(loop));
+                if (j < static_cast<int>(trialPaths.lines.size())) walkGhost.path = trialPaths.lines[static_cast<size_t>(j)];
+            }
+        }
         // The loiter popup (see LoiterPopup).
         {
             const JugglingLoop loop = shownLoop();
@@ -4070,6 +4323,12 @@ int runApp() {
                         if (blockingBeat) *blockingBeat = -1;
                         return false;
                     }
+                    // With rotated repeats a loiter can't run on past the beats written out: the
+                    // next beats are the first ones turned.
+                    if (choreography.repeats() > 1 && b + n >= cycle) {
+                        if (blockingBeat) *blockingBeat = -2;
+                        return false;
+                    }
                     if (j >= 0 && j < static_cast<int>(choreography.keys.size()))
                         for (const Keyframe& k : choreography.keys[static_cast<size_t>(j)]) {
                             const int d = ((k.beat - b) % cycle + cycle) % cycle;
@@ -4083,7 +4342,9 @@ int runApp() {
                 auto apply = [&](int n) {
                     int blocking = 0;
                     if (!fits(n, &blocking)) {
-                        loiter.error = blocking < 0 ? "Too long: the choreography is only " + std::to_string(cycle) + " beats."
+                        loiter.error = blocking == -2 ? "Too long: it would run past beat " + std::to_string(cycle) +
+                                                            ", into the rotated repeat."
+                                       : blocking < 0 ? "Too long: the choreography is only " + std::to_string(cycle) + " beats."
                                                     : "No room: J" + std::to_string(j + 1) + " has a keyframe " +
                                                           std::to_string(blocking) + " beats later.";
                         loiter.errorUntil = ImGui::GetTime() + 1.5;
@@ -4467,6 +4728,22 @@ int runApp() {
             }
         }
 
+        // The plip: something the user just did was refused (a note under the siteswap grid, or
+        // the loiter popup's) or broke the pattern. Once per thing, however it was refused.
+        if (siteswapBox.noteUntil != lastNoteUntil) {
+            if (siteswapBox.noteUntil > lastNoteUntil && !siteswapBox.note.empty()) plipWanted = true;
+            lastNoteUntil = siteswapBox.noteUntil;
+        }
+        if (loiter.errorUntil != lastLoiterErrorUntil) {
+            if (loiter.errorUntil > lastLoiterErrorUntil) plipWanted = true;
+            lastLoiterErrorUntil = loiter.errorUntil;
+        }
+        if (plipWanted && settings.sounds) {
+            const std::vector<unsigned char>& wav = plipWav();
+            platformPlaySound(wav.data(), wav.size());
+        }
+        plipWanted = false;
+
         ImGui::Render();
 
         // --- Draw ---
@@ -4493,6 +4770,7 @@ int runApp() {
             glViewport(jugglerRect.x, jugglerRect.y, jugglerRect.w, jugglerRect.h);
             renderer.drawOverlay(cameraViewProj(cameraView, static_cast<float>(jugglerRect.w) / static_cast<float>(jugglerRect.h)),
                                  overlayTriangles);
+            renderWalkGhost(renderer, prims, walkGhost, cameraView, jugglerRect, ImGui::GetTime());
         }
 
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

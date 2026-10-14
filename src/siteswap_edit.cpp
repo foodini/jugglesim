@@ -212,6 +212,22 @@ bool isFillerCell(const SiteswapGrid& grid, int row, int beat, const GridCount& 
     return isFiller(r.cells[static_cast<size_t>(beat)], count);
 }
 
+bool gridCellSource(const SiteswapGrid& grid, int row, int beat, int* sourceRow, int* sourceBeat) {
+    if (row < 0 || row >= grid.jugglers() || grid.period <= 0) return false;
+    int r = row, b = beat;
+    for (int steps = 0; grid.rows[static_cast<size_t>(r)].linked(); ++steps) {
+        int to = 0, start = 0;
+        if (steps > grid.jugglers() || !readLink(grid.rows[static_cast<size_t>(r)].link, &to, &start) || to < 0 ||
+            to >= grid.jugglers())
+            return false;
+        r = to;
+        b += start;
+    }
+    *sourceRow = r;
+    *sourceBeat = ((b % grid.period) + grid.period) % grid.period;
+    return true;
+}
+
 bool isEditableCell(const SiteswapGrid& grid, int row, int beat, const GridCount& count) {
     if (row < 0 || row >= grid.jugglers() || beat < 0 || beat >= grid.period) return false;
     return !grid.rows[static_cast<size_t>(row)].linked() && !isFillerCell(grid, row, beat, count);

@@ -120,7 +120,7 @@ struct LadderKeyframe {
 struct LadderViewOptions {
     bool showValues = false;    // label every throw with its value ("3", "4p")
     bool showKeyframeMarks = false;  // label keyframes on spike marks with the mark ("M3")
-    // Walk links (choreography), per juggler: what their strip says ("walks like J1 +24 ccw1/4"),
+    // Walk links (choreography), per juggler: what their strip says ("walks like J1 +24, +90° (CCW)"),
     // empty if none; and whether a juggler's menu offers Walk Like... at all.
     std::vector<std::string> walkLabels;
     bool walkLinks = false;

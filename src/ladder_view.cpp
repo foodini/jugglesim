@@ -7,6 +7,7 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cstring>
 #include <cfloat>
 #include <climits>
 #include <cmath>
@@ -1909,12 +1910,16 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
                         what = walkLabel;
                     }
                     // Between the L and R labels below the number, where there's room (a walk link
-                    // squeezed to "J1+2ccw1/4" if need be).
+                    // squeezed to "J1+2,+90°" if need be).
                     const float left = columnX(j, false) + fontSize * 0.6f, right = columnX(j, true) - fontSize * 0.6f;
                     if (!isLinked(j) && ImGui::CalcTextSize(what.c_str()).x > right - left) {
                         const std::string prefix = "walks like ";
                         if (what.compare(0, prefix.size(), prefix) == 0) what = what.substr(prefix.size());
                         what.erase(std::remove(what.begin(), what.end(), ' '), what.end());
+                        for (const char* dir : {"(CCW)", "(CW)"}) {  // (the sign says which way)
+                            const size_t at = what.find(dir);
+                            if (at != std::string::npos) what.erase(at, std::strlen(dir));
+                        }
                     }
                     const ImVec2 ws = ImGui::CalcTextSize(what.c_str());
                     if (ws.x <= right - left)

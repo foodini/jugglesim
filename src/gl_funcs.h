@@ -87,6 +87,7 @@ typedef std::ptrdiff_t GLsizeiptr;
     X(void, UniformMatrix4fv, (GLint location, GLsizei count, GLboolean transpose,              \
                                const GLfloat* value))                                           \
     X(void, Uniform3fv, (GLint location, GLsizei count, const GLfloat* value))                  \
+    X(void, Uniform1f, (GLint location, GLfloat v0))                                            \
     X(void, GenVertexArrays, (GLsizei n, GLuint * arrays))                                      \
     X(void, BindVertexArray, (GLuint array))                                                    \
     X(void, DeleteVertexArrays, (GLsizei n, const GLuint* arrays))                              \

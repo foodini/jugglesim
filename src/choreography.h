@@ -17,12 +17,19 @@
 // marks (facing in degrees, 0 faces +Z); J<k>(...) a juggler's keyframes, each "beat:M<k>" on a
 // mark or "beat:(x,z,facing)" free, with "~" for turning the long way round. Beats count from 0,
 // like the links' [k]. A juggler who walks like another: J<k>(=J<leader>+<beats>) with an
-// optional turn, "ccw1/4" or "cw1/3" (counterclockwise or clockwise seen from above, as a
-// fraction of a circle): J2(=J1+24ccw1/4).
+// optional turn in degrees, "r+90" or "r-120" (+: counterclockwise seen from above, -:
+// clockwise; "r180" a half turn): J2(=J1+24r+90).
+//
+// A choreography can repeat rotated: after its `cycle` beats it comes round again with every
+// juggler turned about the middle of the floor, again and again till it's back where it started
+// ("C96r+120": 96 beats written out, played 3 times, 288 beats in all). Only
+// the first `cycle` beats are written out (and edited); the rest are those turned. Walk links
+// follow the leader's whole path, turned copies included, so their offsets run over all of it.
 #pragma once
 
 #include "math3d.h"
 
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -39,24 +46,40 @@ struct Keyframe {
 };
 
 // A juggler who walks like another (a walk link): on beat b, where the leader is on beat
-// b + offset, turned about the middle of the floor by turnNum/turnDen of a circle
-// (counterclockwise seen from above when positive), facing turned the same.
+// b + offset, turned about the middle of the floor by turnDegrees (+: counterclockwise seen from
+// above, -: clockwise), facing turned the same.
 struct WalkLink {
     int leader = -1;  // -1: none (the juggler's own keyframes)
     int offset = 0;   // beats
-    int turnNum = 0, turnDen = 1;
+    int turnDegrees = 0;
     bool active() const { return leader >= 0; }
-    float turnRadians() const { return turnDen > 0 ? 2.0f * kPi * static_cast<float>(turnNum) / static_cast<float>(turnDen) : 0.0f; }
+    float turnRadians() const { return static_cast<float>(turnDegrees) * kPi / 180.0f; }
 };
+
+// The turns offered (walk links and rotated repeats), in degrees: the counterclockwise ones,
+// a half turn, then the clockwise ones.
+constexpr int kTurnChoices[] = {60, 72, 90, 120, 180, -120, -90, -72, -60};
+// A turn as shown: "+90° (CCW)", "-90° (CW)", "180°" (UTF-8).
+std::string turnText(int degrees);
+// A turn brought into (-180, 180].
+int normalTurn(int degrees);
 
 struct Choreography {
     double reference = 0.0;  // the passing distance the positions are for (m); 0: none set
     int cycle = 0;           // beats the choreography repeats after; 0: the loop's period
+    // Repeating rotated: each repeat turned repeatDegrees about the middle of the floor (+:
+    // counterclockwise seen from above; 360 a whole number of times, 2 to 12), round till it's
+    // back. 0: it repeats as is.
+    int repeatDegrees = 0;
     std::vector<SpikeMark> marks;
     std::vector<std::vector<Keyframe>> keys;  // per juggler, sorted by beat
     std::vector<WalkLink> links;              // per juggler (missing: none)
 
     bool active() const { return !marks.empty(); }
+    // How many times the written-out beats play before it's all back where it started (1, or
+    // 360 / the turn), and the turn between one time and the next (radians, counterclockwise).
+    int repeats() const { return repeatDegrees != 0 ? 360 / std::abs(repeatDegrees) : 1; }
+    float repeatTurn() const { return static_cast<float>(repeatDegrees) * kPi / 180.0f; }
     bool hasKeys(int juggler) const;  // keyframes of their own
     WalkLink link(int juggler) const;
     // Whether the juggler moves by the choreography: their own keyframes, or a walk link to a
@@ -68,14 +91,20 @@ struct Choreography {
     bool operator!=(const Choreography& o) const { return !(*this == o); }
 };
 
-// Where juggler `juggler` is at `beat` (fractional, any beat: taken round the cycle) and which
-// way they face, with positions scaled by `scale` (the distance in use / the reference). False
-// if they have no keyframes.
+// The whole choreography's length: `cycle` (the beats written out) times its rotated repeats.
+inline int choreographyFullCycle(const Choreography& c, int cycle) { return cycle * c.repeats(); }
+
+// Where juggler `juggler` is at `beat` (fractional, any beat: taken round the whole
+// choreography, rotated repeats and all) and which way they face, with positions scaled by
+// `scale` (the distance in use / the reference). `cycle`: the beats written out. False if they
+// have no keyframes.
 bool choreographyPlacement(const Choreography& c, int juggler, double beat, int cycle, float scale, Vec3* position,
                            float* yaw);
 
-// The keyframes the juggler walks by: their own, or, with a walk link, the leader's moved
-// round by the link (on marks only if there's no turn; else free spots). `cycle` as above.
+// The keyframes the juggler walks by, over the whole choreography: their own (and their rotated
+// repeats' copies, on beats from `cycle` on, as free spots), or, with a walk link, the leader's
+// moved round by the link (on marks only if there's no turn; else free spots). `cycle`: the
+// beats written out.
 std::vector<Keyframe> effectiveKeyframes(const Choreography& c, int juggler, int cycle);
 
 // Sets (or, with leader -1, clears) a juggler's walk link. Setting one deletes the juggler's own
@@ -94,8 +123,9 @@ void setKeyframe(Choreography* c, int juggler, const Keyframe& k);
 // Removes `juggler`'s keyframe on `beat`. False if there isn't one.
 bool removeKeyframe(Choreography* c, int juggler, int beat);
 // Removes a spike mark; keyframes on it become free keyframes where it was, and later marks'
-// indexes shift down.
-void removeSpikeMark(Choreography* c, int mark);
+// indexes shift down. Nobody moves: a juggler standing on their own mark only because they have
+// no keyframes (J3 on mark 3) gets a keyframe there first, so the renumbering doesn't move them.
+void removeSpikeMark(Choreography* c, int mark, int jugglers);
 
 std::string choreographyToText(const Choreography& c);
 // False (and *c unchanged) if the text isn't a choreography.

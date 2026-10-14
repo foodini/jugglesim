@@ -209,6 +209,7 @@ public:
         // With a choreography the jugglers move: where they are depends on the time. Otherwise
         // they stand still, in the default formation.
         cycle_ = choreographyCycle(loop, params);
+        if (cycle_ > 0 && params.choreography) cycle_ = choreographyFullCycle(*params.choreography, cycle_);  // (rotated repeats too)
         moving_ = cycle_ > 0;
         for (int k = 0; k < jugglers_; ++k) {
             Vec3 position;

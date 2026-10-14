@@ -19,6 +19,7 @@ struct AppSettings {
     bool colorByOrbit = false;         // color props by orbit instead of one color each
     bool dimLinked = false;            // mute linked jugglers' throws on the ladder
     bool pathBeatNumbers = true;       // choreography: number every beat along the paths
+    bool sounds = true;                // the plip when something is refused (see sound.h)
     bool showKeyframeMarks = false;    // the ladder's keyframes labeled with their spike mark (K)
     // Choreography: the floor grid spike marks (and keyframe spots) snap to. Not part of any
     // pattern: changing it never moves anything.

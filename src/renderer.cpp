@@ -22,13 +22,14 @@ const char* kFragmentShader = R"(#version 330 core
 in vec3 vNormal;
 uniform vec3 uColor;
 uniform vec3 uLightDir;
+uniform float uAlpha;
 out vec4 fragColor;
 void main() {
     vec3 n = normalize(vNormal);
     float key = max(dot(n, -uLightDir), 0.0);
     float fill = max(dot(n, vec3(0.0, 0.0, 1.0)), 0.0) * 0.2;  // soft light from the camera side
     vec3 c = uColor * (0.28 + 0.65 * key + fill);
-    fragColor = vec4(c, 1.0);
+    fragColor = vec4(c, uAlpha);
 }
 )";
 
@@ -109,6 +110,7 @@ bool Renderer::init(std::string* error) {
     locViewProj_ = gl::GetUniformLocation(program_, "uViewProj");
     locColor_ = gl::GetUniformLocation(program_, "uColor");
     locLightDir_ = gl::GetUniformLocation(program_, "uLightDir");
+    locAlpha_ = gl::GetUniformLocation(program_, "uAlpha");
 
     glowProgram_ = buildProgram(kGlowVertexShader, kGlowFragmentShader, error);
     if (!glowProgram_) return false;
@@ -235,6 +237,33 @@ void Renderer::beginScene(const Mat4& viewProj, Vec3 lightDir) {
     gl::UniformMatrix4fv(locViewProj_, 1, GL_FALSE, viewProj.m);
     Vec3 l = normalize(lightDir);
     gl::Uniform3fv(locLightDir_, 1, &l.x);
+    gl::Uniform1f(locAlpha_, 1.0f);
+}
+
+void Renderer::setGhostPass(GhostPass pass, float alpha) {
+    switch (pass) {
+        case GhostPass::Off:
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            glDepthFunc(GL_LESS);
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
+            gl::Uniform1f(locAlpha_, 1.0f);
+            break;
+        case GhostPass::Depth:  // only the nearest surface's depth, so the see-through pass draws each pixel once
+            glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+            glDepthFunc(GL_LESS);
+            glDepthMask(GL_TRUE);
+            glDisable(GL_BLEND);
+            break;
+        case GhostPass::SeeThrough:
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            glDepthFunc(GL_LEQUAL);
+            glDepthMask(GL_FALSE);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            gl::Uniform1f(locAlpha_, alpha);
+            break;
+    }
 }
 
 void Renderer::drawMesh(const Mesh& mesh, const Mat4& model, Vec3 color) {

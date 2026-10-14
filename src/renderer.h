@@ -29,6 +29,11 @@ public:
     // lightDir is the direction light travels (pointing from the light into the scene).
     void beginScene(const Mat4& viewProj, Vec3 lightDir);
     void drawMesh(const Mesh& mesh, const Mat4& model, Vec3 color);
+    // A see-through object (between beginScene and endScene): draw it once in the Depth pass,
+    // then again in the SeeThrough pass (alpha 0-1), then set Off. Each pixel is blended once,
+    // so overlapping parts of it don't show through each other.
+    enum class GhostPass { Off, Depth, SeeThrough };
+    void setGhostPass(GhostPass pass, float alpha = 1.0f);
     void endScene();
 
     // Draws glowing triangles with additive blending: depth-tested against the scene but not
@@ -45,6 +50,7 @@ private:
     GLint locViewProj_ = -1;
     GLint locColor_ = -1;
     GLint locLightDir_ = -1;
+    GLint locAlpha_ = -1;
 
     GLuint glowProgram_ = 0;
     GLint locGlowViewProj_ = -1;

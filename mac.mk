@@ -46,20 +46,24 @@ ifeq ($(UNAME),Darwin)
   GLFW_DEFS := -D_GLFW_COCOA
   # Runs on macOS 11 (Big Sur) and later.
   PLATFORM_FLAGS := -arch $(ARCH) -mmacosx-version-min=11.0
-  LDLIBS := -framework Cocoa -framework IOKit -framework CoreFoundation -framework OpenGL
+  LDLIBS := -framework Cocoa -framework IOKit -framework CoreFoundation -framework OpenGL \
+            -framework AVFoundation
+  # Sound (platformPlaySound), in Objective-C++.
+  MAC_SRCS := src/sound_mac.mm
 else
   GLFW_PLATFORM := posix_time.c posix_module.c posix_thread.c posix_poll.c x11_init.c \
                    x11_monitor.c x11_window.c xkb_unicode.c glx_context.c linux_joystick.c
   GLFW_DEFS := -D_GLFW_X11
   PLATFORM_FLAGS :=
   LDLIBS := -lGL -ldl -lpthread -lm
+  MAC_SRCS :=
 endif
 GLFW_SRCS := $(addprefix $(GLFW)/src/,$(GLFW_COMMON) $(GLFW_PLATFORM))
 
 # The built-in pattern library, compiled in from data/patterns.txt.
 PATTERNS_SRC := $(GENERATED)/builtin_patterns.cpp
 
-OBJS := $(patsubst %,$(BUILD)/obj/%.o,$(APP_SRCS) $(IMGUI_SRCS) $(GLFW_SRCS) $(PATTERNS_SRC))
+OBJS := $(patsubst %,$(BUILD)/obj/%.o,$(APP_SRCS) $(MAC_SRCS) $(IMGUI_SRCS) $(GLFW_SRCS) $(PATTERNS_SRC))
 DEPS := $(OBJS:.o=.d)
 BIN := $(BUILD)/jugglesim
 
@@ -92,6 +96,10 @@ $(BUILD)/obj/%.c.o: %.c
 $(BUILD)/obj/%.m.o: %.m
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BUILD)/obj/%.mm.o: %.mm
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -fobjc-arc -c $< -o $@
 
 $(PATTERNS_SRC): data/patterns.txt
 	@mkdir -p $(dir $@)

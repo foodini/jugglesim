@@ -17,7 +17,8 @@ can trace any point on a throw straight across to its beat number.
   right-click a juggler's number for *Same as* and *Unlink*. **L** dims linked jugglers' throws.
 - **Choreography keyframes** (where a juggler stands on a beat; see *Choreography* in
   [juggler.md](juggler.md)) are diamonds on the juggler's strip: drag one up or down to move it
-  to another beat, right-click it to delete it or to turn the long way round.
+  to another beat, right-click it to delete it or to turn the long way round. With rotated repeats, the
+  keyframes past the beats written out are dim and can't be moved.
 - **Collapsing strips.** With several jugglers it gets busy. The small triangle button just
   left of a juggler's number collapses their strip to a narrow one (or expands it again); their
   throws are still drawn, so passes to and from them still show, but without value labels. The
@@ -243,6 +244,13 @@ a throw drawn or deleted in a sketch, or a change to the props, tempo, dwell or 
 Ctrl+Z works the same while the grid has the keyboard; a throw still being typed is finished
 first, and is the step undone.
 
+## When something's refused
+
+When something you just did can't be done (a key the grid won't take, a drop the ladder
+refuses, a loiter that's too long, ...), the line under the siteswap grid says why, with a short
+"plip" so you notice; an edit on the ladder that leaves the pattern broken plips too. The plip
+answers what you did, never what's playing. *View > Sounds* turns it off.
+
 ## The siteswap grid
 
 Along the bottom of the window, the full width, is the **siteswap grid**: the pattern as a
@@ -295,7 +303,13 @@ last throw. (It's written back counting from the start: with 5 throws, `[-1]` be
 The line under the siteswap grid shows the number to use: with the cursor on a throw it says, for
 example, "J1, beat 5 [4]", and **Ctrl+click** writes the link for you (see *Editing in the grid*).
 In the grid a linked juggler's row header says what they copy (`J2 @1[8]`), and their cells show
-the throws that come out, greyed (they're edited through the juggler written out).
+the throws they copy, greyed, with a small fold in the corner. **Typing in a copy's cell edits the
+throw it copies**: with the cursor on any throw, the same throw everywhere else (where it's
+written out and in every other copy) is outlined, with a bar under it, and they all change as you
+type, and all turn red together if it doesn't work. A pass typed in a copy's row is as that
+juggler sees it, + or - along (`3p-2` for J6 to pass to J4); a juggler's number (`3p4`) would send
+every copy to J4, so it's refused, with the + or - that does it suggested. Delete,
+Ctrl+Up/Down and Ctrl+Shift+Up/Down work through copies the same way.
 
 A one-count feast for five, each juggler a copy of the one before, starting 3 beats in:
 
@@ -313,8 +327,8 @@ A link keeps each throw's target the way it was written, which is what makes thi
 Links can copy links (`@3[2]` where J3 is `@1[1]` starts with J1's throws[3]), but not in a
 loop, and at least one juggler has to have their throws written out.
 
-**Editing a linked juggler edits all of them.** Change a throw on the ladder, in the juggler
-written out or in any copy, and the change goes to the part written out and from there to every
+**Editing a linked juggler edits all of them.** Change a throw on the ladder or in the grid, in
+the juggler written out or in any copy, and the change goes to the part written out and from there to every
 copy. If a copy would then collide (two props in one hand at once), the edit is refused and the
 line under the siteswap grid says why. Adding or deleting beats isn't possible with links yet:
 unlink first.

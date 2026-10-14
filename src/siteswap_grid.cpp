@@ -127,7 +127,25 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
     auto cellAt = [&](int r, int b) -> GridCell& {
         return grid.rows[static_cast<size_t>(r)].cells[static_cast<size_t>(b)];
     };
-    auto editable = [&](int r, int b) { return isEditableCell(grid, r, b, count); };
+    // Where a cell's throw is written: itself, or for a linked row ("@1[3]") the cell it copies.
+    // Typing in a copy edits that cell, and every copy of it changes with it.
+    auto source = [&](int r, int b, int* sr, int* sb) {
+        if (gridCellSource(grid, r, b, sr, sb)) return true;
+        *sr = r;
+        *sb = b;
+        return false;
+    };
+    auto editable = [&](int r, int b) {
+        int sr = r, sb = b;
+        if (grid.rows[static_cast<size_t>(r)].linked() && !source(r, b, &sr, &sb)) return false;
+        return isEditableCell(grid, sr, sb, count);
+    };
+    // The cell the cursor's typing goes into.
+    auto target = [&]() -> GridCell& {
+        int sr = state.row, sb = state.beat;
+        source(state.row, state.beat, &sr, &sb);
+        return grid.rows[static_cast<size_t>(sr)].cells[static_cast<size_t>(sb)];
+    };
     auto snapToCount = [&](int r, int b) {
         // A filler cell (greyed out) stands for its count's beat.
         if (isFillerCell(grid, r, b, count)) b = b / count.n * count.n;
@@ -137,28 +155,23 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         if (!state.editing) return;
         state.editing = false;
         const GridCell finished = typedCell(state.editText, rows, true);
-        cellAt(state.row, state.beat) = finished;
+        target() = finished;
         emit(true);
     };
     auto cancelEdit = [&]() {
         if (!state.editing) return;
         state.editing = false;
-        cellAt(state.row, state.beat) = state.editOriginal;
+        target() = state.editOriginal;
         emit(false);
     };
     auto showTyped = [&]() {
-        cellAt(state.row, state.beat) = typedCell(state.editText, rows);
+        target() = typedCell(state.editText, rows);
         emit(false);
     };
     auto startEdit = [&](char c) {
-        if (grid.rows[static_cast<size_t>(state.row)].linked()) {
-            note("J" + std::to_string(state.row + 1) + " is a copy of another juggler (right-click J" +
-                 std::to_string(state.row + 1) + " to unlink them).");
-            return;
-        }
         if (!editable(state.row, state.beat)) return;
         state.editing = true;
-        state.editOriginal = cellAt(state.row, state.beat);
+        state.editOriginal = target();
         state.editText = std::string(1, c);
         state.anchorRow = state.row;
         state.anchorBeat = state.beat;
@@ -222,9 +235,11 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         int r0, r1, b0, b1;
         selection(&r0, &r1, &b0, &b1);
         for (int r = r0; r <= r1; ++r) {
-            if (grid.rows[static_cast<size_t>(r)].linked()) continue;
-            for (int b = b0; b <= b1; ++b)
-                cellAt(r, b) = count.active() && !count.countBeat(b) ? selfCell(count.filler) : GridCell();
+            for (int b = b0; b <= b1; ++b) {
+                int sr = r, sb = b;
+                if (grid.rows[static_cast<size_t>(r)].linked() && !source(r, b, &sr, &sb)) continue;
+                cellAt(sr, sb) = count.active() && !count.countBeat(sb) ? selfCell(count.filler) : GridCell();
+            }
         }
         emit(true);
     };
@@ -545,7 +560,20 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
                             note("That's the end of the pattern (right-click a cell to insert columns).");
                     }
                 } else if (typed.back() == 'p') {
-                    if (c >= '1' && c <= '9' && c - '0' <= rows) {
+                    if (c >= '1' && c <= '9' && grid.rows[static_cast<size_t>(state.row)].linked()) {
+                        // A copy keeps a target as written: "3p4" here would send every copy of
+                        // this throw to J4. Refused; the relative one that does it is suggested.
+                        const int to = c - '0', from = state.row + 1;
+                        int sr = 0, sb = 0;
+                        source(state.row, state.beat, &sr, &sb);
+                        std::string why = "J" + std::to_string(from) + " copies J" + std::to_string(sr + 1) +
+                                          ", so a pass by number would go to J" + std::to_string(to) +
+                                          " from every copy: type it as + or - along";
+                        if (to >= 1 && to <= rows && to != from)
+                            why += " (" + typed + (to > from ? "+" : "-") + std::to_string(std::abs(to - from)) + " here)";
+                        note(why + ".");
+                        res.plip = true;
+                    } else if (c >= '1' && c <= '9' && c - '0' <= rows) {
                         state.editText += c;
                         commitEdit();
                         advance();
@@ -591,25 +619,24 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
             commitEdit();
             const bool right = ImGui::IsKeyPressed(ImGuiKey_RightArrow, true);
             int r = 0, b = 0;
-            if (grid.rows[static_cast<size_t>(state.row)].linked()) {
-                b = std::clamp(state.beat + (right ? 1 : -1), 0, grid.period - 1);
-                moveTo(state.row, b, shift);
-            } else if (right ? nextEditable(state.row, state.beat, false, &r, &b)
-                             : previousEditable(state.row, state.beat, false, &r, &b)) {
+            if (right ? nextEditable(state.row, state.beat, false, &r, &b)
+                      : previousEditable(state.row, state.beat, false, &r, &b)) {
                 moveTo(r, b, shift);
             }
         }
         if (pressed(ImGuiKey_UpArrow) || pressed(ImGuiKey_DownArrow)) {
             const int delta = ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) ? 1 : -1;
             commitEdit();
-            if (ctrl && !grid.rows[static_cast<size_t>(state.row)].linked() && editable(state.row, state.beat)) {
-                // Ctrl+Up/Down: the throw one higher or lower; Ctrl+Shift: where it goes.
-                GridCell changed = cellAt(state.row, state.beat);
+            if (ctrl && editable(state.row, state.beat)) {
+                // Ctrl+Up/Down: the throw one higher or lower; Ctrl+Shift: where it goes (in a
+                // copy, of the throw it copies).
+                int sr = state.row, sb = state.beat;
+                source(state.row, state.beat, &sr, &sb);
+                GridCell changed = cellAt(sr, sb);
                 std::string why;
-                const bool ok = shift ? stepCellTarget(grid, state.row, state.beat, delta, &changed, &why)
-                                      : bumpCell(&changed, delta);
+                const bool ok = shift ? stepCellTarget(grid, sr, sb, delta, &changed, &why) : bumpCell(&changed, delta);
                 if (ok) {
-                    cellAt(state.row, state.beat) = changed;
+                    cellAt(sr, sb) = changed;
                     emit(true);
                 } else if (!why.empty()) {
                     note(why);
@@ -697,9 +724,19 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
     const ImU32 blankBg = blankCellColor(colorVision);
     const ImU32 errorBg = errorCellColor(colorVision);
     const ImU32 selectBg = ImGui::GetColorU32(ImGuiCol_TextSelectedBg);
+    // Problem throws, by the cell they're written in: a copy's problem shows on the original and
+    // on every copy of it.
     std::set<std::pair<int, int>> problems;
-    for (const Siteswap::ThrowRef& p : parsed.problemThrows)
-        if (grid.period > 0) problems.insert({p.juggler, ((p.beat % grid.period) + grid.period) % grid.period});
+    for (const Siteswap::ThrowRef& p : parsed.problemThrows) {
+        if (grid.period <= 0 || p.juggler < 0 || p.juggler >= rows) continue;
+        int sr = 0, sb = 0;
+        source(p.juggler, ((p.beat % grid.period) + grid.period) % grid.period, &sr, &sb);
+        problems.insert({sr, sb});
+    }
+    // The cursor's throw, wherever else it shows (its original and its copies): outlined.
+    int cursorSourceRow = -1, cursorSourceBeat = -1;
+    source(state.row, state.beat, &cursorSourceRow, &cursorSourceBeat);
+    const ImU32 twinCol = IM_COL32(120, 205, 255, 255);
     const int nowBeat = grid.period > 0 ? static_cast<int>(std::floor(playBeat)) % grid.period : 0;
     int r0, r1, b0, b1;
     selection(&r0, &r1, &b0, &b1);
@@ -721,11 +758,17 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
             const GridRow& row = grid.rows[static_cast<size_t>(r)];
             const ImVec2 a(x, cellsOrigin.y + rowY(r)), z(x + w, cellsOrigin.y + rowY(r) + cellH);
             const bool linked = row.linked();
-            const GridCell cell = linked ? derivedCell(parsed, r, b) : row.cells[static_cast<size_t>(b)];
-            const bool filler = isFillerCell(grid, r, b, count);
+            int sr = r, sb = b;
+            const bool sourced = source(r, b, &sr, &sb);
+            // A copy shows the throw it copies, as written there (a copy keeps its form).
+            const GridCell cell = !linked ? row.cells[static_cast<size_t>(b)]
+                                          : (sourced ? cellAt(sr, sb) : derivedCell(parsed, r, b));
+            const bool filler = isFillerCell(grid, sr, sb, count);
             const bool offCount = !linked && count.active() && !count.countBeat(b) && !filler;
             const bool editingHere = state.editing && r == state.row && b == state.beat;
-            const bool error = !cell.blank() && (problems.count({r, b}) > 0 || offCount);
+            const bool error = !cell.blank() && (problems.count({sr, sb}) > 0 || offCount);
+            const bool twin = sourced && sr == cursorSourceRow && sb == cursorSourceBeat &&
+                              !(r == state.row && b == state.beat) && state.focused && !rangeSelected;
             ImU32 bg = linked ? linkBg : frameBg;
             ImU32 fg = filler || linked ? dimText : textCol;
             if (editingHere) {
@@ -750,6 +793,16 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
             } else if (editingHere && std::fmod(ImGui::GetTime(), 1.0) < 0.6) {
                 const float cx = a.x + w * 0.5f;
                 draw->AddLine(ImVec2(cx, a.y + 2.0f), ImVec2(cx, z.y - 2.0f), textCol, 1.0f);
+            }
+            // A copy's mark: a small corner fold, top right.
+            if (linked)
+                draw->AddTriangleFilled(ImVec2(z.x - 6.0f, a.y), ImVec2(z.x, a.y), ImVec2(z.x, a.y + 6.0f),
+                                        ImGui::GetColorU32(ImGuiCol_Text, 0.55f));
+            // The same throw as the cursor's (its original or another copy): outlined, with a
+            // bar under it, so it reads without the color.
+            if (twin) {
+                draw->AddRect(ImVec2(a.x - 1.0f, a.y - 1.0f), ImVec2(z.x + 1.0f, z.y + 1.0f), twinCol, 0.0f, 0, 1.5f);
+                draw->AddRectFilled(ImVec2(a.x + 2.0f, z.y - 3.0f), ImVec2(z.x - 2.0f, z.y - 1.0f), twinCol);
             }
             if (r == state.row && b == state.beat)
                 draw->AddRect(ImVec2(a.x - 1.0f, a.y - 1.0f), ImVec2(z.x + 1.0f, z.y + 1.0f),

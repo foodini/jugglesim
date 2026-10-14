@@ -7,6 +7,10 @@
 // Delete clear cells (a blank cell: a throw not decided yet). With a count directive ("4-count")
 // only beats 1, 5, 9, ... are edited; the 3s between are greyed out and skipped.
 //
+// A linked juggler's row ("@1[3]") shows the throws they copy, and typing there edits the throw
+// copied: it and every other copy of it change together (outlined while the cursor is on one).
+// A target typed there is as that juggler sees it: + or - along, never a juggler's number.
+//
 // The grid is drawn and polled each frame: it reads the siteswap text and hands back what to
 // change (new text, an undo step, a count, a link), and the app applies it.
 #pragma once
@@ -52,6 +56,7 @@ struct SiteswapGridResult {
     int linkJuggler = -1, linkTo = -1, linkStart = 0;  // make linkJuggler a copy of linkTo
     int unlinkJuggler = -1;   // write a linked juggler's throws out
     std::string readout;      // the cursor's cell: "J1, beat 5, right hand: 3p+2"
+    bool plip = false;        // something just typed or done was refused (see `note`)
 };
 
 // The height the grid needs for this many jugglers (with its line of buttons under it).
