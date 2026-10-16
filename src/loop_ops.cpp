@@ -2,6 +2,7 @@
 #include "loop_ops.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <numeric>
 
 namespace {
@@ -530,5 +531,260 @@ bool rethrowFrom(const JugglingLoop& loop, Slot from, Slot landing, JugglingLoop
     }
     out.throws[static_cast<size_t>(fromSlot)] = t;
     if (result) *result = out;
+    return true;
+}
+
+// ---- The throwing loop
+
+ThrowLoopPlan throwLoopPlan(const std::vector<int>& next, int jugglers) {
+    ThrowLoopPlan plan;
+    const int n = std::max(jugglers, 1);
+    auto identity = [&]() {
+        plan.phases = 1;
+        plan.part.assign(1, std::vector<int>(static_cast<size_t>(n)));
+        for (int j = 0; j < n; ++j) plan.part[0][static_cast<size_t>(j)] = j;
+    };
+    identity();
+    std::vector<int> takes(static_cast<size_t>(n));
+    std::vector<std::vector<int>> takers(static_cast<size_t>(n));
+    std::string problem;
+    auto add = [&](const std::string& s) { problem += (problem.empty() ? "" : "; ") + s; };
+    for (int j = 0; j < n; ++j) {
+        const int r = j < static_cast<int>(next.size()) && next[static_cast<size_t>(j)] >= 0 ? next[static_cast<size_t>(j)] : j;
+        takes[static_cast<size_t>(j)] = r;
+        if (r >= n) {
+            add("T" + std::to_string(j + 1) + " goes on to T" + std::to_string(r + 1) + ", and there's no T" +
+                std::to_string(r + 1));
+            plan.bad.push_back(j);
+            continue;
+        }
+        takers[static_cast<size_t>(r)].push_back(j);
+    }
+    for (int r = 0; r < n; ++r) {
+        const std::vector<int>& t = takers[static_cast<size_t>(r)];
+        if (t.size() == 1) continue;
+        if (t.empty()) {
+            add("nothing goes on to T" + std::to_string(r + 1));
+            continue;
+        }
+        std::string who;
+        for (size_t i = 0; i < t.size(); ++i) {
+            who += (i == 0 ? "T" : (i + 1 == t.size() ? " and T" : ", T")) + std::to_string(t[i] + 1);
+            plan.bad.push_back(t[i]);
+        }
+        add(who + (t.size() == 2 ? " both" : " all") + " go on to T" + std::to_string(r + 1));
+    }
+    if (!problem.empty()) {
+        plan.valid = false;
+        plan.problem = problem;
+        return plan;
+    }
+    for (int p = 0; p < ThrowLoopPlan::kMaxPhases; ++p) {
+        std::vector<int> parts(static_cast<size_t>(n));
+        bool home = true;
+        for (int j = 0; j < n; ++j) {
+            parts[static_cast<size_t>(j)] = plan.part[static_cast<size_t>(p)][static_cast<size_t>(takes[static_cast<size_t>(j)])];
+            home = home && parts[static_cast<size_t>(j)] == j;
+        }
+        if (home) {
+            plan.phases = p + 1;
+            return plan;
+        }
+        plan.part.push_back(parts);
+    }
+    identity();  // (a permutation always comes home well before this; kept for safety)
+    plan.valid = false;
+    plan.problem = "it doesn't come back to the start";
+    return plan;
+}
+
+bool WalkPaths::trivial() const {
+    if (cycle <= 0 || path.empty()) return true;
+    for (const std::vector<int>& phase : path)
+        for (size_t j = 0; j < phase.size(); ++j)
+            if (phase[j] != static_cast<int>(j)) return false;
+    return true;
+}
+
+int WalkPaths::walker(int d, int beat) const {
+    if (trivial()) return d;
+    const int whole = cycle * static_cast<int>(path.size());
+    const std::vector<int>& phase = path[static_cast<size_t>(positiveMod(beat, whole) / cycle)];
+    for (size_t x = 0; x < phase.size(); ++x)
+        if (phase[x] == d) return static_cast<int>(x);
+    return d;
+}
+
+int WalkPaths::pathOf(int j, int beat) const {
+    if (trivial()) return j;
+    const int whole = cycle * static_cast<int>(path.size());
+    const std::vector<int>& phase = path[static_cast<size_t>(positiveMod(beat, whole) / cycle)];
+    return j >= 0 && j < static_cast<int>(phase.size()) ? phase[static_cast<size_t>(j)] : j;
+}
+
+int PlayedLoop::partAt(int juggler, int beat) const {
+    if (period <= 0 || part.empty()) return juggler;
+    const int round = (beat - positiveMod(beat, period)) / period;
+    const std::vector<int>& phase = part[static_cast<size_t>(positiveMod(round, static_cast<int>(part.size())))];
+    return juggler >= 0 && juggler < static_cast<int>(phase.size()) ? phase[static_cast<size_t>(juggler)] : juggler;
+}
+
+namespace {
+int gcdOf(int a, int b) {
+    while (b != 0) {
+        const int t = a % b;
+        a = b;
+        b = t;
+    }
+    return a;
+}
+}  // namespace
+
+PlayedLoop playedLoop(const JugglingLoop& written, const ThrowLoopPlan& plan, const WalkPaths& paths) {
+    PlayedLoop out;
+    out.loop = written;
+    out.period = written.period;
+    out.part.assign(1, std::vector<int>());
+    for (int j = 0; j < written.jugglers; ++j) out.part[0].push_back(j);
+    if (written.empty() || written.jugglers < 2 || openThrowCount(written) > 0) return out;
+    const bool walking = !paths.trivial();
+    if (plan.phases <= 1 && !walking) return out;
+    const int n = written.jugglers, P = written.period;
+    long long length = static_cast<long long>(P) * std::max(1, plan.phases);
+    if (walking) {
+        const long long whole = static_cast<long long>(paths.cycle) * static_cast<long long>(paths.path.size());
+        length = length / gcdOf(static_cast<int>(length), static_cast<int>(whole)) * whole;
+    }
+    if (length > kMaxPlayedBeats) {
+        out.ok = false;
+        out.problem = "the throwing and walking loops only come round together after " + std::to_string(length) +
+                      " beats (more than " + std::to_string(kMaxPlayedBeats) + ")";
+        return out;
+    }
+    const int L = static_cast<int>(length);
+    if (plan.phases > 1) out.part = plan.part;
+    JugglingLoop played;
+    played.jugglers = n;
+    played.period = L;
+    played.swapHands = written.swapHands;
+    played.throws.assign(static_cast<size_t>(n * L), LoopThrow());
+    for (int j = 0; j < n; ++j) {
+        for (int g = 0; g < L; ++g) {
+            const int r = out.partAt(j, g);
+            const LoopThrow& t = written.at(r, g);
+            LoopThrow made = t;
+            if (t.value <= 0 || t.dest == r) {
+                made.dest = j;  // a self (or an empty hand) stays with the thrower
+            } else {
+                made.dest = paths.walker(t.dest, g + t.value);
+            }
+            played.throws[static_cast<size_t>(j * L + g)] = made;
+        }
+    }
+    out.loop = played;
+    out.expanded = played != written;
+    // Does it work? Each hand with a throw to make gets exactly one prop, in time.
+    std::vector<int> landing(static_cast<size_t>(n * L), 0);
+    std::vector<int> firstFrom(static_cast<size_t>(n * L), -1);
+    std::string twice, empty;
+    for (int j = 0; j < n; ++j) {
+        for (int g = 0; g < L; ++g) {
+            const LoopThrow& t = played.throws[static_cast<size_t>(j * L + g)];
+            if (t.value <= 0) continue;
+            const size_t s = static_cast<size_t>(t.dest * L + positiveMod(g + t.value, L));
+            if (++landing[s] == 1) {
+                firstFrom[s] = j * L + g;
+            } else if (twice.empty()) {
+                const int at = positiveMod(g + t.value, L);
+                twice = "J" + std::to_string(t.dest + 1) + " catches two props to throw on beat " + std::to_string(at + 1) +
+                        " (J" + std::to_string(firstFrom[s] / L + 1) + "'s from beat " + std::to_string(firstFrom[s] % L + 1) +
+                        " and J" + std::to_string(j + 1) + "'s from beat " + std::to_string(g + 1) + ")";
+                out.clash.push_back({firstFrom[s] / L, firstFrom[s] % L});
+                out.clash.push_back({j, g});
+            }
+        }
+    }
+    for (int j = 0; j < n && empty.empty(); ++j)
+        for (int g = 0; g < L && empty.empty(); ++g)
+            if (played.throws[static_cast<size_t>(j * L + g)].value > 0 && landing[static_cast<size_t>(j * L + g)] == 0) {
+                empty = "J" + std::to_string(j + 1) + " has nothing to throw on beat " + std::to_string(g + 1);
+                out.clash.push_back({j, g});
+            }
+    if (!twice.empty() || !empty.empty()) {
+        out.ok = false;
+        out.problem = twice + (!twice.empty() && !empty.empty() ? "; " : "") + empty;
+    }
+    return out;
+}
+
+bool writtenFromPlayed(const PlayedLoop& before, const JugglingLoop& written, const JugglingLoop& edited,
+                       const WalkPaths& paths, JugglingLoop* out, std::string* why) {
+    const JugglingLoop& was = before.loop;
+    if (edited.jugglers != was.jugglers || edited.period != was.period) {
+        *why = "not while the next column loops the throws (the ladder shows the loop played out; change the period in "
+               "the grid).";
+        return false;
+    }
+    const int n = was.jugglers, P = written.period, L = was.period;
+    JugglingLoop result = written;
+    for (int j = 0; j < n; ++j) {
+        for (int g = 0; g < L; ++g) {
+            const LoopThrow& t = edited.throws[static_cast<size_t>(j * L + g)];
+            if (t == was.throws[static_cast<size_t>(j * L + g)]) continue;
+            if (g >= P) {
+                *why = "beat " + std::to_string(g + 1) + " is in the throwing loop's copies: only beats 1-" + std::to_string(P) +
+                       " are written out (the next column, after beat " + std::to_string(P) + ", says what comes after).";
+                return false;
+            }
+            LoopThrow w = t;
+            if (t.value > 0 && t.dest != j) {
+                w.dest = paths.pathOf(t.dest, g + t.value);
+                if (w.dest == j) {
+                    *why = "J" + std::to_string(t.dest + 1) + " walks J" + std::to_string(j + 1) + "'s own path when that lands.";
+                    return false;
+                }
+            } else {
+                w.dest = j;
+            }
+            result.throws[static_cast<size_t>(j * P + g)] = w;
+        }
+    }
+    // (Anything in the copies a written throw changes comes from the written throws.)
+    *out = result;
+    return true;
+}
+
+std::string throwNextText(const std::vector<int>& next) {
+    size_t last = 0;
+    for (size_t j = 0; j < next.size(); ++j)
+        if (next[j] >= 0 && next[j] != static_cast<int>(j)) last = j + 1;
+    std::string out;
+    for (size_t j = 0; j < last; ++j) {
+        if (j > 0) out += ',';
+        if (next[j] >= 0 && next[j] != static_cast<int>(j)) out += std::to_string(next[j] + 1);
+    }
+    return out;
+}
+
+bool readThrowNext(const std::string& text, std::vector<int>* next) {
+    std::vector<int> out;
+    std::string item;
+    for (size_t i = 0; i <= text.size(); ++i) {
+        if (i == text.size() || text[i] == ',') {
+            if (item.empty()) {
+                out.push_back(-1);
+            } else {
+                for (const char c : item)
+                    if (c < '0' || c > '9') return false;
+                const int k = std::atoi(item.c_str());
+                if (k < 1 || k > kMaxJugglers) return false;
+                out.push_back(k - 1 == static_cast<int>(out.size()) ? -1 : k - 1);
+            }
+            item.clear();
+        } else {
+            item += text[i];
+        }
+    }
+    *next = out;
     return true;
 }

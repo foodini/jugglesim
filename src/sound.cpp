@@ -41,13 +41,9 @@ void putTag(std::vector<unsigned char>& out, const char* tag) {
     for (int i = 0; i < 4; ++i) out.push_back(static_cast<unsigned char>(tag[i]));
 }
 
-std::vector<unsigned char> makePlip() {
-    // 110 ms: a rising droplet, and a smaller one a major third higher just after it (which is
-    // what makes it sound happy rather than like a warning).
-    std::vector<double> samples(static_cast<size_t>(0.11 * kSampleRate), 0.0);
-    addDroplet(samples, {0.000, 700.0, 1500.0, 0.012, 0.018, 0.30});
-    addDroplet(samples, {0.040, 940.0, 1890.0, 0.010, 0.016, 0.20});
-    // The last few milliseconds fade to silence, so it ends without a click.
+// Samples (-1 to 1) as a 16-bit mono WAV file, the last few milliseconds faded to silence so it
+// ends without a click.
+std::vector<unsigned char> wavFrom(std::vector<double> samples) {
     const size_t fade = static_cast<size_t>(0.005 * kSampleRate);
     for (size_t i = 0; i < fade && i < samples.size(); ++i) samples[samples.size() - 1 - i] *= static_cast<double>(i) / fade;
 
@@ -73,9 +69,44 @@ std::vector<unsigned char> makePlip() {
     return wav;
 }
 
+std::vector<unsigned char> makePlip() {
+    // 110 ms: a rising droplet, and a smaller one a major third higher just after it (which is
+    // what makes it sound happy rather than like a warning).
+    std::vector<double> samples(static_cast<size_t>(0.11 * kSampleRate), 0.0);
+    addDroplet(samples, {0.000, 700.0, 1500.0, 0.012, 0.018, 0.30});
+    addDroplet(samples, {0.040, 940.0, 1890.0, 0.010, 0.016, 0.20});
+    return wavFrom(samples);
+}
+
+// A woodblock-like click: two inharmonic partials with a very fast decay, and a burst of noise
+// at the start for the attack.
+std::vector<unsigned char> makeTick(bool accent) {
+    const double length = accent ? 0.07 : 0.045;
+    const double pitch = accent ? 1750.0 : 1250.0;
+    const double level = accent ? 0.55 : 0.32;
+    const double decay = accent ? 0.012 : 0.008;
+    std::vector<double> samples(static_cast<size_t>(length * kSampleRate), 0.0);
+    uint32_t noise = 12345u;
+    for (size_t i = 0; i < samples.size(); ++i) {
+        const double t = static_cast<double>(i) / kSampleRate;
+        const double body = std::sin(kTwoPi * pitch * t) + 0.45 * std::sin(kTwoPi * pitch * 2.76 * t);
+        noise = noise * 1664525u + 1013904223u;
+        const double hiss = (static_cast<double>(noise >> 8) / 8388608.0 - 1.0) * std::exp(-t / 0.0015);
+        const double attack = std::min(1.0, t / 0.0005);
+        samples[i] = level * attack * (std::exp(-t / decay) * body / 1.45 + 0.35 * hiss);
+    }
+    return wavFrom(samples);
+}
+
 }  // namespace
 
 const std::vector<unsigned char>& plipWav() {
     static const std::vector<unsigned char> wav = makePlip();
     return wav;
+}
+
+const std::vector<unsigned char>& tickWav(bool accent) {
+    static const std::vector<unsigned char> tick = makeTick(false);
+    static const std::vector<unsigned char> accented = makeTick(true);
+    return accent ? accented : tick;
 }

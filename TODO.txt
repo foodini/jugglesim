@@ -1,30 +1,19 @@
-* When I drop a juggler on a spike, I'd like to be able to say how long he will stay there.
-  * A widget will pop up with a beat count entry box, clickables from 0-4, as well as the 4
-    most-recently used larger-than-4 loiters we've used so far in this pattern.
-  * THese will
-* BACKSPACING OVER A THROW IN THE SS EDITOR SHOULD TURN IT INTO A ?
-* DO NOT AUTOREFRAME THE CAMERA while the user is moving a juggler. 
-* I may need more than one spike mark in the same location, but with different facing directions.
-  * For example, in Havana, there are only 6 standing points, but each of the corners may face
-    at least 3 different directions.
-  * Clicking on them or dropping a juggler on them should bring up a disambiguation list, as well
-    as allowing you to click on the arrow to select which one.
+P0
+* If we make marks the only way to keyframe a juggler, we can have a parallel grid for movement
+
+P?
+* When a juggler is passing through a spike, smooth their motion. They shouldn't come to a
+  stop at all.
 * I need to be able to click on an arrow to select a spike.	
 * Clicing the arrow of spike marks doesn't work if you click on the stem instead of the arrowhead.
-* left-click shouldn't be moving the camera anymore. 
 * IT's hard to click on spikes. You have to be pixel-accurate on their outline.
+* left-click shouldn't be moving the camera anymore. 
 * I have a 24-beat pattern and have just assigned beat 4. There's a LOT of cruft drawing on the floor.
-* We need a syntax for repeated actcions in SS: I'd rather see ?{32} than ..........
 * Home and B have too-similar functions. Make ONE of them reset the camera to autoframe and the
   other send the playhead back to 1.
-
+* allow user to choose which error types to audio mute and which to allow.
 * Add "forward 1 beat" etc. to the scrubber. Make 1/12 beat ctrl arrows/
 * A collapsed ladder ought to be a single vertical line.
-* We'll need a fully free-flying camera. Right now, the camera's lookat is the center of
-  the present jugglers, but what if they're 30 feet away from some part of the timeline
-  that I want to edit - like I want to move a spike mark that they're not standing near.
-* I'm not entirely sure what I think of having the ladder scroll-animate. After some time
-  using it, I'll come to a conclusion, but I need to remember to think about it.
 * I'm occasionally seeing a pass line that intersects a beat/hand line as it crosses over
   it. We should think about how to avoid this without breaking the crossing-path info that
   we get - like when you do a 97531, the crossing point of the props illustrates that they
@@ -36,9 +25,9 @@
   beat1 when it fades? If so, we should do so in a way that doesn't appear to move the 
   entire ladder. Rather, the ladder should bump back by exactly the cycle length. The only
   thing you'd see on the sceen is the numbers suddenly changing.
-* Do a pass over "Recent." Should it move to the top level of File?
 * Add a trash icon next to a pattern in the menu to allow deletion? Ask for confirmation,
   of course.
+* save should probably get a proper dialogue.
 * DETECT PHYSICS COLLISIONS. If a pattern puts two clubs in the same place at the same time,
   like two pairs of jugglers trying to pass through a middle point, warn the user that the
   pattern may not be realistic? That specific example, if juggled perfectly, works. But,
@@ -46,17 +35,11 @@
   need to specify slop parameters.
 * When spin rates differ, have the Juggler pane call this out! In spins/beat so the bpm
   doesn't change this value.
-  * when paused, hovering over a club in the juggler pane will tell you it's spin rate.
   * hovering over a throw in the ladder will tell you it's spin rate.
 * Provide the option to set the # of spins for different heights. I'd make this pattern-
   global. So, ALL 8s in the pattern are 2s, for example.
 * Make animation of 1s more of a hand-across. The hands should nearly touch.
 
-* Text editor autocomplete. If I type "<x" in the text box, the editor should fill it out 
-  to "<x | ?>"
-
-* Allow the user to select two hands - any two hands - and have their ins/outs swap.
-  
   
 Easter eggs
 * A juggler with a continuously empty hand will have a chance to scratch his head, or ass.

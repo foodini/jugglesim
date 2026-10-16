@@ -17,7 +17,7 @@ can trace any point on a throw straight across to its beat number.
   right-click a juggler's number for *Same as* and *Unlink*. **L** dims linked jugglers' throws.
 - **Choreography keyframes** (where a juggler stands on a beat; see *Choreography* in
   [juggler.md](juggler.md)) are diamonds on the juggler's strip: drag one up or down to move it
-  to another beat, right-click it to delete it or to turn the long way round. With rotated repeats, the
+  to another beat, right-click it to delete it or to turn the long way round. With a walking loop, the
   keyframes past the beats written out are dim and can't be moved.
 - **Collapsing strips.** With several jugglers it gets busy. The small triangle button just
   left of a juggler's number collapses their strip to a narrow one (or expands it again); their
@@ -172,8 +172,9 @@ A **sketch** is a pattern with throws not decided yet, shown as **?** on the lad
 cells in the siteswap grid (and as `?` in siteswap text: `<3p 3p 3p ? ? ?|? ? ? ? ? ?>`). It's how you build a pattern up from nothing, the way you might
 on paper.
 
-- *File > New Pattern...* starts one: choose 1 to 6 jugglers and the period, and every throw is
-  a ?. If the pattern you have has changed since you loaded, saved or started it, you're asked
+- *File > New Pattern...* starts one: choose 1 to 6 jugglers and the period (and, if you like,
+  the **Walking** period: the choreography's own length, which starts it with spike marks under
+  everyone; 0 leaves the choreography for later), and every throw is a ?. If the pattern you have has changed since you loaded, saved or started it, you're asked
   first whether to save it (changes to tempo, dwell or distance alone don't count).
 - **Right-click a throw** for **Delete throw** (it becomes a ?) or **Delete path**, which does
   that to every throw on its path: the round a prop (or group of props) travels. Hovering over
@@ -356,6 +357,12 @@ above). Other programs won't read it.
 
 ### Editing in the grid
 
+**Rows are positions, not people.** With two or more jugglers, the throws' rows are named **T1**,
+**T2**, ... (a set of throws) and the choreography's **C1**, **C2**, ... (a walking path). Without
+loops, T2 and C2 are just J2's. The **next** column, beside the row names, hands the positions
+round after the period (see *The throwing loop* and *Choreography rows*), and while someone else
+is on a row its name says who, at the playhead: `C2 J3`. A solo pattern's row is just J1.
+
 The grid works like a spreadsheet. **Click a cell** (or a juggler's header, for their whole row,
 or a beat number, for the whole column) and the grid has the keyboard until you click somewhere
 else or press **Esc**. Meanwhile the single-key shortcuts (V, M, T, ...) are off, since throws
@@ -439,3 +446,76 @@ off the count as errors to fix by hand. On the ladder, the 3s between the count'
 be picked up (resting on one says why), and a held throw won't go anywhere that would change one
 (the tooltip says why). Adding or deleting beats goes a whole count at a time. The count
 is saved with the pattern (`count=4`), and *File > New Pattern...* can start with one.
+
+### The throwing loop
+
+A passing pattern's T rows have a **next** cell, beside the row name: **which T row whoever's on
+this one goes on to** after the period, from its beat 1. Blank (shown as the row's own number,
+dim) is its own: the pattern just repeats. `<3p2 3 3 3|3p1 3 3 3|3p4 3 3 3|3p3 3 3 3>` with T2's
+next `3` and T3's `2` has J2 and J3 swap throws every 4 beats. The loop goes round till everyone
+is back on their own row (twice here). A bar after the period's last beat marks where the copies
+start: past it, each row's throws again, dim (the rows are positions; the row names say who's on
+them at the playhead, and pointing at a copy says who makes that throw).
+
+What a throw does follows the people, not the parts:
+
+- **A self stays a self**: whoever throws it catches it, even across a hand-over.
+- **A pass goes to whoever is on its target's C row when it lands** (on the beat it's thrown
+  again; the catch is a dwell before that). Its target is worked out from the row it's written
+  in: T1's `3p+1` is C2, `3p2` is C2, whoever is on T1. Without a choreography, or with a walking
+  loop that keeps everyone on their own row (only turned), C2 is always J2. With the walking loop
+  handing the C rows round, a juggler who stays put passing to C2 passes to whoever is on it then:
+  in the example, with C2 and C3 also swapping every 4 beats, J1 passes to J2 one time and J3 the
+  next.
+
+So when the walking loop swaps C rows, the throwing loop usually swaps the same T rows: whoever
+walks C2 throws T2.
+
+- **Type a row's number** in a next cell (it takes it at once); **Backspace** or **Delete** puts
+  back its own. **Right-click** for buttons, T1 to Tn. Left arrow from a row's first beat goes
+  into it; Up and Down move between rows, Right goes back to beat 1.
+- **When it doesn't work** — two rows going on to the same row, or props that would land
+  together or not at all (a hand-over can do that: `<3 3 4 4p|4 4p 3 3>` with the two swapping
+  throws catches J1 two props for one beat, because the props in the air at the hand-over were
+  thrown for the other part) — the cells involved go red (in the next column, or the throws that
+  collide, on the row they're thrown from), it plips, the line under the grid says what's wrong,
+  and the stage stays as it last worked, tinted red round the edge. Patterns where every part has the same props coming in at
+  its beat 1 (all-3 patterns, for one) always work.
+- **The ladder shows the loop played out** too: what happens on every beat. Edits there go to the
+  beats written out; one in the copies is refused, and adding or deleting beats or linking
+  jugglers from the ladder waits till the next column is back to everyone's own (do those in the
+  grid).
+- It's saved with the pattern (`next=,3,2`: row numbers, blank for its own).
+
+### Choreography rows
+
+A pattern with a choreography (see *Choreography* in [juggler.md](juggler.md)) has a second set
+of rows under the throws, C1, C2, ..., in the same beat columns: in each, the **spike mark the
+path arrives on** that beat (its name, `05`, in the marks' pale yellow), blank while they walk,
+and a bar through the beats they stand still (a loiter). The columns run out to whichever is
+longer, the pattern or the choreography (its walking loop and all); a bar after the walking's
+last beat written out marks where its copies start, and past it each row's path shows again, dim.
+The **next** cell beside each C row's name says which C row whoever's on it goes on to after the
+beats written out, and the turn (see *The walking loop* in [juggler.md](juggler.md)). With a
+choreography, a count's columns aren't drawn narrow: keyframes can be on any beat.
+
+- **Click a cell** to go to that beat (paused), with that juggler selected, so the stage shows
+  it. Arrows, Tab, Home and End move the same way; Up from the top row goes into the throws, and
+  Down from the last throw row comes here.
+- **Type a mark's name** for a keyframe on that mark on that beat: two characters (`0b`), or
+  one and **Tab** (`5` Tab is `05`); one and Enter, an arrow or a click elsewhere takes it as
+  `05` too, then goes where that says. The cursor moves on a beat. A name no mark has is refused.
+  **~** turns the long way round on the way to the keyframe; **Backspace** or **Delete** clears
+  it.
+- **In the next column**, type which C row (`2`), and a turn if it's turned (`2r+1/4`, `r1/2`);
+  Enter, Tab or a move takes it, and **Backspace** on nothing or **Delete** puts back its own
+  path, unturned. **Right-click** for a builder. Left arrow from beat 1 goes into it; Right or
+  Tab goes back to beat 1.
+- **Right-click a cell** for **Insert a Beat Before / After** and **Delete Beat**: everyone's
+  walking gets a beat longer or shorter there (the keyframes after it move along, and the
+  Length with them).
+- A row that **walks like** another shows the leader's marks, dim, and its header says how
+  (`C2 @1[16] -1/6`: C1's walking 16 beats on, turned 1/6 of a circle clockwise). **Ctrl+click** a beat in
+  another juggler's row to make the cursor's juggler walk like them from that beat (as
+  Ctrl+click does for throws); right-click a row for **Walk Like...** and **Unlink**. A copy's
+  cells can't be typed into: edit the leader's row, or unlink.

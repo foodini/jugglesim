@@ -42,6 +42,10 @@ struct PatternSettings {
     // between); 0: none. Saved only when there is one.
     bool hasCount = false;
     int count = 0;
+    // The throwing loop: whose throws each juggler takes up after the period (the siteswap grid's
+    // next column; see throwNextText in loop_ops.h: "2,1"). "" for everyone their own.
+    bool hasThrowNext = false;
+    std::string throwNext;
 
     bool operator==(const PatternSettings& o) const {
         return hasProp == o.hasProp && prop == o.prop && hasTempo == o.hasTempo &&
@@ -49,6 +53,7 @@ struct PatternSettings {
                hasDistance == o.hasDistance && distance == o.distance &&
                hasChoreography == o.hasChoreography && choreography == o.choreography &&
                hasCamera == o.hasCamera && hasCount == o.hasCount && (!hasCount || count == o.count) &&
+               hasThrowNext == o.hasThrowNext && throwNext == o.throwNext &&
                (!hasCamera || std::equal(camera, camera + 5, o.camera));
     }
     bool operator!=(const PatternSettings& o) const { return !(*this == o); }

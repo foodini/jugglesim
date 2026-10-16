@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <set>
 #include <utility>
 #include <vector>
@@ -71,14 +73,19 @@ GridCell derivedCell(const Siteswap& parsed, int juggler, int beat) {
 
 }  // namespace
 
-float siteswapGridHeight(int jugglers) {
+// The gap between the throws' rows and the choreography's.
+float sectionGap() { return ImGui::GetTextLineHeight() * 0.6f; }
+
+float siteswapGridHeight(int jugglers, int choreoRows) {
     const ImGuiStyle& style = ImGui::GetStyle();
     return beatRowHeight() + kGap + static_cast<float>(std::max(1, jugglers)) * (cellHeight() + kGap) +
+           (choreoRows > 0 ? sectionGap() + static_cast<float>(choreoRows) * (cellHeight() + kGap) : 0.0f) +
            style.ScrollbarSize + style.ItemSpacing.y + ImGui::GetFrameHeight();
 }
 
 SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string& text, const Siteswap& parsed,
-                                    int countN, ColorVisionMode colorVision, double playBeat) {
+                                    int countN, ColorVisionMode colorVision, double playBeat, const ChoreoGridView& choreo,
+                                    const ThrowLoopGridView& throwLoop) {
     SiteswapGridResult res;
     ImGuiIO& io = ImGui::GetIO();
     ImGui::PushID("siteswapGrid");
@@ -103,11 +110,38 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         state.lastText = text;
     }
     const int rows = grid.jugglers();
+    // The choreography's rows (if there's a choreography), in the same columns: there are as
+    // many as the longer of the two needs; past its own end, each shows its repeat (dim).
+    const bool hasChoreo = choreo.active && choreo.full > 0 && choreo.written > 0 && !choreo.rows.empty();
+    const int choreoRows = hasChoreo ? static_cast<int>(choreo.rows.size()) : 0;
+    // The throwing loop: a next column after the period (passing patterns), and the loop played
+    // out past it.
+    const bool hasThrowNext = throwLoop.active && readable && rows > 1;
+    const int playedLen =
+        !throwLoop.played.empty() && throwLoop.played.jugglers == rows ? throwLoop.played.period : 0;
+    constexpr int kMaxColumns = 2048;  // (copies past this aren't shown)
+    const int columns = std::min(kMaxColumns, std::max({grid.period, hasChoreo ? choreo.full : 0, playedLen}));
+    if (!hasChoreo) state.inChoreo = false;
+    if (!hasThrowNext) state.inThrowNext = false;
+    // Row names: positions (T2: whose throws; C2: whose path) when there's more than one juggler.
+    auto tName = [&](int r) { return std::string(rows > 1 ? "T" : "J") + std::to_string(r + 1); };
+    auto cName = [&](int k) { return std::string(choreoRows > 1 ? "C" : "J") + std::to_string(k + 1); };
+    // Whose throws juggler r makes in column b (theirs, unless the throwing loop says otherwise).
+    auto partAt = [&](int r, int b) {
+        if (throwLoop.part.size() <= 1 || grid.period <= 0) return r;
+        const int phase = (b / grid.period) % static_cast<int>(throwLoop.part.size());
+        const std::vector<int>& parts = throwLoop.part[static_cast<size_t>(phase)];
+        return r < static_cast<int>(parts.size()) ? parts[static_cast<size_t>(r)] : r;
+    };
     auto clampCursor = [&]() {
         state.row = std::clamp(state.row, 0, rows - 1);
         state.beat = std::clamp(state.beat, 0, grid.period - 1);
         state.anchorRow = std::clamp(state.anchorRow, 0, rows - 1);
         state.anchorBeat = std::clamp(state.anchorBeat, 0, grid.period - 1);
+        if (hasChoreo) {
+            state.choreoRow = std::clamp(state.choreoRow, 0, choreoRows - 1);
+            state.choreoBeat = std::clamp(state.choreoBeat, 0, columns - 1);
+        }
     };
     clampCursor();
 
@@ -178,6 +212,7 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         showTyped();
     };
     auto moveTo = [&](int r, int b, bool extend) {
+        state.inThrowNext = false;
         state.row = r;
         state.beat = b;
         if (!extend) {
@@ -325,7 +360,7 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
             }
         for (int i = 0; i < clip.jugglers() && state.row + i < rows; ++i)
             if (grid.rows[static_cast<size_t>(state.row + i)].linked()) {
-                note("J" + std::to_string(state.row + i + 1) + " is a copy of another juggler: unlink them first.");
+                note(tName(state.row + i) + " is a copy of another row: unlink it first.");
                 return;
             }
         state.paste.active = true;
@@ -377,6 +412,107 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         emit(true);
     };
 
+    // ---- The choreography's rows: a mark's name typed into a cell is a keyframe on that beat.
+    auto choreoCell = [&](int k, int b) -> const ChoreoGridCell& {
+        const std::vector<ChoreoGridCell>& cells = choreo.rows[static_cast<size_t>(k)].cells;
+        static const ChoreoGridCell none;
+        if (cells.empty()) return none;
+        return cells[static_cast<size_t>(((b % static_cast<int>(cells.size())) + static_cast<int>(cells.size())) %
+                                          static_cast<int>(cells.size()))];
+    };
+    // Whether a cell can be edited here; if not, says why.
+    auto choreoEditable = [&](int k, int b, bool say) {
+        const ChoreoGridRow& row = choreo.rows[static_cast<size_t>(k)];
+        if (!row.link.empty()) {
+            if (say)
+                note(cName(k) + " walks like another row (" + row.link + "): edit the leader's row, or Unlink (right-click " +
+                     cName(k) + ").");
+            return false;
+        }
+        if (b >= choreo.written) {
+            if (say)
+                note("Beat " + std::to_string(b + 1) + " is " +
+                     (b < choreo.full ? std::string("the walking loop's copy") : std::string("the choreography coming round again")) +
+                     ": only beats 1-" + std::to_string(choreo.written) + " are written out (the next column, beside " + cName(k) +
+                     ", says what comes after).");
+            return false;
+        }
+        return true;
+    };
+    // The mark being typed, as a keyframe in the cursor's cell ("5" alone is "05"). False if
+    // there's no such mark (refused, with a plip).
+    auto choreoTake = [&]() {
+        std::string name = state.choreoTyped;
+        state.choreoTyped.clear();
+        if (name.empty()) return false;
+        if (state.inLoop) {  // the loop column: what was typed, as typed (the app reads it)
+            ChoreoEdit e;
+            e.kind = ChoreoEdit::Kind::Loop;
+            e.juggler = state.choreoRow;
+            e.mark = name;
+            res.choreoEdits.push_back(e);
+            return true;
+        }
+        if (name.size() == 1) name = "0" + name;
+        if (std::find(choreo.markNames.begin(), choreo.markNames.end(), name) == choreo.markNames.end()) {
+            note("No spike mark is called " + name + ".");
+            res.plip = true;
+            return false;
+        }
+        ChoreoEdit e;
+        e.kind = ChoreoEdit::Kind::Set;
+        e.juggler = state.choreoRow;
+        e.beat = state.choreoBeat;
+        e.mark = name;
+        res.choreoEdits.push_back(e);
+        return true;
+    };
+    // To a cell (anything half typed is taken first, where it was: "5" then an arrow is "05").
+    auto choreoGo = [&](int k, int b) {
+        if (!state.choreoTyped.empty() && state.inChoreo) choreoTake();
+        state.inThrowNext = false;
+        state.inChoreo = true;
+        state.inLoop = false;
+        state.choreoRow = k;
+        state.choreoBeat = b;
+        state.choreoTyped.clear();
+        state.scrollToCursor = true;
+        res.scrubBeat = static_cast<double>(b);
+        res.selectJuggler = k;
+    };
+    // To a juggler's loop cell (anything half typed taken first).
+    auto loopGo = [&](int k) {
+        if (!state.choreoTyped.empty() && state.inChoreo) choreoTake();
+        state.inThrowNext = false;
+        state.inChoreo = true;
+        state.inLoop = true;
+        state.choreoRow = k;
+        state.choreoTyped.clear();
+        state.scrollToCursor = true;
+    };
+    // The loop column back to the juggler's own part, unturned.
+    auto loopClear = [&]() {
+        ChoreoEdit e;
+        e.kind = ChoreoEdit::Kind::Loop;
+        e.juggler = state.choreoRow;
+        res.choreoEdits.push_back(e);
+    };
+    // The mark typed: a keyframe there, and on to the next beat.
+    auto choreoCommit = [&]() {
+        if (choreoTake() && state.choreoBeat + 1 < choreo.written) choreoGo(state.choreoRow, state.choreoBeat + 1);
+    };
+    auto choreoClear = [&]() {
+        if (!choreoEditable(state.choreoRow, state.choreoBeat, true)) {
+            res.plip = true;
+            return;
+        }
+        ChoreoEdit e;
+        e.kind = ChoreoEdit::Kind::Clear;
+        e.juggler = state.choreoRow;
+        e.beat = state.choreoBeat;
+        res.choreoEdits.push_back(e);
+    };
+
     // ---- Layout
     const float cellH = cellHeight();
     const float beatH = beatRowHeight();
@@ -384,21 +520,38 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
     const float narrowW = ImGui::CalcTextSize("3").x + 2.0f * kPadX;
     std::vector<std::string> headers;
     float headerW = 0.0f;
+    const float tagW = ImGui::CalcTextSize(" J6").x;  // (room for who's on a row, while a loop's on)
     for (int r = 0; r < rows; ++r) {
         const GridRow& row = grid.rows[static_cast<size_t>(r)];
-        std::string h = "J" + std::to_string(r + 1);
+        std::string h = tName(r);
         if (row.linked()) h += " " + row.link;
         if (row.options.find("LRswap") != std::string::npos) h += " LR";
         headers.push_back(h);
-        headerW = std::max(headerW, ImGui::CalcTextSize(h.c_str()).x + 2.0f * kPadX);
+        headerW = std::max(headerW, ImGui::CalcTextSize(h.c_str()).x + 2.0f * kPadX + (throwLoop.looping ? tagW : 0.0f));
     }
-    // Column widths: narrow for a count's filler beats (only ever a 3), else room for "3p+1".
-    std::vector<float> colX(static_cast<size_t>(grid.period) + 1, 0.0f), colW(static_cast<size_t>(grid.period), wideW);
+    std::vector<std::string> choreoHeaders;
+    for (int k = 0; k < choreoRows; ++k) {
+        const std::string& link = choreo.rows[static_cast<size_t>(k)].link;
+        const std::string h = cName(k) + (link.empty() ? std::string() : " " + link);
+        choreoHeaders.push_back(h);
+        headerW = std::max(headerW, ImGui::CalcTextSize(h.c_str()).x + 2.0f * kPadX + (choreo.looping ? tagW : 0.0f));
+    }
+    // Column widths: narrow for a count's filler beats (only ever a 3), else room for "3p+1". With
+    // a choreography, every column is wide (a keyframe can be on any beat).
+    std::vector<float> colX(static_cast<size_t>(columns) + 1, 0.0f), colW(static_cast<size_t>(columns), wideW);
+    // The next column (beside the row names, not scrolling): whose throws or path each row goes on
+    // to after the period or the walking's length. A bar after each one's last written beat marks
+    // where its copies start.
+    const bool hasNextColumn = hasThrowNext || hasChoreo;
+    const float loopW = hasNextColumn ? ImGui::CalcTextSize("4r+1/12").x + 2.0f * kPadX : 0.0f;
+    const int loopAt = hasChoreo ? std::clamp(choreo.written, 1, columns) : -1;
+    const int throwAt = std::clamp(grid.period, 1, columns);
     auto layoutColumns = [&]() {
-        colX.assign(static_cast<size_t>(grid.period) + 1, 0.0f);
-        colW.assign(static_cast<size_t>(grid.period), wideW);
-        for (int b = 0; b < grid.period; ++b) {
-            bool narrow = count.active() && !count.countBeat(b) && !(state.editing && state.beat == b);
+        colX.assign(static_cast<size_t>(columns) + 1, 0.0f);
+        colW.assign(static_cast<size_t>(columns), wideW);
+        for (int b = 0; b < columns; ++b) {
+            bool narrow = !hasChoreo && b < grid.period && count.active() && !count.countBeat(b) &&
+                          !(state.editing && state.beat == b);
             for (int r = 0; r < rows && narrow; ++r)
                 if (!grid.rows[static_cast<size_t>(r)].linked() && !isFillerCell(grid, r, b, count)) narrow = false;
             colW[static_cast<size_t>(b)] = narrow ? narrowW : wideW;
@@ -411,7 +564,9 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
     const float rightEdge = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
     const float rowsTop = beatH + kGap;
     auto rowY = [&](int r) { return rowsTop + static_cast<float>(r) * (cellH + kGap); };
-    const float gridH = rowY(rows);
+    const float choreoTop = rowY(rows) + sectionGap();
+    auto choreoRowY = [&](int k) { return choreoTop + static_cast<float>(k) * (cellH + kGap); };
+    const float gridH = hasChoreo ? choreoRowY(choreoRows) : rowY(rows);
     bool hoveredAny = false;
 
     // ---- Row headers (J1, J2 @1[1], ...): click selects the row; right-click, its menu.
@@ -426,6 +581,8 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
             commitEdit();
             state.focused = true;
+            state.inChoreo = false;
+            state.inThrowNext = false;
             state.anchorRow = state.row = r;
             state.anchorBeat = 0;
             state.beat = grid.period - 1;
@@ -438,13 +595,39 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         }
         if (hovered && r < static_cast<int>(parsed.form.links.size()) && parsed.form.linked(r)) {
             const PartLink& l = parsed.form.links[static_cast<size_t>(r)];
-            ImGui::SetTooltip("J%d: %s%s.\nRight-click for this juggler's menu.", r + 1,
+            ImGui::SetTooltip("%s: %s%s.\nRight-click for this row's menu.", tName(r).c_str(),
                               linkWords(l.to, l.start, parsed.loop.period).c_str(), l.lrSwap ? ", hands swapped" : "");
         }
     }
+    // ...and the choreography's (J1, J2 @1[16] -60°): click goes to the row; right-click, its menu.
+    for (int k = 0; k < choreoRows; ++k) {
+        ImGui::SetCursorScreenPos(ImVec2(origin.x, origin.y + choreoRowY(k)));
+        ImGui::PushID(1000 + k);
+        ImGui::InvisibleButton("##choreoHeader", ImVec2(std::max(1.0f, headerW), cellH),
+                               ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+        ImGui::PopID();
+        const bool hovered = ImGui::IsItemHovered();
+        hoveredAny = hoveredAny || hovered;
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+            commitEdit();
+            state.focused = true;
+            choreoGo(k, state.inChoreo ? state.choreoBeat : 0);
+        }
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+            commitEdit();
+            state.focused = true;
+            state.choreoMenuRow = k;
+            state.choreoMenuBeat = -1;
+            ImGui::OpenPopup("##choreoRowMenu");
+        }
+        if (hovered)
+            ImGui::SetTooltip("%s: a walking path, the spike mark it arrives on, beat by beat.\n"
+                              "Right-click for Walk Like... and Unlink.", cName(k).c_str());
+    }
 
     // ---- The cells (scrolling sideways when they don't fit).
-    const ImVec2 cellsTopLeft(origin.x + headerW + kGap, origin.y);
+    const float nextX = origin.x + headerW + kGap;  // (the next column)
+    const ImVec2 cellsTopLeft(nextX + (hasNextColumn ? loopW + kGap * 3.0f : 0.0f), origin.y);
     ImGui::SetCursorScreenPos(cellsTopLeft);
     const ImGuiStyle& style = ImGui::GetStyle();
     const float childW = std::max(1.0f, rightEdge - cellsTopLeft.x);
@@ -460,68 +643,281 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
     // The wheel scrolls sideways.
     if (ImGui::IsWindowHovered() && (io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f))
         ImGui::SetScrollX(ImGui::GetScrollX() - (io.MouseWheel + io.MouseWheelH) * wideW * 2.0f);
-    // The cell under the mouse (beat -1 for none; row -1 for the beat numbers).
-    int hoverRow = -2, hoverBeat = -1;
-    auto cellUnder = [&](ImVec2 at, int* r, int* b) {
+    // The cell under the mouse: beat -1 for none; row -1 for the beat numbers, 0... a juggler's
+    // throws, or kChoreoRow with *k the choreography row; -2 for the gap between.
+    constexpr int kChoreoRow = -3;
+    bool openChoreoMenu = false, openThrowNextMenu = false;
+    int hoverRow = -2, hoverBeat = -1, hoverChoreo = -1;
+    auto cellUnder = [&](ImVec2 at, int* r, int* b, int* k) {
         const float x = at.x - cellsOrigin.x, y = at.y - cellsOrigin.y;
         *b = -1;
-        for (int k = 0; k < grid.period; ++k)
-            if (x >= colX[static_cast<size_t>(k)] && x < colX[static_cast<size_t>(k) + 1]) *b = k;
-        *r = y < rowsTop ? -1 : std::min(rows - 1, static_cast<int>((y - rowsTop) / (cellH + kGap)));
+        *k = -1;
+        for (int c = 0; c < columns; ++c)
+            if (x >= colX[static_cast<size_t>(c)] && x < colX[static_cast<size_t>(c)] + colW[static_cast<size_t>(c)] + kGap) *b = c;
+        if (y < rowsTop) {
+            *r = -1;
+        } else if (!hasChoreo || y < rowY(rows)) {
+            *r = std::min(rows - 1, static_cast<int>((y - rowsTop) / (cellH + kGap)));
+        } else if (y < choreoTop) {
+            *r = -2;
+        } else {
+            *r = kChoreoRow;
+            *k = std::min(choreoRows - 1, static_cast<int>((y - choreoTop) / (cellH + kGap)));
+        }
     };
-    if (areaHovered) cellUnder(io.MousePos, &hoverRow, &hoverBeat);
+    if (areaHovered) cellUnder(io.MousePos, &hoverRow, &hoverBeat, &hoverChoreo);
+    // A throw's column past the pattern's end shows its repeat: that's the throw it is.
+    auto throwBeat = [&](int b) { return grid.period > 0 ? b % grid.period : 0; };
 
     // Mouse: click a cell (Shift+click: select to it), drag to select, Ctrl+click: make the
     // cursor's juggler a copy of the clicked one, from that beat. Click a beat number: its column.
-    if (areaHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hoverBeat >= 0) {
+    // In the choreography's rows: click a cell to go to its beat (paused, that juggler selected);
+    // Ctrl+click makes the cursor's juggler walk like the clicked one, from that beat.
+    // The loop column: click a juggler's cell to type there; right-click for its builder.
+    if (areaHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hoverBeat >= 0 && hoverRow != -2) {
         commitEdit();
         state.focused = true;
-        if (hoverRow == -1) {
+        if (hoverRow == kChoreoRow) {
+            if (io.KeyCtrl && state.inChoreo) {
+                if (hoverChoreo == state.choreoRow) {
+                    note("Ctrl+click a beat in another juggler's row: J" + std::to_string(state.choreoRow + 1) +
+                         " walks like them, from that beat on.");
+                } else {
+                    res.walkLinkJuggler = state.choreoRow;
+                    res.walkLinkLeader = hoverChoreo;
+                    res.walkLinkOffset = hoverBeat;
+                }
+            } else {
+                choreoGo(hoverChoreo, hoverBeat);
+            }
+        } else if (hoverRow == -1) {
+            state.inChoreo = false;
             state.anchorRow = 0;
             state.row = rows - 1;
-            state.anchorBeat = state.beat = hoverBeat;
+            state.anchorBeat = state.beat = throwBeat(hoverBeat);
         } else if (io.KeyCtrl) {
+            state.inChoreo = false;
             if (hoverRow == state.row) {
                 note("Ctrl+click a throw in another juggler's row: J" + std::to_string(state.row + 1) +
                      " becomes a copy of them, from that throw on.");
             } else if (rows > 1) {
                 res.linkJuggler = state.row;
                 res.linkTo = hoverRow;
-                res.linkStart = hoverBeat;
+                res.linkStart = throwBeat(hoverBeat);
             }
         } else {
-            moveTo(hoverRow, snapToCount(hoverRow, hoverBeat), io.KeyShift);
+            state.inChoreo = false;
+            // (A copy past the period: the throw it is, in the part being thrown then.)
+            moveTo(hoverRow, snapToCount(hoverRow, throwBeat(hoverBeat)), io.KeyShift);
+            if (hoverBeat >= grid.period) state.scrollToCursor = false;  // (a repeat: its throw, where it is)
             state.selecting = true;
         }
     }
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) state.selecting = false;
     if (state.selecting && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f)) {
-        int r = 0, b = -1;
-        cellUnder(io.MousePos, &r, &b);
+        int r = 0, b = -1, k = -1;
+        cellUnder(io.MousePos, &r, &b, &k);
         if (b < 0) b = io.MousePos.x < cellsOrigin.x ? 0 : grid.period - 1;
         r = std::clamp(r, 0, rows - 1);
         state.row = r;
-        state.beat = b;
+        state.beat = std::min(b, grid.period - 1);
     }
-    if (areaHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && hoverBeat >= 0) {
+    if (areaHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && hoverBeat >= 0 && hoverRow != -2) {
         commitEdit();
         state.focused = true;
-        const int r = std::max(0, hoverRow);
-        int r0, r1, b0, b1;
-        selection(&r0, &r1, &b0, &b1);
-        if (r < r0 || r > r1 || hoverBeat < b0 || hoverBeat > b1) moveTo(r, snapToCount(r, hoverBeat), false);
-        state.menuRow = r;
-        state.menuBeat = hoverBeat;
-        ImGui::OpenPopup("##cellMenu");
+        if (hoverRow == kChoreoRow) {
+            choreoGo(hoverChoreo, hoverBeat);
+            state.choreoMenuRow = hoverChoreo;
+            state.choreoMenuBeat = hoverBeat;
+            openChoreoMenu = true;  // (opened outside the scrolling cells, where its menu is)
+        } else {
+            state.inChoreo = false;
+            const int r = std::max(0, hoverRow);
+            const int tb = throwBeat(hoverBeat);
+            int r0, r1, b0, b1;
+            selection(&r0, &r1, &b0, &b1);
+            if (r < r0 || r > r1 || tb < b0 || tb > b1) moveTo(r, snapToCount(r, tb), false);
+            state.menuRow = r;
+            state.menuBeat = tb;
+            ImGui::OpenPopup("##cellMenu");
+        }
     }
     if (hoverRow >= 0 && hoverBeat >= 0) {
         res.hoverJuggler = hoverRow;
-        res.hoverBeat = hoverBeat;
+        res.hoverBeat = throwBeat(hoverBeat);
+        res.hoverColumn = hoverBeat;
     }
 
     // ---- Keys (while the grid has the keyboard, and no menu or dialog is up).
     const bool popupOpen = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
-    if (state.focused && !popupOpen) {
+    // In the choreography's rows: a mark's name (two characters, or one and Tab: "5" Tab is "05"),
+    // ~ to turn the long way round, Delete or Backspace to clear, arrows, Tab, Home and End.
+    // A step along a walking row: into the loop column after the beats written out, and out of it.
+    // (The next column is before beat 1, beside the row names.)
+    auto choreoStep = [&](int dir) {
+        if (state.inLoop) {
+            if (dir > 0) choreoGo(state.choreoRow, 0);
+            return;
+        }
+        if (dir < 0 && state.choreoBeat == 0) {
+            loopGo(state.choreoRow);
+            return;
+        }
+        const int b = state.choreoBeat + dir;
+        if (b >= 0 && b < columns) choreoGo(state.choreoRow, b);
+    };
+    // In the loop column: whose part the juggler takes up next, and how far turned: "2", "2r+1/4",
+    // "r1/2" (their own, turned); Enter, Tab or a move takes it; Backspace on nothing, or Delete,
+    // puts back their own part, unturned.
+    if (state.focused && !popupOpen && state.inChoreo && state.inLoop && hasChoreo) {
+        const bool ctrl = io.KeyCtrl, shift = io.KeyShift;
+        auto pressed = [](ImGuiKey key) { return ImGui::IsKeyPressed(key, true); };
+        if (!ctrl) {
+            for (const ImWchar wc : io.InputQueueCharacters) {
+                if (wc >= 128) continue;
+                const char c = static_cast<char>(std::tolower(static_cast<int>(wc)));
+                if ((c >= '0' && c <= '9') || c == 'r' || c == '+' || c == '-' || c == '/') state.choreoTyped += c;
+            }
+        }
+        if (pressed(ImGuiKey_Enter) || pressed(ImGuiKey_KeypadEnter)) choreoTake();
+        if (pressed(ImGuiKey_Tab)) {
+            choreoTake();
+            choreoStep(shift ? -1 : 1);
+        }
+        if (pressed(ImGuiKey_Escape)) {
+            if (!state.choreoTyped.empty())
+                state.choreoTyped.clear();
+            else
+                state.focused = false;
+        }
+        if (pressed(ImGuiKey_Backspace)) {
+            if (!state.choreoTyped.empty())
+                state.choreoTyped.pop_back();
+            else
+                loopClear();
+        }
+        if (pressed(ImGuiKey_Delete)) {
+            state.choreoTyped.clear();
+            loopClear();
+        }
+        if (!ctrl && (pressed(ImGuiKey_LeftArrow) || pressed(ImGuiKey_RightArrow)))
+            choreoStep(ImGui::IsKeyPressed(ImGuiKey_RightArrow, true) ? 1 : -1);
+        if (!ctrl && (pressed(ImGuiKey_UpArrow) || pressed(ImGuiKey_DownArrow))) {
+            const int k = state.choreoRow + (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) ? -1 : 1);
+            if (k >= 0 && k < choreoRows) loopGo(k);
+        }
+    } else if (state.focused && !popupOpen && state.inChoreo && hasChoreo) {
+        const bool ctrl = io.KeyCtrl, shift = io.KeyShift;
+        auto pressed = [](ImGuiKey key) { return ImGui::IsKeyPressed(key, true); };
+        if (!ctrl) {
+            for (const ImWchar wc : io.InputQueueCharacters) {
+                if (wc >= 128) continue;
+                const char c = static_cast<char>(std::tolower(static_cast<int>(wc)));
+                if (c == ' ') continue;  // (Space plays and pauses)
+                if (c == '~') {
+                    if (!choreoEditable(state.choreoRow, state.choreoBeat, true)) {
+                        res.plip = true;
+                    } else if (choreoCell(state.choreoRow, state.choreoBeat).text.empty()) {
+                        note("~ turns the long way round on the way to a keyframe: there isn't one on this beat.");
+                        res.plip = true;
+                    } else {
+                        ChoreoEdit e;
+                        e.kind = ChoreoEdit::Kind::LongTurn;
+                        e.juggler = state.choreoRow;
+                        e.beat = state.choreoBeat;
+                        res.choreoEdits.push_back(e);
+                    }
+                    continue;
+                }
+                const bool nameChar = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z');
+                if (!nameChar) continue;
+                if (!choreoEditable(state.choreoRow, state.choreoBeat, true)) {
+                    res.plip = true;
+                    continue;
+                }
+                state.choreoTyped += c;
+                if (state.choreoTyped.size() >= 2) choreoCommit();
+            }
+        }
+        const int lastWritten = std::max(0, choreo.written - 1);
+        if (pressed(ImGuiKey_Tab)) {
+            if (!state.choreoTyped.empty()) {
+                choreoCommit();
+            } else {
+                choreoStep(shift ? -1 : 1);
+            }
+        }
+        if (pressed(ImGuiKey_Enter) || pressed(ImGuiKey_KeypadEnter)) choreoCommit();
+        if (pressed(ImGuiKey_Escape)) {
+            if (!state.choreoTyped.empty())
+                state.choreoTyped.clear();
+            else
+                state.focused = false;
+        }
+        if (pressed(ImGuiKey_Backspace)) {
+            if (!state.choreoTyped.empty())
+                state.choreoTyped.pop_back();
+            else
+                choreoClear();
+        }
+        if (pressed(ImGuiKey_Delete)) {
+            state.choreoTyped.clear();
+            choreoClear();
+        }
+        if (!ctrl && (pressed(ImGuiKey_LeftArrow) || pressed(ImGuiKey_RightArrow))) {
+            // (A mark half typed is taken where it is first.)
+            if (!state.choreoTyped.empty()) choreoTake();
+            choreoStep(ImGui::IsKeyPressed(ImGuiKey_RightArrow, true) ? 1 : -1);
+        }
+        if (!ctrl && (pressed(ImGuiKey_UpArrow) || pressed(ImGuiKey_DownArrow))) {
+            const int k = state.choreoRow + (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) ? -1 : 1);
+            if (k >= 0 && k < choreoRows) {
+                choreoGo(k, state.choreoBeat);
+            } else if (k < 0) {  // up into the throws
+                if (!state.choreoTyped.empty()) choreoTake();
+                state.inChoreo = false;
+                moveTo(rows - 1, snapToCount(rows - 1, throwBeat(state.choreoBeat)), false);
+            }
+        }
+        if (pressed(ImGuiKey_Home)) choreoGo(state.choreoRow, 0);
+        if (pressed(ImGuiKey_End)) choreoGo(state.choreoRow, lastWritten);
+    } else if (state.focused && !popupOpen && state.inThrowNext) {
+        // The throws' next column: a juggler's number (whose throws they take up next), Backspace
+        // or Delete for their own; arrows, Tab and Enter move.
+        auto pressed = [](ImGuiKey key) { return ImGui::IsKeyPressed(key, true); };
+        auto setNext = [&](int part) { res.throwNextEdits.push_back({state.row, part == state.row ? -1 : part}); };
+        if (!io.KeyCtrl) {
+            for (const ImWchar wc : io.InputQueueCharacters) {
+                if (wc >= '1' && wc <= '9') {
+                    const int k = static_cast<int>(wc - '1');
+                    if (k < rows) {
+                        setNext(k);
+                    } else {
+                        note("There's no T" + std::to_string(k + 1) + ": a row's number, 1-" + std::to_string(rows) + ".");
+                        res.plip = true;
+                    }
+                } else if (wc != ' ' && wc < 128) {
+                    note("The next column takes a row's number: which T row whoever's on " + tName(state.row) +
+                         " goes on to after beat " + std::to_string(grid.period) + ".");
+                    res.plip = true;
+                }
+            }
+        }
+        if (pressed(ImGuiKey_Backspace) || pressed(ImGuiKey_Delete)) setNext(-1);
+        if (pressed(ImGuiKey_Escape)) state.focused = false;
+        if (pressed(ImGuiKey_UpArrow)) state.row = std::max(0, state.row - 1);
+        if (pressed(ImGuiKey_DownArrow) || pressed(ImGuiKey_Enter) || pressed(ImGuiKey_KeypadEnter) ||
+            (pressed(ImGuiKey_Tab) && !io.KeyShift))
+            state.row = std::min(rows - 1, state.row + 1);
+        if (pressed(ImGuiKey_Tab) && io.KeyShift) state.row = std::max(0, state.row - 1);
+        if (pressed(ImGuiKey_RightArrow) || pressed(ImGuiKey_End)) {
+            int r = 0, b = 0;
+            const bool end = ImGui::IsKeyPressed(ImGuiKey_End, true);
+            if (end ? previousEditable(state.row, grid.period, false, &r, &b) : nextEditable(state.row, -1, false, &r, &b))
+                moveTo(r, b, false);
+        }
+        state.scrollToCursor = state.scrollToCursor || pressed(ImGuiKey_UpArrow) || pressed(ImGuiKey_DownArrow);
+    } else if (state.focused && !popupOpen) {
         const bool ctrl = io.KeyCtrl, shift = io.KeyShift;
         // Typed characters: throws, "p", and a target's "+" or "-".
         if (!ctrl) {
@@ -566,9 +962,8 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
                         const int to = c - '0', from = state.row + 1;
                         int sr = 0, sb = 0;
                         source(state.row, state.beat, &sr, &sb);
-                        std::string why = "J" + std::to_string(from) + " copies J" + std::to_string(sr + 1) +
-                                          ", so a pass by number would go to J" + std::to_string(to) +
-                                          " from every copy: type it as + or - along";
+                        std::string why = tName(from - 1) + " copies " + tName(sr) + ", so a pass by number would go to C" +
+                                          std::to_string(to) + " from every copy: type it as + or - along";
                         if (to >= 1 && to <= rows && to != from)
                             why += " (" + typed + (to > from ? "+" : "-") + std::to_string(std::abs(to - from)) + " here)";
                         note(why + ".");
@@ -622,6 +1017,11 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
             if (right ? nextEditable(state.row, state.beat, false, &r, &b)
                       : previousEditable(state.row, state.beat, false, &r, &b)) {
                 moveTo(r, b, shift);
+            } else if (!right && !shift && hasThrowNext) {
+                state.inThrowNext = true;  // back into the next column, before beat 1
+                state.anchorRow = state.row;
+                state.anchorBeat = state.beat;
+                state.scrollToCursor = true;
             }
         }
         if (pressed(ImGuiKey_UpArrow) || pressed(ImGuiKey_DownArrow)) {
@@ -641,6 +1041,8 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
                 } else if (!why.empty()) {
                     note(why);
                 }
+            } else if (!ctrl && hasChoreo && !shift && delta < 0 && state.row == rows - 1) {
+                choreoGo(0, state.beat);  // down into the choreography's rows
             } else if (!ctrl) {
                 const int r = std::clamp(state.row - delta, 0, rows - 1);
                 moveTo(r, snapToCount(r, state.beat), shift);
@@ -705,9 +1107,13 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
     layoutColumns();  // (the edits may have changed the columns)
 
     // Keep the cursor's cell in view.
+    // (The next column doesn't scroll.)
+    if (state.scrollToCursor && ((state.inChoreo && state.inLoop) || state.inThrowNext)) state.scrollToCursor = false;
     if (state.scrollToCursor) {
         state.scrollToCursor = false;
-        const float x0 = colX[static_cast<size_t>(state.beat)], x1 = x0 + colW[static_cast<size_t>(state.beat)];
+        const int col = state.inChoreo ? state.choreoBeat : state.beat;
+        const float x0 = colX[static_cast<size_t>(col)];
+        const float x1 = x0 + colW[static_cast<size_t>(col)];
         const float scroll = ImGui::GetScrollX(), visible = ImGui::GetWindowWidth();
         if (x0 < scroll)
             ImGui::SetScrollX(x0);
@@ -736,12 +1142,16 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
     // The cursor's throw, wherever else it shows (its original and its copies): outlined.
     int cursorSourceRow = -1, cursorSourceBeat = -1;
     source(state.row, state.beat, &cursorSourceRow, &cursorSourceBeat);
+    // Throws of the loop played out that don't work (two landing together; a hand with nothing).
+    std::set<std::pair<int, int>> clashes;
+    for (const std::pair<int, int>& c : throwLoop.clash) clashes.insert({partAt(c.first, c.second), c.second});
+    const bool throwCursor = !state.inChoreo && !state.inThrowNext;
     const ImU32 twinCol = IM_COL32(120, 205, 255, 255);
-    const int nowBeat = grid.period > 0 ? static_cast<int>(std::floor(playBeat)) % grid.period : 0;
+    const int nowBeat = columns > 0 ? static_cast<int>(std::floor(playBeat)) % columns : 0;
     int r0, r1, b0, b1;
     selection(&r0, &r1, &b0, &b1);
     const bool rangeSelected = r0 != r1 || b0 != b1;
-    for (int b = 0; b < grid.period; ++b) {
+    for (int b = 0; b < columns; ++b) {
         const float x = cellsOrigin.x + colX[static_cast<size_t>(b)];
         const float w = colW[static_cast<size_t>(b)];
         // The beat number (count beats only, in a count), and a mark under the beat playing now.
@@ -754,34 +1164,40 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         if (b == nowBeat)
             draw->AddRectFilled(ImVec2(x, cellsOrigin.y + beatH - 1.0f), ImVec2(x + w, cellsOrigin.y + beatH + 1.0f),
                                 ImGui::GetColorU32(ImGuiCol_Text, 0.85f));
+        // Past the pattern's period (a longer choreography under it): the pattern's repeat, dim.
+        const bool repeat = b >= grid.period;
+        const int tb = throwBeat(b);
         for (int r = 0; r < rows; ++r) {
             const GridRow& row = grid.rows[static_cast<size_t>(r)];
             const ImVec2 a(x, cellsOrigin.y + rowY(r)), z(x + w, cellsOrigin.y + rowY(r) + cellH);
             const bool linked = row.linked();
-            int sr = r, sb = b;
-            const bool sourced = source(r, b, &sr, &sb);
-            // A copy shows the throw it copies, as written there (a copy keeps its form).
-            const GridCell cell = !linked ? row.cells[static_cast<size_t>(b)]
-                                          : (sourced ? cellAt(sr, sb) : derivedCell(parsed, r, b));
+            int sr = r, sb = tb;
+            const bool sourced = source(r, tb, &sr, &sb);
+            // A copy shows the throw it copies, as written there (a copy keeps its form). (Past the
+            // period, the row's throws again: the rows are positions; who's on one is in its name.)
+            const GridCell cell = !linked ? row.cells[static_cast<size_t>(tb)]
+                                          : (sourced ? cellAt(sr, sb) : derivedCell(parsed, r, tb));
+            const bool clash = playedLen > 0 && clashes.count({r, b % playedLen}) > 0;
             const bool filler = isFillerCell(grid, sr, sb, count);
-            const bool offCount = !linked && count.active() && !count.countBeat(b) && !filler;
-            const bool editingHere = state.editing && r == state.row && b == state.beat;
-            const bool error = !cell.blank() && (problems.count({sr, sb}) > 0 || offCount);
-            const bool twin = sourced && sr == cursorSourceRow && sb == cursorSourceBeat &&
-                              !(r == state.row && b == state.beat) && state.focused && !rangeSelected;
-            ImU32 bg = linked ? linkBg : frameBg;
-            ImU32 fg = filler || linked ? dimText : textCol;
+            const bool offCount = !linked && count.active() && !count.countBeat(tb) && !filler;
+            const bool cursorHere = !repeat && throwCursor && r == state.row && tb == state.beat;
+            const bool editingHere = state.editing && cursorHere;
+            const bool error = !cell.blank() && (problems.count({sr, sb}) > 0 || offCount || clash);
+            const bool twin = !repeat && sourced && sr == cursorSourceRow && sb == cursorSourceBeat && !cursorHere &&
+                              state.focused && throwCursor && !rangeSelected;
+            ImU32 bg = linked || repeat ? linkBg : frameBg;
+            ImU32 fg = filler || linked || repeat ? dimText : textCol;
             if (editingHere) {
                 bg = frameBg;
                 fg = textCol;
             } else if (cell.blank()) {
                 bg = blankBg;
-            } else if (error) {
+            } else if (error && (!repeat || clash)) {
                 bg = errorBg;
                 fg = IM_COL32(0, 0, 0, 255);
             }
             draw->AddRectFilled(a, z, bg);
-            if (rangeSelected && r >= r0 && r <= r1 && b >= b0 && b <= b1) draw->AddRectFilled(a, z, selectBg);
+            if (!repeat && throwCursor && rangeSelected && r >= r0 && r <= r1 && tb >= b0 && tb <= b1) draw->AddRectFilled(a, z, selectBg);
             const std::string shown = editingHere ? state.editText : cell.text();
             if (!shown.empty()) {
                 const ImVec2 size = ImGui::CalcTextSize(shown.c_str());
@@ -794,19 +1210,55 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
                 const float cx = a.x + w * 0.5f;
                 draw->AddLine(ImVec2(cx, a.y + 2.0f), ImVec2(cx, z.y - 2.0f), textCol, 1.0f);
             }
-            // A copy's mark: a small corner fold, top right.
-            if (linked)
-                draw->AddTriangleFilled(ImVec2(z.x - 6.0f, a.y), ImVec2(z.x, a.y), ImVec2(z.x, a.y + 6.0f),
-                                        ImGui::GetColorU32(ImGuiCol_Text, 0.55f));
             // The same throw as the cursor's (its original or another copy): outlined, with a
             // bar under it, so it reads without the color.
             if (twin) {
                 draw->AddRect(ImVec2(a.x - 1.0f, a.y - 1.0f), ImVec2(z.x + 1.0f, z.y + 1.0f), twinCol, 0.0f, 0, 1.5f);
                 draw->AddRectFilled(ImVec2(a.x + 2.0f, z.y - 3.0f), ImVec2(z.x - 2.0f, z.y - 1.0f), twinCol);
             }
-            if (r == state.row && b == state.beat)
+            if (cursorHere)
                 draw->AddRect(ImVec2(a.x - 1.0f, a.y - 1.0f), ImVec2(z.x + 1.0f, z.y + 1.0f),
                               state.focused ? textCol : dimText, 0.0f, 0, state.focused ? 2.0f : 1.0f);
+        }
+        // The choreography's rows: the mark each juggler arrives on (pale yellow, like the marks
+        // on the floor), a bar through a loiter, copies dim.
+        for (int k = 0; k < choreoRows; ++k) {
+            const ImVec2 a(x, cellsOrigin.y + choreoRowY(k)), z(x + w, cellsOrigin.y + choreoRowY(k) + cellH);
+            const ChoreoGridCell& cell = choreoCell(k, b);
+            const bool copy = cell.locked || b >= choreo.written;
+            const bool cursorHere = state.inChoreo && !state.inLoop && k == state.choreoRow && b == state.choreoBeat;
+            draw->AddRectFilled(a, z, copy ? linkBg : frameBg);
+            const ImU32 markCol = copy ? IM_COL32(236, 226, 150, 120) : IM_COL32(236, 226, 150, 255);
+            if (cell.stay)
+                draw->AddRectFilled(ImVec2(a.x - kGap, (a.y + z.y) * 0.5f - 1.5f), ImVec2(z.x, (a.y + z.y) * 0.5f + 1.5f), markCol);
+            const std::string shown = cursorHere && !state.choreoTyped.empty() ? state.choreoTyped : cell.text;
+            if (!shown.empty()) {
+                const ImVec2 size = ImGui::CalcTextSize(shown.c_str());
+                draw->AddText(ImVec2(a.x + (w - size.x) * 0.5f, a.y + (cellH - size.y) * 0.5f),
+                              cursorHere && !state.choreoTyped.empty() ? textCol : markCol, shown.c_str());
+            }
+            if (cursorHere && !state.choreoTyped.empty() && std::fmod(ImGui::GetTime(), 1.0) < 0.6) {
+                const float cx = a.x + (w + ImGui::CalcTextSize(shown.c_str()).x) * 0.5f + 1.0f;
+                draw->AddLine(ImVec2(cx, a.y + 2.0f), ImVec2(cx, z.y - 2.0f), textCol, 1.0f);
+            }
+            if (cursorHere)
+                draw->AddRect(ImVec2(a.x - 1.0f, a.y - 1.0f), ImVec2(z.x + 1.0f, z.y + 1.0f),
+                              state.focused ? textCol : dimText, 0.0f, 0, state.focused ? 2.0f : 1.0f);
+        }
+    }
+
+    // Bars after the throws' period and the walking's length: where their copies start.
+    {
+        const ImU32 barCol = ImGui::GetColorU32(ImGuiCol_Text, 0.55f);
+        if (throwAt < columns) {
+            const float x = cellsOrigin.x + colX[static_cast<size_t>(throwAt)] - kGap * 0.5f;
+            draw->AddRectFilled(ImVec2(x - 1.5f, cellsOrigin.y + rowY(0) - 1.0f), ImVec2(x + 1.5f, cellsOrigin.y + rowY(rows) - kGap + 1.0f),
+                                barCol);
+        }
+        if (loopAt >= 0 && loopAt < columns) {
+            const float x = cellsOrigin.x + colX[static_cast<size_t>(loopAt)] - kGap * 0.5f;
+            draw->AddRectFilled(ImVec2(x - 1.5f, cellsOrigin.y + choreoRowY(0) - 1.0f),
+                                ImVec2(x + 1.5f, cellsOrigin.y + choreoRowY(choreoRows) - kGap + 1.0f), barCol);
         }
     }
 
@@ -884,7 +1336,189 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
             draw2->AddText(ImVec2(a.x + kPadX, a.y + (cellH - ImGui::GetTextLineHeight()) * 0.5f),
                            ImGui::GetColorU32(grid.rows[static_cast<size_t>(r)].linked() ? ImGuiCol_TextDisabled : ImGuiCol_Text),
                            headers[static_cast<size_t>(r)].c_str());
+            // Who's on it now, if it's someone else.
+            const int who = r < static_cast<int>(throwLoop.who.size()) ? throwLoop.who[static_cast<size_t>(r)] : -1;
+            if (who >= 0) {
+                const std::string tag = "J" + std::to_string(who + 1);
+                draw2->AddText(ImVec2(z.x - kPadX - ImGui::CalcTextSize(tag.c_str()).x, a.y + (cellH - ImGui::GetTextLineHeight()) * 0.5f),
+                               ImGui::GetColorU32(ImGuiCol_TextDisabled), tag.c_str());
+            }
         }
+        // The choreography's: a thin line above them says what they are.
+        if (hasChoreo) {
+            const float y = origin.y + rowY(rows) + sectionGap() * 0.5f - kGap;
+            draw2->AddLine(ImVec2(origin.x, y), ImVec2(rightEdge, y), ImGui::GetColorU32(ImGuiCol_Separator), 1.0f);
+        }
+        for (int k = 0; k < choreoRows; ++k) {
+            const ImVec2 a(origin.x, origin.y + choreoRowY(k)), z(origin.x + headerW, origin.y + choreoRowY(k) + cellH);
+            const bool cursorRow = state.inChoreo && k == state.choreoRow;
+            draw2->AddRectFilled(a, z, ImGui::GetColorU32(cursorRow && state.focused ? ImGuiCol_Header : ImGuiCol_FrameBg, 0.8f));
+            const bool linked = !choreo.rows[static_cast<size_t>(k)].link.empty();
+            draw2->AddText(ImVec2(a.x + kPadX, a.y + (cellH - ImGui::GetTextLineHeight()) * 0.5f),
+                           linked ? ImGui::GetColorU32(ImGuiCol_TextDisabled) : IM_COL32(236, 226, 150, 255),
+                           choreoHeaders[static_cast<size_t>(k)].c_str());
+            const int who = k < static_cast<int>(choreo.who.size()) ? choreo.who[static_cast<size_t>(k)] : -1;
+            if (who >= 0) {
+                const std::string tag = "J" + std::to_string(who + 1);
+                draw2->AddText(ImVec2(z.x - kPadX - ImGui::CalcTextSize(tag.c_str()).x, a.y + (cellH - ImGui::GetTextLineHeight()) * 0.5f),
+                               ImGui::GetColorU32(ImGuiCol_TextDisabled), tag.c_str());
+            }
+        }
+    }
+
+    // ---- The next column, beside the row names: for each row, which row whoever's on it goes on
+    // to after the period (throws) or the walking's length (and how far turned); its own, dim.
+    // Red if it's part of a problem. Click to type there; right-click to choose (throws) or for a
+    // builder (walking).
+    if (hasNextColumn) {
+        ImDrawList* draw3 = ImGui::GetWindowDrawList();
+        const ImU32 frameBg = ImGui::GetColorU32(ImGuiCol_FrameBg);
+        const ImU32 textCol = ImGui::GetColorU32(ImGuiCol_Text);
+        const ImU32 dimText = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+        const ImU32 errorBg = errorCellColor(colorVision);
+        {
+            const char* head = "next";
+            const ImVec2 hs = ImGui::CalcTextSize(head);
+            draw3->AddText(ImVec2(nextX + (loopW - hs.x) * 0.5f, origin.y), dimText, head);
+        }
+        auto cellBox = [&](float y, const std::string& shown, bool own, bool bad, bool cursor, bool typing) {
+            const ImVec2 a(nextX, y), z(nextX + loopW, y + cellH);
+            draw3->AddRectFilled(a, z, bad && !typing ? errorBg : frameBg);
+            const ImU32 fg = bad && !typing ? IM_COL32(0, 0, 0, 255) : (own && !typing ? dimText : textCol);
+            const ImVec2 size = ImGui::CalcTextSize(shown.c_str());
+            draw3->AddText(ImVec2(a.x + (loopW - size.x) * 0.5f, a.y + (cellH - size.y) * 0.5f), fg, shown.c_str());
+            if (typing && std::fmod(ImGui::GetTime(), 1.0) < 0.6) {
+                const float cx = a.x + (loopW + size.x) * 0.5f + 1.0f;
+                draw3->AddLine(ImVec2(cx, a.y + 2.0f), ImVec2(cx, z.y - 2.0f), textCol, 1.0f);
+            }
+            if (cursor)
+                draw3->AddRect(ImVec2(a.x - 1.0f, a.y - 1.0f), ImVec2(z.x + 1.0f, z.y + 1.0f),
+                               state.focused ? textCol : dimText, 0.0f, 0, state.focused ? 2.0f : 1.0f);
+        };
+        // The throws'.
+        for (int r = 0; r < rows && hasThrowNext; ++r) {
+            const float y = origin.y + rowY(r);
+            ImGui::SetCursorScreenPos(ImVec2(nextX, y));
+            ImGui::PushID(2000 + r);
+            ImGui::InvisibleButton("##throwNext", ImVec2(loopW, cellH), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+            ImGui::PopID();
+            const bool hovered = ImGui::IsItemHovered();
+            hoveredAny = hoveredAny || hovered;
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left) || ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                commitEdit();
+                if (state.inChoreo && !state.choreoTyped.empty()) choreoTake();
+                state.focused = true;
+                state.inChoreo = false;
+                state.inThrowNext = true;
+                state.row = state.anchorRow = r;
+                state.anchorBeat = state.beat;
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                    state.throwNextMenuRow = r;
+                    openThrowNextMenu = true;
+                }
+            }
+            const std::string next = r < static_cast<int>(throwLoop.next.size()) ? throwLoop.next[static_cast<size_t>(r)] : "";
+            const bool bad = r < static_cast<int>(throwLoop.bad.size()) && throwLoop.bad[static_cast<size_t>(r)] != 0;
+            cellBox(y, next.empty() ? std::to_string(r + 1) : next, next.empty(), bad, state.inThrowNext && r == state.row, false);
+            if (hovered)
+                ImGui::SetTooltip("After beat %d, whoever's on %s goes on to T%s's throws (from its beat 1).\n"
+                                  "Type a row's number; Backspace for its own. Right-click to choose.\n"
+                                  "A pass goes to whoever is on its target's C row when it lands; a self stays a self.",
+                                  grid.period, tName(r).c_str(), next.empty() ? std::to_string(r + 1).c_str() : next.c_str());
+        }
+        // The walking's.
+        for (int k = 0; k < choreoRows; ++k) {
+            const float y = origin.y + choreoRowY(k);
+            ImGui::SetCursorScreenPos(ImVec2(nextX, y));
+            ImGui::PushID(3000 + k);
+            ImGui::InvisibleButton("##loopNext", ImVec2(loopW, cellH), ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+            ImGui::PopID();
+            const bool hovered = ImGui::IsItemHovered();
+            hoveredAny = hoveredAny || hovered;
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left) || ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                commitEdit();
+                state.focused = true;
+                loopGo(k);
+                if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) res.loopBuilderJuggler = k;
+            }
+            const ChoreoGridRow& row = choreo.rows[static_cast<size_t>(k)];
+            const bool cursorHere = state.inChoreo && state.inLoop && k == state.choreoRow;
+            const bool typing = cursorHere && !state.choreoTyped.empty();
+            cellBox(y, typing ? state.choreoTyped : (row.loop.empty() ? std::to_string(k + 1) : row.loop), row.loop.empty(),
+                    row.loopBad, cursorHere, typing);
+            if (hovered)
+                ImGui::SetTooltip("After beat %d, whoever's on %s goes on to the C row named here, from its beat 1:\n"
+                                  "type which (2: C2), and a turn if it's turned (2r+1/4: a quarter turn counterclockwise;\n"
+                                  "r1/2: its own path, a half turn). Right-click for a builder.%s%s",
+                                  choreo.written, cName(k).c_str(), choreo.loopProblem.empty() ? "" : "\n\nProblem: ",
+                                  choreo.loopProblem.c_str());
+        }
+    }
+
+    // ---- A juggler's walking menu (the choreography's rows).
+    // ---- The throws' next column: whose throws a juggler takes up after the period.
+    if (openThrowNextMenu) ImGui::OpenPopup("##throwNextMenu");
+    if (ImGui::BeginPopup("##throwNextMenu")) {
+        const int r = state.throwNextMenuRow;
+        ImGui::TextDisabled("After beat %d, whoever's on %s goes on to:", grid.period, tName(r).c_str());
+        const int current = r < static_cast<int>(throwLoop.next.size()) && !throwLoop.next[static_cast<size_t>(r)].empty()
+                                ? std::atoi(throwLoop.next[static_cast<size_t>(r)].c_str()) - 1
+                                : r;
+        for (int k = 0; k < rows; ++k) {
+            if (k > 0) ImGui::SameLine();
+            char label[24];
+            std::snprintf(label, sizeof(label), k == r ? "T%d (own)" : "T%d", k + 1);
+            const bool chosen = k == current;
+            if (chosen) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            if (ImGui::Button(label)) {
+                res.throwNextEdits.push_back({r, k == r ? -1 : k});
+                ImGui::CloseCurrentPopup();
+            }
+            if (chosen) ImGui::PopStyleColor();
+        }
+        ImGui::EndPopup();
+    }
+    if (openChoreoMenu) ImGui::OpenPopup("##choreoRowMenu");
+    if (ImGui::BeginPopup("##choreoRowMenu")) {
+        const int k = state.choreoMenuRow;
+        ImGui::TextDisabled("%s's walking", cName(k).c_str());
+        ImGui::Separator();
+        if (ImGui::MenuItem("Walk Like...")) res.walkLikeJuggler = k;
+        const bool linked = k < choreoRows && !choreo.rows[static_cast<size_t>(k)].link.empty();
+        if (ImGui::MenuItem("Unlink (write the walking out)", nullptr, false, linked)) res.walkUnlinkJuggler = k;
+        if (ImGui::MenuItem("Clear This Keyframe", "Delete", false,
+                            state.inChoreo && !state.inLoop && k == state.choreoRow && !choreoCell(k, state.choreoBeat).text.empty() &&
+                                choreoEditable(k, state.choreoBeat, false)))
+            choreoClear();
+        // Beats of the walking (everyone's): the keyframes after move along.
+        const int b = state.choreoMenuBeat;
+        if (b >= 0) {
+            ImGui::Separator();
+            if (ImGui::MenuItem(("Insert a Beat Before " + std::to_string(b + 1)).c_str(), nullptr, false, b <= choreo.written)) {
+                ChoreoEdit e;
+                e.kind = ChoreoEdit::Kind::InsertBeat;
+                e.beat = b;
+                res.choreoEdits.push_back(e);
+            }
+            if (ImGui::MenuItem(("Insert a Beat After " + std::to_string(b + 1)).c_str(), nullptr, false, b < choreo.written)) {
+                ChoreoEdit e;
+                e.kind = ChoreoEdit::Kind::InsertBeat;
+                e.beat = b + 1;
+                res.choreoEdits.push_back(e);
+            }
+            if (ImGui::MenuItem(("Delete Beat " + std::to_string(b + 1)).c_str(), nullptr, false,
+                                b < choreo.written && choreo.written > 1)) {
+                ChoreoEdit e;
+                e.kind = ChoreoEdit::Kind::DeleteBeat;
+                e.beat = b;
+                res.choreoEdits.push_back(e);
+            }
+            if (b >= choreo.written && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Beat %d is a copy (the loop): only beats 1-%d are written out.", b + 1, choreo.written);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && b < choreo.written)
+                ImGui::SetTooltip("Everyone's walking: their keyframes on this beat go, and the later ones move up.");
+        }
+        ImGui::EndPopup();
     }
 
     // ---- A juggler's menu.
@@ -905,7 +1539,7 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
             changedBy(addJuggler(&grid, r + 1, count, &why));
             state.row = state.anchorRow = r + 1;
         }
-        if (ImGui::MenuItem(("Remove J" + std::to_string(r + 1)).c_str(), nullptr, false, rows > 1))
+        if (ImGui::MenuItem(("Remove " + tName(r) + " (and a juggler)").c_str(), nullptr, false, rows > 1))
             changedBy(removeJuggler(&grid, r, &why));
         if (rows > 1) {
             ImGui::Separator();
@@ -916,7 +1550,7 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
             const bool canLink = !loop.empty() && loop.jugglers == rows;
             if (ImGui::BeginMenu("Same as", canLink)) {
                 for (int to = 0; to < rows; ++to) {
-                    if (to == r || !ImGui::BeginMenu(("J" + std::to_string(to + 1)).c_str())) continue;
+                    if (to == r || !ImGui::BeginMenu(tName(to).c_str())) continue;
                     for (int d = 0; d < loop.period; ++d) {
                         PatternForm newForm;
                         JugglingLoop newLoop;
@@ -1083,13 +1717,36 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
     if (state.focused && !hoveredAny && !anyPopup &&
         (ImGui::IsMouseClicked(ImGuiMouseButton_Left) || ImGui::IsMouseClicked(ImGuiMouseButton_Right))) {
         commitEdit();
+        if (state.inChoreo && !state.choreoTyped.empty()) choreoTake();
         state.focused = false;
     }
 
     // Where the cursor is, for the status line.
-    if (state.focused) {
+    if (state.focused && state.inThrowNext && hasThrowNext) {
+        const int r = state.row;
+        const std::string next = r < static_cast<int>(throwLoop.next.size()) ? throwLoop.next[static_cast<size_t>(r)] : "";
+        res.readout = tName(r) + " after beat " + std::to_string(grid.period) + ": " +
+                      (next.empty() ? std::string("its own throws again") : "on to T" + next + "'s throws");
+    } else if (state.focused && state.inChoreo && state.inLoop && hasChoreo) {
+        const int k = state.choreoRow;
+        const std::string& loop = choreo.rows[static_cast<size_t>(k)].loop;
+        res.readout = cName(k) + " after beat " + std::to_string(choreo.written) + ": " +
+                      (loop.empty() ? std::string("its own path again") : "on to " + loop);
+    } else if (state.focused && state.inChoreo && hasChoreo) {
+        const int k = state.choreoRow, b = state.choreoBeat;
+        std::string out = cName(k) + "'s walking, beat " + std::to_string(b + 1) + " [" + std::to_string(b) + "]";
+        const ChoreoGridCell& cell = choreoCell(k, b);
+        if (!cell.text.empty())
+            out += ": arrives on mark " + cell.text.substr(0, 2) + (cell.text.size() > 2 ? ", the long way round" : "");
+        else if (cell.stay)
+            out += ": standing still";
+        else
+            out += ": walking";
+        if (cell.locked || b >= choreo.written) out += " (a copy)";
+        res.readout = out;
+    } else if (state.focused) {
         const int r = state.row, b = state.beat;
-        std::string out = rows > 1 ? "J" + std::to_string(r + 1) + ", " : std::string();
+        std::string out = rows > 1 ? tName(r) + ", " : std::string();
         out += "beat " + std::to_string(b + 1);
         if (rows > 1) out += " [" + std::to_string(b) + "]";  // (as a link to it would say: "@1[4]")
         const JugglingLoop& loop = parsed.loop;

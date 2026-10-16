@@ -15,6 +15,7 @@ The bar along the bottom of the juggler pane has the transport controls:
 | play / pause | **Space** | Starts or stops the animation |
 | step forward | **Right** (**Shift+Right**: a whole beat) | Pauses and steps forward 1/12 of a beat |
 | Slow | **S** | Slow motion on or off, at the speed beside it (0.05 to 0.5 of normal) |
+| (Playback menu) | **A** | Metronome on or off: a tick as each beat starts while playing, a stronger one on the first beat of each count (with a count directive, `4-count`), or of the pattern without one. Silent while paused, stepping or scrubbing. Remembered between runs. |
 
 The same commands are in the **Playback** menu. While the siteswap grid has the keyboard, only
 Space works (the other keys are its).
@@ -62,8 +63,9 @@ high 7 pulls the camera far back.
 To look around:
 
 - **Right-drag** in the juggler pane to orbit: left and right swing around the juggler, up and
-  down tilt to look from above or below. A left-drag that starts on empty space does the same.
-  (On a Mac trackpad, a two-finger click is a right-click: press with two fingers and drag.)
+  down tilt to look from above or below. **Alt+left-drag** (Option on a Mac) does the same, which
+  is easier on a trackpad. A plain left-drag never moves the camera: the left button is for
+  selecting and moving jugglers and spike marks.
   While you orbit, a white **reticle** shows what you're orbiting about: a ring with a cross on
   the floor and, if the point is above the floor, a small cross there with a line down to the
   ring.
@@ -171,7 +173,7 @@ Jugglers can walk and turn while they juggle. Where they stand is set with **spi
 on a stage floor) and **keyframes**. This is the first stage; see the design notes
 ([multi_juggler.md](design/multi_juggler.md)) for what's coming.
 
-- **View > Choreography** (**M**, for Movement and spike Marks) shows the spike marks: a ring on the floor, numbered (in a bubble past the arrow's tip), with an
+- **View > Choreography** (**M**, for Movement and spike Marks) shows the spike marks: a ring on the floor, named (in a bubble past the arrow's tip), with an
   arrow for the way someone standing on it faces (in pale yellow). The first time, there's one
   under each juggler, where the formation puts them, so nothing moves until you change something.
   The marks, the paths (below) and the camera's reticle lie on the floor, so the jugglers hide
@@ -194,20 +196,29 @@ on a stage floor) and **keyframes**. This is the first stage; see the design not
   the middle. The radial grid can also make every few spokes heavier (**Mid spokes**): only counts
   that divide the spokes evenly are offered, so with 12 spokes, every 2, 3, 4 or 6.
 
-  The grid is a setting of JuggleSim, not part of the pattern, and changing it never moves
-  anything already placed.
-- **Spike marks:** drag a mark's ring to move it (snapping to the grid; **Shift**: freely), and its
-  arrow to turn it (in 15-degree steps; **Shift**: freely). Right-click a mark to make it
-  **Face the Middle**, to **Delete** it, or to **Add Another Spike Mark Here** (on the same spot:
-  turn it by its arrow); right-click the floor to **Add a Spike Mark** there. Where several marks
-  share a spot, putting a juggler there lights up their arrows and numbers: click the one they
-  stand on (**Esc** keeps the one they're on).
+  The grid is saved with the choreography (so it's the pattern's): loading a pattern puts its
+  grid back as you left it, and undo undoes a change to it. Changing it never moves anything
+  already placed. Patterns saved before the grid was kept leave whatever grid is in use.
+- **Spike marks:** drag anywhere inside a mark's ring to move it (snapping to the grid; **Shift**:
+  freely), and its arrow (anywhere along it, or near its tip) to turn it (in 15-degree steps; **Shift**: freely; with the radial grid, the steps are
+  counted from facing the middle, so one of them always points along the mark's spoke). Right-click a mark to make it
+  **Face the Middle**, to **Rename** it, to **Delete** it, or to **Add Another Spike Mark Here**
+  (on the same spot: turn it by its arrow); right-click the floor to **Add a Spike Mark** there.
+  A mark comes before the path points drawn on it; someone standing on it is picked only where
+  the mouse is squarely on their body. Where several marks share a spot, putting a juggler there lights up their arrows and names:
+  click the one they stand on (**Esc** keeps the one they're on).
+- **Mark names** are two characters, each 0-9 or a-z. New marks are named in order, counting in
+  base 36 (`01` ... `09`, `0a` ... `0z`, `10`, ...); **Rename** gives one any name no other mark
+  has. A mark keeps its name when others are added or deleted. Only a mark nobody stands on can be
+  deleted: if someone does, the line under the siteswap grid says who (move them first).
 - **Keyframes** say where a juggler is on a beat. Pause on the beat first (the transport bar,
   or click the beat's number on the ladder), then either:
   - **drag the juggler** to where they should be: dropped on a mark, they stand on it, facing as
     it says; anywhere else, they stand there (snapped to the grid; **Shift**: freely) facing as
-    they were; or
+    they were, and a new mark is made there for them (every keyframe is on a mark); or
   - **select the juggler** and **click a mark** (its ring, if someone's standing on it).
+  - or, from the keyboard, type the mark's name in the juggler's **choreography row** under the
+    siteswap grid's throws (see *Choreography rows* in [ladder.md](ladder.md)).
 
   Either way, a small popup then asks how long they **loiter** there: click **0** to **4**, one
   of the lengths already used nearest this point in the choreography (shown after them), or
@@ -227,20 +238,36 @@ on a stage floor) and **keyframes**. This is the first stage; see the design not
   multiple of the other (a 3-beat siteswap with an 8-beat walk, say), a warning in the top-left
   of the juggler pane says how long it takes them to line up again (24 beats). **Dismiss** it if
   that's what you meant; it comes back only if something changes and it applies again.
-- **Rotated repeats** (*Repeat* in the Choreography panel), for patterns that go round the
-  floor in turns, like Havana: block out one stretch and have it come round again turned about
-  the middle of the floor. *As is* (the default) just repeats it; a turn repeats it with
-  everyone turned that much further each time, till they're back where they started: **+60°**,
-  **+72°**, **+90°** or **+120° (CCW)**, counterclockwise seen from above (so with +90°, J1
-  starts the next time round where J4 started); **180°**; or **-120°** to **-60° (CW)**,
-  clockwise. The panel shows the whole: "96 x 3 = 288 beats in all". Only the beats written
-  out (1 to *Length*) are edited: the keyframes in the repeats are those, turned, shown on the
-  ladder as dim diamonds that can't be moved, and only the real spike marks are on the floor.
-  Placing a juggler or moving a keyframe into a repeat says so instead, and a loiter can't run
-  past the end of the beats written out. Paths and walk links run over the whole thing.
+- **The walking loop** (the **next** cells beside the walking rows' names, C1, C2, ..., under the
+  siteswap grid; see *Choreography rows* in [ladder.md](ladder.md)): what happens after the beats
+  written out. The walking rows are paths, not people: each row's cell names which path whoever's
+  on it goes on to, from its beat 1, and a turn about the middle of the floor: `2` (C2's path),
+  `2r+1/4` (C2's path, a quarter turn counterclockwise seen from above), `r1/2` (its own path, a
+  half turn). The turn is a fraction of a circle, kept as you typed it (3/9 isn't made 1/3).
+  Blank (shown as the row's own number, dim) is its own path, unturned: the choreography just
+  repeats. **Right-click** a next cell for a builder that writes it for you. The loop goes round
+  till everyone is back on their own row, unturned: with every row going on to itself turned 1/4,
+  four times; with C1 going on to C2, C2 to C3 and C3 to C1, three times (J1 walks C2 the second
+  time round, C3 the third; the row names say who's on each at the playhead: `C2 J1`). Turns can
+  differ from row to row, so one juggler can stay put while others braid. The Choreography panel shows the whole: "24 x 3 = 72 beats in all". The walk at the end
+  of the beats written out heads for where the juggler's next row starts, not back to their own
+  start. Only the beats written out (1 to *Length*) are edited: the rest are copies, dim on the
+  ladder and in the grid, and only the real spike marks are on the floor. Placing a juggler or
+  moving a keyframe into a copy says so instead, and a loiter can't run past the end of the beats
+  written out. Paths and walk links run over the whole loop.
+- **A next column that doesn't work** (two rows going on to the same row, so they'd collide, and
+  nothing going on to another) is allowed while you fix it: the cells involved go red, it
+  plips, the line under the siteswap grid says what's wrong, and the stage stays as it last
+  worked, tinted red round the edge, so you can still see where everyone is. (Swapping two
+  rows goes red for a moment between the two edits.)
+- **Passes follow paths.** A pass to 2 goes to whoever is on C2 when it lands (and a self stays
+  with whoever throws it), so once the walking loop hands the C rows round, a juggler standing
+  still keeps passing to whoever is in front of them. The throws' own **next** column says which
+  T row whoever's on each one throws after the throw period: see *The throwing loop* in
+  [ladder.md](ladder.md).
 - **On the ladder,** keyframes are diamonds on the juggler's strip, and a white line down the
   strip joins two where the juggler loiters between them (walking and turning aren't drawn).
-  *View > Keyframe Marks* (**K**) labels each diamond on a spike mark with the mark ("M3").
+  *View > Keyframe Marks* (**K**) labels each diamond on a spike mark with the mark's name ("03").
   **Drag** a diamond up or down to
   move it to another beat; **right-click** it to delete it, or to have the juggler **Turn the Long
   Way Round** on the way to it (through more than half a turn). **Ctrl+drag** a diamond to make a
@@ -250,18 +277,18 @@ on a stage floor) and **keyframes**. This is the first stage; see the design not
 - **Walk links:** to block out one juggler and have others copy them, right-click another
   juggler (their number on the ladder, or them on the stage) and choose **Walk Like...**. Pick the
   **leader**, an **offset** in beats (J2 does on each beat what the leader does that many beats
-  later; the 1/2, 1/3 and 1/4 buttons are those fractions of the choreography's length, rotated
-  repeats and all), and a **turn** about the middle of the floor, the same choices as for
-  rotated repeats (+: counterclockwise seen from above, -: clockwise). With rotated repeats, an
-  offset into a repeat is also shown the short way ("= the leader 2 beats later, rotated a
-  further +90° (CCW)"). Changes show as you make them, and before that, holding
-  the mouse over a choice (a leader, the offset's - and + or a fraction button, a turn in the
-  list) shows a glowing ghost of the juggler where it would put them on this beat, with the path
+  later; the 1/2, 1/3 and 1/4 buttons are those fractions of the choreography's length, its
+  walking loop and all), and a **turn** about the middle of the floor (a direction, then a
+  fraction). With a walking loop, an offset past the beats written out also says whose part
+  the leader is walking then ("= J3's part 2 beats later, turned 1/4 CCW (90°)"). Changes show as you make them, and before that, holding
+  the mouse over a choice (a leader, the offset's - and + or a fraction button, the turn's
+  direction or its - and +) shows a glowing ghost of the juggler where it would put them on this beat, with the path
   they'd walk; the ghost shows through anyone in front of it. A follower's diamonds on the
   ladder are the leader's, moved round (dim, not editable), and their strip says which leader
-  (`walks like J1 +24, +90° (CCW)`). Followers can follow followers. Linking a juggler who has keyframes deletes
+  (`walks like J1 +24, 1/4 CCW`). Followers can follow followers. Linking a juggler who has keyframes deletes
   them (it asks first); **Unlink** writes the follower's walking out as their own keyframes, so
-  nothing moves.
+  nothing moves (on the marks already there, and new marks where the turn puts them somewhere
+  there isn't one).
 - **Paths:** each juggler with keyframes has their path drawn on the floor: where they walk over
   the whole cycle, back to the start. There's a point for every beat, with an arrow the way they
   face then (so you can see them turn as they go) and the beat's number; beats they stand still

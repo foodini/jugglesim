@@ -111,6 +111,7 @@ struct LadderKeyframe {
     std::string where;  // for its tooltip: "mark 3", "a free spot"
     bool longTurn = false;  // turns the long way round on the way to it
     int mark = -1;          // the spike mark it's on (from 0), or -1: a free spot
+    std::string markName;   // ...its name ("0a"), shown beside it with showKeyframeMarks
     int stayBeats = 0;      // >0: the juggler stays put (same spot, same facing) this many beats,
                             // until their next keyframe (a loiter)
     bool derived = false;   // a leader's keyframe, moved round by a walk link (shown dim, not edited)
@@ -119,7 +120,7 @@ struct LadderKeyframe {
 // How to draw the ladder (things owned by the rest of the app).
 struct LadderViewOptions {
     bool showValues = false;    // label every throw with its value ("3", "4p")
-    bool showKeyframeMarks = false;  // label keyframes on spike marks with the mark ("M3")
+    bool showKeyframeMarks = false;  // label keyframes on spike marks with the mark's name ("03")
     // Walk links (choreography), per juggler: what their strip says ("walks like J1 +24, +90° (CCW)"),
     // empty if none; and whether a juggler's menu offers Walk Like... at all.
     std::vector<std::string> walkLabels;
@@ -136,6 +137,10 @@ struct LadderViewOptions {
     // A count directive ("4-count", from the siteswap grid; 0: none). The 3s between its beats
     // are locked: washed grey, and no edit may change them.
     int countN = 0;
+    // The throwing loop (the grid's next column) is on: the ladder shows the loop played out, and
+    // this is the period written out (0: off). Adding or deleting beats and linking jugglers are off
+    // meanwhile (they'd apply to the loop played out, not what's written).
+    int writtenPeriod = 0;
     bool dimLinked = false;  // draw linked jugglers' throws muted, so the parts written out stand out
     // Choreography keyframes, drawn at every repeat of the choreography's cycle.
     std::vector<LadderKeyframe> keyframes;

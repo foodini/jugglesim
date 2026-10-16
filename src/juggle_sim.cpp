@@ -209,7 +209,14 @@ public:
         // With a choreography the jugglers move: where they are depends on the time. Otherwise
         // they stand still, in the default formation.
         cycle_ = choreographyCycle(loop, params);
-        if (cycle_ > 0 && params.choreography) cycle_ = choreographyFullCycle(*params.choreography, cycle_);  // (rotated repeats too)
+        if (cycle_ > 0 && params.choreography) {
+            // Everyone's keyframes over the whole loop, worked out once (placement() is asked
+            // thousands of times).
+            const Choreography& c = *params.choreography;
+            walkScale_ = c.reference > 0.0 ? static_cast<float>(passingDistance(loop, params) / c.reference) : 1.0f;
+            for (int k = 0; k < jugglers_; ++k) walkKeys_.push_back(effectiveKeyframes(c, k, cycle_));
+            cycle_ = choreographyFullCycle(c, cycle_);  // (the walking loop too)
+        }
         moving_ = cycle_ > 0;
         for (int k = 0; k < jugglers_; ++k) {
             Vec3 position;
@@ -252,8 +259,14 @@ public:
         if (!moving_) return placements_[static_cast<size_t>(j)];
         Vec3 position;
         float yaw = 0.0f;
-        jugglerPlacementAt(loop_, params_, j, t, &position, &yaw);
-        return makePlacement(position, yaw);
+        const Choreography& c = *params_.choreography;
+        if (placementFromKeyframes(c, walkKeys_[static_cast<size_t>(j)], cycle_, t, walkScale_, &position, &yaw))
+            return makePlacement(position, yaw);
+        if (j < static_cast<int>(c.marks.size())) {  // on their own mark
+            const SpikeMark& m = c.marks[static_cast<size_t>(j)];
+            return makePlacement(Vec3(m.x * walkScale_, 0.0f, m.z * walkScale_), m.yaw);
+        }
+        return placements_[static_cast<size_t>(j)];
     }
     // How fast j is walking at beat t (world, m/s).
     Vec3 walkVelocity(int j, double t) const {
@@ -807,6 +820,8 @@ private:
     std::vector<Placement> placements_;  // standing still: where each juggler is
     bool moving_ = false;                 // a choreography moves them
     int cycle_ = 0;                       // ...repeating every cycle_ beats
+    std::vector<std::vector<Keyframe>> walkKeys_;  // ...by these keyframes (each juggler's)
+    float walkScale_ = 1.0f;                       // ...scaled by this
     std::vector<float> turnTo_;  // [j * jugglers + other]: how far j's hands turn toward other
     struct ThrowInfo {
         int value = 0;

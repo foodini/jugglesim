@@ -129,3 +129,66 @@ bool rethrowFrom(const JugglingLoop& loop, Slot from, Slot landing, JugglingLoop
 
 // The throw drawing from `from` to `target` would make (for tooltips), if it's writable.
 bool drawnThrowFor(Slot from, Slot target, LoopThrow* t);
+
+// ---- The throwing loop (the siteswap grid's "next" column)
+//
+// After the period, each juggler can take up another juggler's throws (their part), from its
+// beat 1; and so on round, till everyone's back on their own part. What's thrown follows the
+// people, not the parts: a self stays with whoever throws it, and a pass written to J2 (or worked
+// out from "+1" against the part being thrown) goes to whoever is walking J2's path when it
+// lands (on the beat it's thrown again; see WalkPaths). Without a choreography's walking loop,
+// paths are people, so a pass to J2 goes to J2.
+
+// next[r]: the row (T1 = 0) whoever's on row r goes on to after the period (-1, or missing: its
+// own). Juggler j starts on row j, so the rows they're on are j, next[j], next[next[j]], ...
+struct ThrowLoopPlan {
+    static constexpr int kMaxPhases = 64;
+    bool valid = true;
+    std::string problem;          // why not ("T2 and T3 both go on to T1; nothing goes on to T4")
+    std::vector<int> bad;         // the jugglers whose next is part of the problem
+    int phases = 1;               // times round the period till everyone's back on their own
+    std::vector<std::vector<int>> part;  // [phase][juggler]: whose throws they make then
+};
+ThrowLoopPlan throwLoopPlan(const std::vector<int>& next, int jugglers);
+
+// The choreography's walking loop, as paths: path[phase][juggler] is whose path juggler walks
+// in that phase, each phase `cycle` beats. Empty (or everyone on their own): paths are people.
+struct WalkPaths {
+    int cycle = 0;
+    std::vector<std::vector<int>> path;
+    bool trivial() const;
+    // Who walks path `d` on `beat` (any beat).
+    int walker(int d, int beat) const;
+    // Whose path juggler `j` walks on `beat`.
+    int pathOf(int j, int beat) const;
+};
+
+// The longest the throwing and walking loops may take to come round together.
+constexpr int kMaxPlayedBeats = 5040;
+
+// What's thrown, beat by beat, once the loops are worked out.
+struct PlayedLoop {
+    JugglingLoop loop;     // every juggler, beat by beat (the written loop itself if nothing loops)
+    bool expanded = false; // ...different from the written loop (it has copies to show)
+    int period = 0;        // the written loop's period
+    std::vector<std::vector<int>> part;  // the plan's parts: [phase][juggler]
+    bool ok = true;
+    std::string problem;   // what goes wrong ("J1 catches two props on beat 12; ...")
+    // The throws a problem is about, {juggler, beat in loop}: two landing together, and a hand
+    // with nothing to throw.
+    std::vector<std::pair<int, int>> clash;
+    // Whose part juggler j throws on `beat` (any beat).
+    int partAt(int juggler, int beat) const;
+};
+// The written loop played with `plan` (valid) and `paths`. A sketch is played as written.
+PlayedLoop playedLoop(const JugglingLoop& written, const ThrowLoopPlan& plan, const WalkPaths& paths);
+
+// An edit made to a played loop (on the ladder) put back into the written loop: false, with the
+// reason, if it changed anything past the written period (the loop's copies), or the period.
+bool writtenFromPlayed(const PlayedLoop& before, const JugglingLoop& written, const JugglingLoop& edited,
+                       const WalkPaths& paths, JugglingLoop* out, std::string* why);
+
+// The next column as text, as saved ("2,1,,3": juggler numbers, blank for their own; "" if
+// everyone's on their own), and back. False if it isn't that.
+std::string throwNextText(const std::vector<int>& next);
+bool readThrowNext(const std::string& text, std::vector<int>* next);

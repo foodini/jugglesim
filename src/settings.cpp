@@ -105,6 +105,8 @@ AppSettings loadSettings() {
             settings.pathBeatNumbers = value == "on";
         } else if (key == "sounds") {
             settings.sounds = value == "on";
+        } else if (key == "metronome") {
+            settings.metronome = value == "on";
         } else if (key == "throw_values") {
             settings.showThrowValues = value == "on";
         } else if (key == "ladder_width") {
@@ -149,6 +151,7 @@ bool saveSettings(const AppSettings& settings) {
     out << "keyframe_marks = " << (settings.showKeyframeMarks ? "on" : "off") << "\n";
     out << "path_beat_numbers = " << (settings.pathBeatNumbers ? "on" : "off") << "\n";
     out << "sounds = " << (settings.sounds ? "on" : "off") << "\n";
+    out << "metronome = " << (settings.metronome ? "on" : "off") << "\n";
     out << "linked_jugglers = " << (settings.dimLinked ? "dim" : "normal") << "\n";
     out << "slow_motion = " << settings.slowRate << "\n";
     out << "ladder_width = " << settings.ladderFraction << "\n";

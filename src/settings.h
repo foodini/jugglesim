@@ -20,9 +20,11 @@ struct AppSettings {
     bool dimLinked = false;            // mute linked jugglers' throws on the ladder
     bool pathBeatNumbers = true;       // choreography: number every beat along the paths
     bool sounds = true;                // the plip when something is refused (see sound.h)
+    bool metronome = false;            // a tick on every beat while playing (A)
     bool showKeyframeMarks = false;    // the ladder's keyframes labeled with their spike mark (K)
-    // Choreography: the floor grid spike marks (and keyframe spots) snap to. Not part of any
-    // pattern: changing it never moves anything.
+    // Choreography: the floor grid spike marks (and keyframe spots) snap to: the one in use, which
+    // the choreography also keeps (Choreography::grid), so a pattern brings its own back.
+    // Changing it never moves anything.
     FloorGridType floorGrid = FloorGridType::None;
     float gridSpacing = 0.5f;          // m between lines (square, triangles) or rings (radial), 0.25..2
     int gridSpokes = 8;                // radial: spokes, 3..32

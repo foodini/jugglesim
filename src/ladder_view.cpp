@@ -1342,12 +1342,11 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
         }
     }
     // Choreography keyframes: hollow diamonds (outlined dark and light, so they show on any
-    // throw color), filled while hovered; with showKeyframeMarks, "M3" beside one on a mark.
+    // throw color), filled while hovered; with showKeyframeMarks, the mark's name ("03") beside one on a mark.
     for (const KeyMarker& m : keyMarkers) {
         const LadderKeyframe& key = options.keyframes[static_cast<size_t>(m.index)];
-        if (options.showKeyframeMarks && key.mark >= 0) {
-            char label[12];
-            std::snprintf(label, sizeof(label), "M%d", key.mark + 1);
+        if (options.showKeyframeMarks && key.mark >= 0 && !key.markName.empty()) {
+            const char* label = key.markName.c_str();
             const ImVec2 at(m.at.x + keyRadius + fontSize * 0.25f, m.at.y - fontSize * 0.5f);
             dl->AddText(ImVec2(at.x + 1.0f, at.y + 1.0f), IM_COL32(0, 0, 0, 200), label);
             dl->AddText(at, IM_COL32(236, 226, 150, 255), label);  // the spike marks' pale yellow
@@ -1692,7 +1691,7 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
             // Same as...: another juggler, starting from one of their beats. Starts that leave the
             // pattern with an error are marked (it may take more than one link to come right).
             const PatternForm emptyForm;
-            if (ImGui::BeginMenu("Same as", jugglers > 1)) {
+            if (ImGui::BeginMenu("Same as", jugglers > 1 && options.writtenPeriod == 0)) {
                 for (int k = 0; k < jugglers; ++k) {
                     if (k == j) continue;
                     char label[16];
@@ -1745,8 +1744,9 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
             auto insertItem = [&](const char* label, int before, int count) {
                 JugglingLoop changed;
                 std::string why;
-                const bool ok = !(form && form->hasLinks()) && insertBeats(loop, before, count, &changed, &why);
+                const bool ok = !(form && form->hasLinks()) && options.writtenPeriod == 0 && insertBeats(loop, before, count, &changed, &why);
                 if (form && form->hasLinks()) why = "not with linked jugglers yet. Unlink them first (right-click a juggler's number).";
+                if (options.writtenPeriod > 0) why = "not while the throwing loop is on (add or delete beats in the siteswap grid).";
                 if (ImGui::MenuItem(label, nullptr, false, ok)) {
                     result.committed = true;
                     result.loop = changed;
@@ -1767,8 +1767,9 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
                 JugglingLoop changed;
                 std::string why;
                 int removed = 0;
-                const bool ok = !(form && form->hasLinks()) && deleteBeats(loop, first, count, &changed, &why, &removed);
+                const bool ok = !(form && form->hasLinks()) && options.writtenPeriod == 0 && deleteBeats(loop, first, count, &changed, &why, &removed);
                 if (form && form->hasLinks()) why = "not with linked jugglers yet. Unlink them first (right-click a juggler's number).";
+                if (options.writtenPeriod > 0) why = "not while the throwing loop is on (add or delete beats in the siteswap grid).";
                 if (ImGui::MenuItem(label, nullptr, false, ok)) {
                     result.committed = true;
                     result.loop = changed;
