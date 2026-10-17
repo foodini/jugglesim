@@ -748,6 +748,18 @@ struct Rgba {
     float r, g, b, a;
 };
 Rgba rgb255(int r, int g, int b) { return Rgba{r / 255.0f, g / 255.0f, b / 255.0f, 1.0f}; }
+
+// The colour each group of spike marks is drawn in (with its dash pattern and number too, so it
+// doesn't rest on colour alone).
+Rgba markGroupColor(int g) {
+    static const Rgba kColors[Choreography::kMarkGroups] = {
+        rgb255(86, 150, 230),  rgb255(242, 142, 43),  rgb255(225, 87, 89),   rgb255(118, 200, 190), rgb255(110, 190, 90),
+        rgb255(200, 120, 220), rgb255(255, 157, 167), rgb255(190, 150, 110), rgb255(160, 200, 255), rgb255(210, 210, 210)};
+    return kColors[((g % Choreography::kMarkGroups) + Choreography::kMarkGroups) % Choreography::kMarkGroups];
+}
+// A group's key: 1-9, and 0 for the tenth.
+char markGroupKey(int g) { return g == 9 ? '0' : static_cast<char>('1' + g); }
+
 const Rgba kOverlayEdge{0.08f, 0.08f, 0.09f, 0.85f};  // the dark edge round light lines
 const Rgba kMarkColor = rgb255(236, 226, 150);        // spike marks: pale yellow, solid
 const Rgba kPathSelected = rgb255(90, 210, 255);      // the selected juggler's path: bright cyan, dashed
@@ -945,38 +957,54 @@ void buildSpikeMarks(OverlayBuilder& overlay, const Choreography& c, float scale
     }
 }
 
-// Where each spike mark's number bubble goes on screen: just past the tip of its arrow, pushed
-// apart where bubbles would overlap (marks in the same place). shown[i] false: off screen.
+// Where each spike mark's number bubble goes on screen: on the mark's middle (so it's never
+// nearer another mark than its own); where bubbles would overlap (marks in the same place, or
+// close), each moves out along its own arrow just far enough to clear the others (apart along
+// the line between them, if two arrows point the same way). shown[i] false: off screen.
+// (`extraH`: room under each bubble for its group badges, while they're shown.)
 std::vector<ImVec2> markBubbleCenters(const Choreography& c, float scale, const Mat4& viewProj, ImVec2 rectMin,
-                                      ImVec2 rectSize, std::vector<bool>* shown) {
+                                      ImVec2 rectSize, std::vector<bool>* shown, float extraH = 0.0f) {
     const size_t n = c.marks.size();
-    std::vector<ImVec2> at(n);
+    std::vector<ImVec2> at(n), along(n, ImVec2(1.0f, 0.0f));
     shown->assign(n, false);
     for (size_t i = 0; i < n; ++i) {
         Vec3 middle, tip;
         markGeometry(c.marks[i], scale, &middle, &tip);
-        const Vec3 beyond = tip + (tip - middle) * (0.16f / std::max(1e-3f, length(tip - middle)));
-        ImVec2 p;
-        if (projectToScreen(viewProj, beyond, rectMin, rectSize, &p)) {
+        ImVec2 p, t;
+        if (projectToScreen(viewProj, middle, rectMin, rectSize, &p)) {
             at[i] = p;
             (*shown)[i] = true;
+            if (projectToScreen(viewProj, tip, rectMin, rectSize, &t)) {
+                const float len = std::hypot(t.x - p.x, t.y - p.y);
+                if (len > 0.5f) along[i] = ImVec2((t.x - p.x) / len, (t.y - p.y) / len);
+            }
         }
     }
     const float em = ImGui::GetFontSize();
-    const float w = em * 1.9f, h = em * 1.25f;  // about a bubble's size
-    for (int round = 0; round < 10; ++round) {
+    const float w = em * 1.9f, h = em * 1.25f + extraH;  // about a bubble's size
+    for (int round = 0; round < 40; ++round) {
         bool moved = false;
         for (size_t i = 0; i < n; ++i)
             for (size_t k = i + 1; k < n; ++k) {
                 if (!(*shown)[i] || !(*shown)[k]) continue;
                 const float dx = at[k].x - at[i].x, dy = at[k].y - at[i].y;
                 if (std::fabs(dx) >= w || std::fabs(dy) >= h) continue;
-                // Apart along the line between them (sideways if they're on top of each other).
-                const float len = std::hypot(dx, dy);
-                const float ux = len > 0.5f ? dx / len : 1.0f, uy = len > 0.5f ? dy / len : 0.0f;
-                const float need = 0.5f * (std::fabs(ux) * w + std::fabs(uy) * h) - 0.5f * len + 1.0f;
-                at[i] = ImVec2(at[i].x - ux * need, at[i].y - uy * need);
-                at[k] = ImVec2(at[k].x + ux * need, at[k].y + uy * need);
+                const float same = along[i].x * along[k].x + along[i].y * along[k].y;
+                if (same > 0.8f) {
+                    // Pointing the same way: apart along the line between them (sideways if
+                    // they're on top of each other).
+                    const float len = std::hypot(dx, dy);
+                    const float ux = len > 0.5f ? dx / len : -along[i].y, uy = len > 0.5f ? dy / len : along[i].x;
+                    const float need = 0.5f * (std::fabs(ux) * w + std::fabs(uy) * h) - 0.5f * len + 1.0f;
+                    at[i] = ImVec2(at[i].x - ux * need, at[i].y - uy * need);
+                    at[k] = ImVec2(at[k].x + ux * need, at[k].y + uy * need);
+                } else {
+                    // Each a little further out along its own arrow (small steps, so they stop
+                    // as soon as they're clear).
+                    const float step = em * 0.15f;
+                    at[i] = ImVec2(at[i].x + along[i].x * step, at[i].y + along[i].y * step);
+                    at[k] = ImVec2(at[k].x + along[k].x * step, at[k].y + along[k].y * step);
+                }
                 moved = true;
             }
         if (!moved) break;
@@ -984,29 +1012,153 @@ std::vector<ImVec2> markBubbleCenters(const Choreography& c, float scale, const 
     return at;
 }
 
-// The spike marks' numbers, in bubbles past their arrows' tips (hidden behind bodies, unless
-// highlighted).
+// The spike mark whose name bubble is under `mouse` (the one drawn last, if they overlap), or -1.
+int markLabelUnder(const Choreography& c, float scale, const Mat4& viewProj, ImVec2 rectMin, ImVec2 rectSize,
+                   ImVec2 mouse, float extraH = 0.0f) {
+    std::vector<bool> shown;
+    const std::vector<ImVec2> at = markBubbleCenters(c, scale, viewProj, rectMin, rectSize, &shown, extraH);
+    const float em = ImGui::GetFontSize();
+    int found = -1;
+    for (size_t i = 0; i < c.marks.size(); ++i) {
+        if (!shown[i]) continue;
+        const ImVec2 ts = ImGui::CalcTextSize(c.marks[i].name.c_str());
+        const float halfW = std::max(ts.x * 0.5f + em * 0.35f, ts.y * 0.5f + em * 0.1f);
+        const float halfH = ts.y * 0.5f + em * 0.1f;
+        if (std::fabs(mouse.x - at[i].x) <= halfW && std::fabs(mouse.y - at[i].y) <= halfH) found = static_cast<int>(i);
+    }
+    return found;
+}
+
+// What's shown of the groups of spike marks: badges under every name (one column per group, up
+// to the highest there is: "1 3 5"), and the groups whose marks are joined up by lines.
+struct MarkGroupView {
+    int slots = 0;                 // badge columns (0: no badges)
+    std::vector<int> lines;        // the groups drawn
+    float badgeH() const { return slots > 0 ? ImGui::GetTextLineHeight() + 2.0f : 0.0f; }
+};
+
+// A line from a to b, dashed in the group's pattern (solid, long dashes, short dashes, dots, dash
+// and dot), with a dark edge.
+void groupLine(ImDrawList* dl, ImVec2 a, ImVec2 b, ImU32 col, int g) {
+    static const float kPatterns[5][4] = {{1.0f, 0.0f, 0.0f, 0.0f}, {14.0f, 6.0f, 0.0f, 0.0f}, {6.0f, 5.0f, 0.0f, 0.0f},
+                                          {2.0f, 5.0f, 0.0f, 0.0f}, {12.0f, 4.0f, 2.0f, 4.0f}};
+    const float* pat = kPatterns[g % 5];
+    const float len = std::hypot(b.x - a.x, b.y - a.y);
+    if (len < 1.0f) return;
+    const ImVec2 u((b.x - a.x) / len, (b.y - a.y) / len);
+    auto seg = [&](float t0, float t1) {
+        const ImVec2 p(a.x + u.x * t0, a.y + u.y * t0), q(a.x + u.x * t1, a.y + u.y * t1);
+        dl->AddLine(p, q, IM_COL32(10, 10, 14, 200), 5.0f);
+        dl->AddLine(p, q, col, 2.5f);
+    };
+    if (pat[1] == 0.0f) {
+        seg(0.0f, len);
+        return;
+    }
+    float t = 0.0f;
+    for (int k = 0; t < len; k = (k + 2) % 4) {
+        if (pat[k] == 0.0f) k = 0;
+        seg(t, std::min(len, t + pat[k]));
+        t += pat[k] + pat[k + 1];
+    }
+}
+
+// The spike marks' numbers, in bubbles on their middles (see markBubbleCenters). Behind a body,
+// they're dimmed to half, still readable (unless highlighted: then as usual). With `groups`: the
+// groups' lines first (each group's marks joined, mark to nearest mark, between their names, so
+// marks on one spot are told apart), and the badges under the names.
 void drawSpikeMarkNumbers(ImDrawList* dl, const Choreography& c, float scale, const Mat4& viewProj, ImVec2 rectMin,
-                          ImVec2 rectSize, const BodyOccluder& bodies, const std::vector<int>& highlighted) {
+                          ImVec2 rectSize, const BodyOccluder& bodies, const std::vector<int>& highlighted,
+                          const MarkGroupView& groups) {
     dl->PushClipRect(rectMin, ImVec2(rectMin.x + rectSize.x, rectMin.y + rectSize.y), true);
     std::vector<bool> shown;
-    const std::vector<ImVec2> at = markBubbleCenters(c, scale, viewProj, rectMin, rectSize, &shown);
+    const std::vector<ImVec2> at = markBubbleCenters(c, scale, viewProj, rectMin, rectSize, &shown, groups.badgeH());
     const float em = ImGui::GetFontSize();
+    // The groups' lines: each group's marks joined by the shortest lines that connect them all,
+    // with the group's key in a disc on its longest line (or beside a lone mark).
+    for (const int g : groups.lines) {
+        std::vector<int> members;
+        for (const int m : c.group(g))
+            if (m >= 0 && m < static_cast<int>(c.marks.size()) && shown[static_cast<size_t>(m)]) members.push_back(m);
+        if (members.empty()) continue;
+        const Rgba rgba = markGroupColor(g);
+        const ImU32 col = toImU32(rgba);
+        ImVec2 tagAt(at[static_cast<size_t>(members[0])].x + em * 1.6f, at[static_cast<size_t>(members[0])].y - em * 0.9f);
+        float longest = -1.0f;
+        std::vector<char> joined(members.size(), 0);
+        joined[0] = 1;
+        for (size_t added = 1; added < members.size(); ++added) {
+            float best = 1e30f;
+            size_t from = 0, to = 0;
+            for (size_t i = 0; i < members.size(); ++i) {
+                if (!joined[i]) continue;
+                for (size_t k = 0; k < members.size(); ++k) {
+                    if (joined[k]) continue;
+                    const ImVec2 p = at[static_cast<size_t>(members[i])], q = at[static_cast<size_t>(members[k])];
+                    const float d = std::hypot(q.x - p.x, q.y - p.y);
+                    if (d < best) {
+                        best = d;
+                        from = i;
+                        to = k;
+                    }
+                }
+            }
+            joined[to] = 1;
+            const ImVec2 p = at[static_cast<size_t>(members[from])], q = at[static_cast<size_t>(members[to])];
+            groupLine(dl, p, q, col, g);
+            if (best > longest) {
+                longest = best;
+                tagAt = ImVec2((p.x + q.x) * 0.5f, (p.y + q.y) * 0.5f);
+            }
+        }
+        if (members.size() == 1) {
+            const ImVec2 p = at[static_cast<size_t>(members[0])];
+            dl->AddCircle(p, em * 1.25f, IM_COL32(10, 10, 14, 200), 32, 5.0f);
+            dl->AddCircle(p, em * 1.25f, col, 32, 2.5f);
+        }
+        const char key[2] = {markGroupKey(g), 0};
+        const ImVec2 ks = ImGui::CalcTextSize(key);
+        const float r = em * 0.62f;
+        dl->AddCircleFilled(tagAt, r, IM_COL32(16, 16, 20, 235));
+        dl->AddCircle(tagAt, r, col, 0, 2.0f);
+        dl->AddText(ImVec2(tagAt.x - ks.x * 0.5f, tagAt.y - ks.y * 0.5f), col, key);
+    }
     for (size_t i = 0; i < c.marks.size(); ++i) {
         if (!shown[i]) continue;
         const bool lit = std::find(highlighted.begin(), highlighted.end(), static_cast<int>(i)) != highlighted.end();
         Vec3 middle, tip;
         markGeometry(c.marks[i], scale, &middle, &tip);
-        if (!lit && bodies.hides(tip)) continue;
+        const bool behind = !lit && bodies.hides(middle + Vec3(0.0f, kOverlayLift, 0.0f));
+        auto faded = [&](ImU32 col) {
+            if (!behind) return col;
+            const ImU32 alpha = ((col >> IM_COL32_A_SHIFT) & 0xFF) / 2;
+            return (col & ~IM_COL32_A_MASK) | (alpha << IM_COL32_A_SHIFT);
+        };
         const char* label = c.marks[i].name.c_str();
         const ImVec2 ts = ImGui::CalcTextSize(label);
         const float padX = em * 0.35f, padY = em * 0.1f;
         const float halfW = std::max(ts.x * 0.5f + padX, ts.y * 0.5f + padY);
         const ImVec2 a(at[i].x - halfW, at[i].y - ts.y * 0.5f - padY), b(at[i].x + halfW, at[i].y + ts.y * 0.5f + padY);
         const ImU32 ink = lit ? IM_COL32(16, 16, 20, 255) : toImU32(kMarkColor);
-        dl->AddRectFilled(a, b, lit ? IM_COL32(255, 255, 255, 255) : IM_COL32(28, 30, 36, 215), em * 0.3f);
-        dl->AddRect(a, b, toImU32(kMarkColor), em * 0.3f, 0, lit ? 2.0f : 1.0f);
-        dl->AddText(ImVec2(at[i].x - ts.x * 0.5f, at[i].y - ts.y * 0.5f), ink, label);
+        dl->AddRectFilled(a, b, faded(lit ? IM_COL32(255, 255, 255, 255) : IM_COL32(28, 30, 36, 215)), em * 0.3f);
+        dl->AddRect(a, b, faded(toImU32(kMarkColor)), em * 0.3f, 0, lit ? 2.0f : 1.0f);
+        dl->AddText(ImVec2(at[i].x - ts.x * 0.5f, at[i].y - ts.y * 0.5f), faded(ink), label);
+        // Its groups: one column per group, in that group's colour ("1 3 5"; blank where it isn't in one).
+        if (groups.slots > 0) {
+            const float cw = ImGui::CalcTextSize("0").x;
+            const float x0 = at[i].x - cw * static_cast<float>(groups.slots) * 0.5f, y0 = b.y + 1.0f;
+            bool any = false;
+            for (int g = 0; g < groups.slots; ++g) {
+                const std::vector<int>& members = c.group(g);
+                if (std::find(members.begin(), members.end(), static_cast<int>(i)) == members.end()) continue;
+                if (!any)
+                    dl->AddRectFilled(ImVec2(x0 - 2.0f, y0), ImVec2(x0 + cw * static_cast<float>(groups.slots) + 2.0f, y0 + ts.y),
+                                      faded(IM_COL32(16, 16, 20, 200)), 2.0f);
+                any = true;
+                const char key[2] = {markGroupKey(g), 0};
+                dl->AddText(ImVec2(x0 + cw * static_cast<float>(g), y0), faded(toImU32(markGroupColor(g))), key);
+            }
+        }
     }
     dl->PopClipRect();
 }
@@ -1633,12 +1785,19 @@ bool turnEditor(const char* id, Turn* turn, Turn* hovered = nullptr) {
 
 struct ChoreographyPanelState {
     FineSliderState spacing, spokes, major;
+    // Groups of spike marks: how many marks each has (Choreography::kMarkGroups of them), and what
+    // was done with their chips this frame (-1: nothing): rested on, clicked (select it), Shift+
+    // clicked (add it), emptied (its menu).
+    std::vector<int> groupSizes;
+    int hoveredGroup = -1, clickedGroup = -1, addedGroup = -1, emptiedGroup = -1;
 };
 
 // *newLength is set (else left alone) when the user asks for a new choreography length, and
 // `phases`: the walking loop's times round (for the length in all).
+// `period`: the pattern's period (Ctrl+-/+ steps the length a whole period).
 bool drawChoreographyPanel(AppSettings& settings, ImVec2 topRight, ChoreographyPanelState& state, int length,
-                           int* newLength, int phases) {
+                           int* newLength, int phases, int period) {
+    state.hoveredGroup = state.clickedGroup = state.addedGroup = state.emptiedGroup = -1;
     const float em = ImGui::GetFontSize();
     ImGui::SetNextWindowPos(topRight, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
     ImGui::SetNextWindowBgAlpha(0.8f);
@@ -1678,13 +1837,16 @@ bool drawChoreographyPanel(AppSettings& settings, ImVec2 topRight, ChoreographyP
             ImGui::SameLine(labelWidth0);
             ImGui::SetNextItemWidth(em * 8.0f);
             int edited = length;
-            const bool entered = ImGui::InputInt("beats##length", &edited, 1, 4, ImGuiInputTextFlags_EnterReturnsTrue);
+            const bool entered = ImGui::InputInt("beats##length", &edited, 1, std::max(1, period), ImGuiInputTextFlags_EnterReturnsTrue);
             if ((entered || ImGui::IsItemDeactivatedAfterEdit()) && edited != length)
                 *newLength = std::clamp(edited, 1, kMaxChoreographyLength);
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
                 ImGui::SetTooltip("How many beats the choreography takes before it repeats. It doesn't have to\n"
-                                  "match the siteswap's period. Type a number and press Enter, or use -/+\n"
-                                  "(Ctrl: 4 at a time).");
+                                  "match the siteswap's period. Type a number and press Enter, or use -/+ for a\n"
+                                  "beat (Ctrl+click -/+: a whole period of the pattern, %d beats). Longer adds empty\n"
+                                  "beats at the end; shorter asks before dropping keyframes past the new end.\n"
+                                  "(To add or take out a beat in the middle: right-click a beat in the C rows.)",
+                                  std::max(1, period));
             // The walking loop (set in the grid's loop column): how long it is in all.
             if (phases > 1) {
                 ImGui::AlignTextToFramePadding();
@@ -1694,6 +1856,47 @@ bool drawChoreographyPanel(AppSettings& settings, ImVec2 topRight, ChoreographyP
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
                     ImGui::SetTooltip("The walking loop (the column after the walking rows' last beat, under the\n"
                                       "siteswap grid) takes this many times round to bring everyone back.");
+            }
+
+            // Groups of spike marks: a chip for each (its key, how many marks), to rest on (shows
+            // the group on the floor), click (selects it; Shift: adds it) or right-click (empty it).
+            {
+                ImGui::AlignTextToFramePadding();
+                ImGui::TextUnformatted("Groups");
+                ImGui::SameLine(labelWidth0);
+                bool any = false;
+                for (int g = 0; g < static_cast<int>(state.groupSizes.size()); ++g) {
+                    const int n = state.groupSizes[static_cast<size_t>(g)];
+                    if (n <= 0) continue;
+                    if (any) ImGui::SameLine();
+                    any = true;
+                    char label[24];
+                    std::snprintf(label, sizeof(label), "%c\xc2\xb7%d##group%d", markGroupKey(g), n, g);
+                    const Rgba c = markGroupColor(g);
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(c.r * 0.45f, c.g * 0.45f, c.b * 0.45f, 0.9f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(c.r * 0.65f, c.g * 0.65f, c.b * 0.65f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(c.r * 0.8f, c.g * 0.8f, c.b * 0.8f, 1.0f));
+                    if (ImGui::Button(label)) (ImGui::GetIO().KeyShift ? state.addedGroup : state.clickedGroup) = g;
+                    ImGui::PopStyleColor(3);
+                    if (ImGui::IsItemHovered()) {
+                        state.hoveredGroup = g;
+                        ImGui::SetTooltip("Group %c: %d spike mark%s. Click (or press %c) to select them; Shift+click (Shift+%c)\n"
+                                          "adds them to the selection. Ctrl+%c makes the selection the group. Right-click to\n"
+                                          "empty it. Hold Ctrl to see every group on the floor.",
+                                          markGroupKey(g), n, n == 1 ? "" : "s", markGroupKey(g), markGroupKey(g), markGroupKey(g));
+                    }
+                    if (ImGui::BeginPopupContextItem()) {
+                        if (ImGui::MenuItem("Empty Group")) state.emptiedGroup = g;
+                        ImGui::EndPopup();
+                    }
+                }
+                if (!any) {
+                    ImGui::TextDisabled("none (select marks, then Ctrl+1 ... Ctrl+0)");
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
+                        ImGui::SetTooltip("Groups of spike marks, to select again with one key: select marks (click,\n"
+                                          "Shift+click) and press Ctrl+1 (... Ctrl+9, Ctrl+0). Then 1 selects them again,\n"
+                                          "and Shift+1 adds them to a selection. Hold Ctrl to see the groups on the floor.");
+                }
             }
 
             const float labelWidth = std::max(em * 3.5f, ImGui::CalcTextSize("Mid spokes").x + ImGui::GetStyle().ItemSpacing.x * 2.0f);
@@ -2102,7 +2305,7 @@ void drawShortcutsWindow(bool* open) {
           {"O", "Color by orbit"},
           {"L", "Dim linked jugglers on the ladder"},
           {"C", "Collapse or expand every juggler's ladder strip"},
-          {"Ctrl+1 ... Ctrl+6", "Collapse or expand that juggler's ladder strip"},
+          {"Ctrl+1 ... Ctrl+6", "Collapse or expand that juggler's ladder strip (not in choreography: groups there)"},
           {"M", "Choreography (Movement, spike Marks): show the spike marks"},
           {"K", "Keyframes on the ladder: show their spike marks (M3)"},
           {"T", "Top view"},
@@ -2119,7 +2322,11 @@ void drawShortcutsWindow(bool* open) {
           {"Rest on a club or ring (paused)", "Its throw and spin rate"},
           {"Choreography: drag a juggler", "A keyframe for them on this beat (drop on a mark to use it)"},
           {"Choreography: click a path's beat point", "Go to that beat, with that juggler selected"},
-          {"Choreography: drag a mark", "Move it (its arrow: turn it); Shift: off the grid"},
+          {"Choreography: click a mark or its name", "Select it (Shift+click: add or remove marks; Esc clears)"},
+          {"Choreography: Ctrl+1 ... Ctrl+9, Ctrl+0", "Make the selected marks that group (nothing selected: empty it)"},
+          {"Choreography: 1 ... 9, 0", "Select that group of marks (Shift: add it to the selection)"},
+          {"Choreography: hold Ctrl", "Show every group: each mark's groups under its name, each group's marks joined up"},
+          {"Choreography: drag a mark", "Move it, and any others selected with it (its arrow: turn it); Shift: off the grid"},
           {"Choreography: right-click", "Add a mark (on the floor), or a mark's menu (without dragging)"}}},
         {"Ladder (mouse)",
          {{"Wheel", "Scroll through time"},
@@ -2374,6 +2581,58 @@ int runApp() {
         ImVec2 at;               // where (screen), for the loiter popup after
     };
     MarkChoice markChoice;
+    // Spike marks selected: a click on one selects it (and no juggler), Shift+click adds one or
+    // takes it away; dragging any of them moves them all, keeping their shape. Esc, or a click on
+    // empty floor or a juggler, clears it. (Keyframes come from dragging a juggler onto a mark.)
+    std::vector<int> selectedMarks;
+    std::vector<std::pair<float, float>> markDragStart;  // ...where each was when the drag began (unscaled)
+    bool markPressWasSelected = false;                   // ...whether the one pressed already was
+    std::vector<int> selectedMarksSaid;                  // (the selection the status line last described)
+    // Groups of marks (Choreography::groups): the one just selected by its key or chip (while the
+    // selection is still exactly it: its lines show), and the chip the mouse rests on (-1: none).
+    int selectedGroup = -1;
+    int groupChipHovered = -1;
+    // What of the groups the floor shows this frame: all of them (badges and lines) while Ctrl is
+    // held; else the lines of the group under the mouse in the panel, or of the one selected.
+    auto markGroupView = [&]() {
+        MarkGroupView v;
+        if (!choreographyMode || !choreography.active()) return v;
+        if (ImGui::GetIO().KeyCtrl) {
+            v.slots = choreography.groupsUsed();
+            for (int g = 0; g < v.slots; ++g)
+                if (!choreography.group(g).empty()) v.lines.push_back(g);
+        } else if (groupChipHovered >= 0) {
+            v.lines.push_back(groupChipHovered);
+        } else if (selectedGroup >= 0 && !choreography.group(selectedGroup).empty()) {
+            v.lines.push_back(selectedGroup);
+        }
+        return v;
+    };
+    auto markListText = [&](const std::vector<int>& marks) {
+        std::string list;
+        for (size_t i = 0; i < marks.size(); ++i)
+            list += (i == 0 ? "" : (i + 1 == marks.size() ? " and " : ", ")) +
+                    (marks[i] >= 0 && marks[i] < static_cast<int>(choreography.marks.size())
+                         ? choreography.marks[static_cast<size_t>(marks[i])].name
+                         : std::string("?"));
+        return list;
+    };
+    // Makes group g (0-based) these marks (none: it's emptied). An undo step like any change.
+    auto setMarkGroup = [&](int g, std::vector<int> marks) {
+        if (g < 0 || g >= Choreography::kMarkGroups) return;
+        std::sort(marks.begin(), marks.end());
+        marks.erase(std::unique(marks.begin(), marks.end()), marks.end());
+        if (static_cast<int>(choreography.groups.size()) <= g) choreography.groups.resize(static_cast<size_t>(g) + 1);
+        choreography.groups[static_cast<size_t>(g)] = marks;
+        while (!choreography.groups.empty() && choreography.groups.back().empty()) choreography.groups.pop_back();
+        const char key = markGroupKey(g);
+        siteswapBox.info = marks.empty() ? std::string("Group ") + key + " emptied."
+                                         : std::string("Group ") + key + ": " + (marks.size() == 1 ? "mark " : "marks ") +
+                                               markListText(marks) + ". Press " + key + " to select them again, Shift+" + key +
+                                               " to add them to a selection; hold Ctrl to see the groups.";
+        siteswapBox.infoUntil = ImGui::GetTime() + 5.0;
+        selectedGroup = marks.empty() ? -1 : g;
+    };
     // Renaming a spike mark (its menu's Rename...): two characters, 0-9 and a-z, unique.
     struct RenameMark {
         int mark = -1;
@@ -2622,6 +2881,7 @@ int runApp() {
             Choreography c;
             if (apply.choreography.empty() || !choreographyFromText(apply.choreography, &c)) c = Choreography();
             choreography = c;
+            selectedMarks.clear();
             // The jugglers stand where it says, in meters at the distance it was made for.
             if (c.active() && c.reference > 0.0) juggleParams.distance = c.reference;
             markDrag = -1;
@@ -2921,6 +3181,23 @@ int runApp() {
     // frameSelected the camera frames just that juggler.
     int selectedJuggler = -1;
     bool frameSelected = false;
+    // Selects group g's marks (`add`: adds them to the selection), and no juggler.
+    auto selectMarkGroup = [&](int g, bool add) {
+        const std::vector<int>& members = choreography.group(g);
+        const char key = markGroupKey(g);
+        if (members.empty()) {
+            siteswapBox.info = std::string("Group ") + key + " is empty: select spike marks (click, Shift+click) and press Ctrl+" +
+                               key + " to make it.";
+            siteswapBox.infoUntil = ImGui::GetTime() + 5.0;
+            return;
+        }
+        if (!add) selectedMarks.clear();
+        for (const int m : members)
+            if (std::find(selectedMarks.begin(), selectedMarks.end(), m) == selectedMarks.end()) selectedMarks.push_back(m);
+        selectedJuggler = -1;
+        frameSelected = false;
+        selectedGroup = add ? -1 : g;
+    };
     Mat4 lastViewProj = Mat4::identity();  // the 3D view's camera as last drawn (for picking)
     // Pattern extents depend only on the loop, timing and framing, so they're cached. They take
     // a while to work out for a long passing pattern (a few tenths of a second), so while the
@@ -3006,11 +3283,19 @@ int runApp() {
         if ((!io.WantTextInput || gridHasKeys) && io.KeyCtrl) {
             if (ImGui::IsKeyPressed(ImGuiKey_Z) && !io.KeyShift) undo();
             else if (ImGui::IsKeyPressed(ImGuiKey_Y) || (ImGui::IsKeyPressed(ImGuiKey_Z) && io.KeyShift)) redo();
-            // Ctrl+1 to Ctrl+6: collapse or expand that juggler's ladder strip.
-            const int jugglers = sketching ? sketchLoop.jugglers : (patternValid ? pattern.jugglers : 0);
-            for (int j = 0; j < std::min(jugglers, kMaxJugglers); ++j)
-                if (jugglers > 1 && ImGui::IsKeyPressed(static_cast<ImGuiKey>(ImGuiKey_1 + j), false))
-                    ladderEdit.collapsed[static_cast<size_t>(j)] = !ladderEdit.collapsed[static_cast<size_t>(j)];
+            if (choreographyMode && choreography.active()) {
+                // Choreography: Ctrl+1 ... Ctrl+9, Ctrl+0 make the selected spike marks a group
+                // (nothing selected: empty it).
+                for (int g = 0; g < Choreography::kMarkGroups; ++g)
+                    if (ImGui::IsKeyPressed(g == 9 ? ImGuiKey_0 : static_cast<ImGuiKey>(ImGuiKey_1 + g), false))
+                        setMarkGroup(g, selectedMarks);
+            } else {
+                // Ctrl+1 to Ctrl+6: collapse or expand that juggler's ladder strip.
+                const int jugglers = sketching ? sketchLoop.jugglers : (patternValid ? pattern.jugglers : 0);
+                for (int j = 0; j < std::min(jugglers, kMaxJugglers); ++j)
+                    if (jugglers > 1 && ImGui::IsKeyPressed(static_cast<ImGuiKey>(ImGuiKey_1 + j), false))
+                        ladderEdit.collapsed[static_cast<size_t>(j)] = !ladderEdit.collapsed[static_cast<size_t>(j)];
+            }
         }
         // The 3D mouse (SpaceMouse) always moves the juggler camera, whatever has the keyboard;
         // the cap's deflection sets a speed. (Applied to the camera further down, once the
@@ -3043,6 +3328,11 @@ int runApp() {
                 settings.metronome = !settings.metronome;
                 saveSettings(settings);
             }
+            // Choreography: 1 ... 9, 0 select a group of spike marks (Shift: add it).
+            if (choreographyMode && choreography.active() && !markChoice.active)
+                for (int g = 0; g < Choreography::kMarkGroups; ++g)
+                    if (ImGui::IsKeyPressed(g == 9 ? ImGuiKey_0 : static_cast<ImGuiKey>(ImGuiKey_1 + g), false))
+                        selectMarkGroup(g, io.KeyShift);
             if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) stepPlayback(io.KeyShift ? 1.0 : kStepBeats);
             if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) stepPlayback(io.KeyShift ? -1.0 : -kStepBeats);
             // F: frame the selected juggler, or everyone if no one is selected.
@@ -3210,7 +3500,8 @@ int runApp() {
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
                     ImGui::SetTooltip("Shows the spike marks on the floor, to move, turn and put jugglers on.\n"
                                       "Pause on a beat, then drag a juggler to where they should be then (onto a\n"
-                                      "mark, or anywhere), or select them and click a mark. T: the top view.");
+                                      "mark, or anywhere). Click marks to select them (Shift+click: more) and drag one\n"
+                                      "to move them all. T: the top view.");
                 if (ImGui::MenuItem("Keyframe Marks", "K", settings.showKeyframeMarks)) {
                     settings.showKeyframeMarks = !settings.showKeyframeMarks;
                     saveSettings(settings);
@@ -3576,6 +3867,14 @@ int runApp() {
                 if (!plan.valid || !playedLoop(writtenLoop, plan, playPaths).ok) plipWanted = true;
             }
             // The choreography's rows: keyframes typed, walk links, and the beat to show.
+            // (Throws and walking changed together, a selection across both: one undo step.)
+            const bool together = !g.choreoEdits.empty() && g.commit && g.newCount < 0;
+            PatternSettings settingsBeforeBoth;
+            if (together) {
+                commitTyping();
+                recordSettingsChange();
+                settingsBeforeBoth = currentPatternSettings();
+            }
             for (const ChoreoEdit& e : g.choreoEdits) {
                 if (e.juggler < 0) continue;
                 if (e.kind == ChoreoEdit::Kind::Set) {
@@ -3583,10 +3882,23 @@ int runApp() {
                     k.beat = e.beat;
                     k.mark = findMarkNamed(choreography, e.mark);
                     if (k.mark < 0) continue;
-                    if (choreography.hasKeys(e.juggler))
+                    if (e.longTurn >= 0)
+                        k.longTurn = e.longTurn != 0;
+                    else if (choreography.hasKeys(e.juggler))
                         for (const Keyframe& old : choreography.keys[static_cast<size_t>(e.juggler)])
                             if (old.beat == e.beat) k.longTurn = old.longTurn;
                     setKeyframe(&choreography, e.juggler, k);
+                } else if (e.kind == ChoreoEdit::Kind::Rotate) {
+                    // A beat (or more) later, round the beats written out.
+                    const int written = std::max(1, choreographyCycle(shownLoop(), juggleParams));
+                    if (choreography.hasKeys(e.juggler)) {
+                        std::vector<Keyframe> keys = choreography.keys[static_cast<size_t>(e.juggler)];
+                        choreography.keys[static_cast<size_t>(e.juggler)].clear();
+                        for (Keyframe& k : keys) {
+                            k.beat = ((k.beat + e.beat) % written + written) % written;
+                            setKeyframe(&choreography, e.juggler, k);
+                        }
+                    }
                 } else if (e.kind == ChoreoEdit::Kind::Clear) {
                     removeKeyframe(&choreography, e.juggler, e.beat);
                 } else if (e.kind == ChoreoEdit::Kind::Loop) {
@@ -3599,7 +3911,7 @@ int runApp() {
                         setContinuation(e.juggler, k);
                     }
                 } else if (e.kind == ChoreoEdit::Kind::InsertBeat || e.kind == ChoreoEdit::Kind::DeleteBeat) {
-                    walkingBeat(e.beat, e.kind == ChoreoEdit::Kind::InsertBeat);
+                    for (int i = 0; i < std::max(1, e.count); ++i) walkingBeat(e.beat, e.kind == ChoreoEdit::Kind::InsertBeat);
                 } else if (choreography.hasKeys(e.juggler)) {
                     for (Keyframe& k : choreography.keys[static_cast<size_t>(e.juggler)])
                         if (k.beat == e.beat) k.longTurn = !k.longTurn;
@@ -3638,6 +3950,10 @@ int runApp() {
                 patternCount = g.newCount;
                 if (g.changed) showPatternText(g.text);
                 history.recordWithSettings(g.changed ? g.text : history.current, before, currentPatternSettings());
+                settingsRecorded();
+            } else if (together) {
+                if (g.commitText != siteswapText) showPatternText(g.commitText);
+                history.recordWithSettings(g.commitText, settingsBeforeBoth, currentPatternSettings());
                 settingsRecorded();
             } else {
                 if (g.commit) {
@@ -3923,11 +4239,17 @@ int runApp() {
                 Vec3 floorHere(0.0f, 0.0f, 0.0f);
                 const bool haveFloor =
                     editingFloor && floorUnderMouse(lastCamera, lastAspect, viewMin, viewSize, io.MousePos, &floorHere);
-                const int markUnderMouse = editingFloor && ImGui::IsItemHovered() && markDrag < 0
+                // (A mark's name comes first: it picks that mark, even among several on one spot.)
+                const int labelUnderMouse = editingFloor && ImGui::IsItemHovered() && markDrag < 0
+                                                ? markLabelUnder(choreography, markScale, lastViewProj, viewMin, viewSize, io.MousePos,
+                                                                 markGroupView().badgeH())
+                                                : -1;
+                const int markUnderMouse = labelUnderMouse >= 0 ? labelUnderMouse
+                                           : editingFloor && ImGui::IsItemHovered() && markDrag < 0
                                                ? pickSpikeMark(choreography, markScale, lastViewProj, viewMin, viewSize,
                                                                io.MousePos, haveFloor, floorHere, &onArrow)
                                                : -1;
-                const bool onBody = underMouse >= 0 && markUnderMouse >= 0 && !onArrow &&
+                const bool onBody = labelUnderMouse < 0 && underMouse >= 0 && markUnderMouse >= 0 && !onArrow &&
                                     pickJuggler(scene, lastViewProj, viewMin, viewSize, io.MousePos, 0.0f) >= 0;
                 const bool markRing = markUnderMouse >= 0 && (onArrow || !onBody);
                 // A mark (or its arrow) comes before the path points drawn on it (a juggler standing
@@ -3943,7 +4265,7 @@ int runApp() {
                     pressTakenByChoice = true;
                     std::vector<bool> shown;
                     const std::vector<ImVec2> bubbles =
-                        markBubbleCenters(choreography, markScale, lastViewProj, viewMin, viewSize, &shown);
+                        markBubbleCenters(choreography, markScale, lastViewProj, viewMin, viewSize, &shown, markGroupView().badgeH());
                     int best = -1;
                     float bestD = ImGui::GetFontSize() * 1.4f;
                     for (const int m : markChoice.marks) {
@@ -3980,6 +4302,18 @@ int runApp() {
                         markDrag = markUnderMouse;
                         markTurning = onArrow;
                         markForKeyframe = markRing;
+                        // Pressed: it's in the selection now (on its own, or added with Shift), so
+                        // a drag moves the selection.
+                        markPressWasSelected =
+                            std::find(selectedMarks.begin(), selectedMarks.end(), markDrag) != selectedMarks.end();
+                        if (!markPressWasSelected) {
+                            if (!io.KeyShift) selectedMarks.clear();
+                            selectedMarks.push_back(markDrag);
+                        }
+                        markDragStart.clear();
+                        for (const int m : selectedMarks)
+                            markDragStart.push_back({choreography.marks[static_cast<size_t>(m)].x,
+                                                     choreography.marks[static_cast<size_t>(m)].z});
                     } else if (underMouse >= 0 && !loop.empty() && choreography.link(underMouse).active()) {
                         // A juggler who walks like another goes where the leader goes.
                         siteswapBox.note = "J" + std::to_string(underMouse + 1) + " " + walkLinkLabel(choreography.link(underMouse)) +
@@ -4080,11 +4414,25 @@ int runApp() {
                             }
                             m.yaw = yaw;
                         } else {
-                            // Moved to the mouse: snapped to the floor grid (Shift: freely).
+                            // Moved to the mouse: snapped to the floor grid (Shift: freely); the rest
+                            // of the selection moves with it, keeping their shape.
                             float x = floor.x, z = floor.z;
                             if (!io.KeyShift) snapToFloorGrid(settings, &x, &z);
-                            m.x = x / markScale;
-                            m.z = z / markScale;
+                            const auto here = std::find(selectedMarks.begin(), selectedMarks.end(), markDrag);
+                            const size_t me = static_cast<size_t>(here - selectedMarks.begin());
+                            if (here == selectedMarks.end() || markDragStart.size() != selectedMarks.size()) {
+                                m.x = x / markScale;
+                                m.z = z / markScale;
+                            } else {
+                                const float dx = x / markScale - markDragStart[me].first;
+                                const float dz = z / markScale - markDragStart[me].second;
+                                for (size_t i = 0; i < selectedMarks.size(); ++i) {
+                                    const int k = selectedMarks[i];
+                                    if (k < 0 || k >= static_cast<int>(choreography.marks.size())) continue;
+                                    choreography.marks[static_cast<size_t>(k)].x = markDragStart[i].first + dx;
+                                    choreography.marks[static_cast<size_t>(k)].z = markDragStart[i].second + dz;
+                                }
+                            }
                         }
                     }
                 }
@@ -4138,42 +4486,22 @@ int runApp() {
                     markDrag = -1;
                 } else if (markDrag >= 0 && ImGui::IsItemDeactivated()) {
                     if (!dragged) {
-                        // A click on a mark: a keyframe there for the selected juggler.
-                        const int jugglers = loop.empty() ? 0 : loop.jugglers;
-                        const int who = jugglers == 1 ? 0 : selectedJuggler;
-                        if (who < 0 || who >= jugglers) {
-                            siteswapBox.note = "Select a juggler first (click them), then click a spike mark to put them there.";
-                            siteswapBox.noteUntil = ImGui::GetTime() + 5.0;
-                        } else if (choreography.link(who).active()) {
-                            siteswapBox.note = "J" + std::to_string(who + 1) + " " + walkLinkLabel(choreography.link(who)) +
-                                               ": move J" + std::to_string(choreography.link(who).leader + 1) + " instead, or unlink J" +
-                                               std::to_string(who + 1) + ".";
-                            siteswapBox.noteUntil = ImGui::GetTime() + 5.0;
-                        } else if (inRotatedRepeat(std::lround(playback.beat))) {
-                            // (The note says where to do it.)
+                        // A click on a mark selects it (Shift: adds it, or takes it away if it was
+                        // already in), and no juggler. (A keyframe: drag a juggler onto it.)
+                        if (io.KeyShift) {
+                            if (markPressWasSelected)
+                                selectedMarks.erase(std::remove(selectedMarks.begin(), selectedMarks.end(), markDrag),
+                                                    selectedMarks.end());
                         } else {
-                            const int cycle = std::max(1, choreographyCycle(loop, juggleParams));
-                            const long beat = std::lround(playback.beat);
-                            Keyframe k;
-                            k.beat = static_cast<int>(((beat % cycle) + cycle) % cycle);
-                            k.mark = markDrag;
-                            setKeyframe(&choreography, who, k);
-                            const SpikeMark& clicked = choreography.marks[static_cast<size_t>(markDrag)];
-                            const std::vector<int> here = marksAround(clicked.x * markScale, clicked.z * markScale, markScale);
-                            if (here.size() >= 2)
-                                markChoice = MarkChoice{true, who, k, here, io.MousePos};
-                            else
-                                openLoiterPopup(who, k, io.MousePos);
-                            playback.playing = false;
-                            playback.beat = static_cast<double>(beat);
-                            siteswapBox.info = "J" + std::to_string(who + 1) + " on mark " + choreography.marks[static_cast<size_t>(markDrag)].name +
-                                               " on beat " + std::to_string(k.beat + 1) + ".";
-                            siteswapBox.infoUntil = ImGui::GetTime() + 4.0;
+                            selectedMarks.assign(1, markDrag);
                         }
+                        selectedJuggler = -1;
+                        frameSelected = false;
                     }
                     markDrag = -1;
                 } else if (canSelect && ImGui::IsItemDeactivated() && leftPress && !dragged && !pressTakenByChoice) {
                     selectedJuggler = underMouse;
+                    selectedMarks.clear();
                     if (underMouse < 0) frameSelected = false;
                 }
                 // Right-click (without dragging) the floor: add a mark there, or (on a mark) its menu.
@@ -4211,6 +4539,8 @@ int runApp() {
                             if (!removeSpikeMark(&choreography, markMenuMark, loop.empty() ? 0 : loop.jugglers, &why)) {
                                 siteswapBox.note = why;
                                 siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+                            } else {
+                                selectedMarks.clear();
                             }
                         }
                         if (ImGui::IsItemHovered())
@@ -4254,7 +4584,8 @@ int runApp() {
                                           choreography.marks[static_cast<size_t>(markUnderMouse)].name.c_str());
                     else
                         ImGui::SetTooltip("Spike mark %s: drag to move it (it snaps to the grid; Shift: freely)\n"
-                                          "Click to put the selected juggler here on the current beat\n"
+                                          "Click to select it, Shift+click to add it to the selection: dragging one\n"
+                                          "moves them all. To put a juggler here, drag them onto it.\n"
                                           "Right-click for more",
                                           choreography.marks[static_cast<size_t>(markUnderMouse)].name.c_str());
                 }
@@ -4375,14 +4706,22 @@ int runApp() {
                                 ImVec2(W - panelMargin, top + panelMargin), tweakablesPanel, choreographyLocked,
                                 &tweakablesBottom))
             saveSettings(settings);
+        groupChipHovered = -1;  // (set again below while the panel is up)
         if (choreographyMode && choreography.active() && !loop.empty()) {
             int newLength = -1;
 
             const std::string gridBefore = floorGridText(settings);
+            choreographyPanel.groupSizes.assign(Choreography::kMarkGroups, 0);
+            for (int g = 0; g < Choreography::kMarkGroups; ++g)
+                choreographyPanel.groupSizes[static_cast<size_t>(g)] = static_cast<int>(choreography.group(g).size());
             if (drawChoreographyPanel(settings, ImVec2(W - panelMargin, tweakablesBottom + panelMargin * 0.5f),
                                       choreographyPanel, choreographyCycle(loop, juggleParams), &newLength,
-                                      choreography.repeats()))
+                                      choreography.repeats(), loop.period))
                 saveSettings(settings);
+            groupChipHovered = choreographyPanel.hoveredGroup;
+            if (choreographyPanel.clickedGroup >= 0) selectMarkGroup(choreographyPanel.clickedGroup, false);
+            if (choreographyPanel.addedGroup >= 0) selectMarkGroup(choreographyPanel.addedGroup, true);
+            if (choreographyPanel.emptiedGroup >= 0) setMarkGroup(choreographyPanel.emptiedGroup, std::vector<int>());
             // The grid changed: it's the choreography's (saved with the pattern). (A choreography
             // nobody has changed yet stays that way: the grid doesn't fix the passing distance.)
             if (floorGridText(settings) != gridBefore) {
@@ -4631,6 +4970,31 @@ int runApp() {
                 }() + " are here: click the arrow (or name) of the one J" + std::to_string(markChoice.juggler + 1) +
                                    " stands on. (Esc: mark " + markNameOf(markChoice.pending.mark) + ".)";
                 siteswapBox.infoUntil = ImGui::GetTime() + 0.1;
+            }
+        }
+        // Selected spike marks: Esc clears them (as does leaving choreography mode); a change says
+        // what to do with them, for a few seconds.
+        selectedMarks.erase(std::remove_if(selectedMarks.begin(), selectedMarks.end(),
+                                           [&](int m) { return m < 0 || m >= static_cast<int>(choreography.marks.size()); }),
+                            selectedMarks.end());
+        if (!choreographyMode || (!markChoice.active && !io.WantTextInput && markDrag < 0 &&
+                                  !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
+            selectedMarks.clear();
+        if (selectedGroup >= 0 && selectedMarks != choreography.group(selectedGroup)) {
+            std::vector<int> sorted = selectedMarks;
+            std::sort(sorted.begin(), sorted.end());
+            if (sorted != choreography.group(selectedGroup)) selectedGroup = -1;
+        }
+        if (selectedMarks != selectedMarksSaid) {
+            selectedMarksSaid = selectedMarks;
+            if (!selectedMarks.empty()) {
+                std::string list;
+                for (size_t i = 0; i < selectedMarks.size(); ++i)
+                    list += (i == 0 ? "" : (i + 1 == selectedMarks.size() ? " and " : ", ")) + markNameOf(selectedMarks[i]);
+                siteswapBox.info = std::string(selectedMarks.size() == 1 ? "Spike mark " : "Spike marks ") + list +
+                                   " selected: drag " + (selectedMarks.size() == 1 ? "it" : "one to move them all") +
+                                   " (Shift: off the grid). Shift+click adds or removes a mark; Esc clears.";
+                siteswapBox.infoUntil = ImGui::GetTime() + 5.0;
             }
         }
         // The Walk Like... window (see WalkLikeWindow).
@@ -5187,9 +5551,10 @@ int runApp() {
                     choreography = Choreography();  // a new pattern starts in the default formation
                     if (newPatternDialog.walking > 0) {
                         // ...with spike marks under everyone, and the walking's own period.
+                        // (A length of its own counts as a change: an untouched choreography follows the
+                        // siteswap's period, which would put this one back to it.)
                         ensureSpikeMarks();
                         choreography.cycle = newPatternDialog.walking;
-                        untouchedChoreography = choreographyText();
                         choreographyMode = true;
                     }
                     camera.free = false;
@@ -5303,9 +5668,11 @@ int runApp() {
             if (choreographyMode && choreography.active()) {
                 const StageBox box = stageBox();
                 buildFloorGrid(overlay, settings, box.min.x, box.min.z, box.max.x, box.max.z);
-                const std::vector<int> lit = markChoice.active ? markChoice.marks : std::vector<int>();
+                std::vector<int> lit = markChoice.active ? markChoice.marks : std::vector<int>();
+                lit.insert(lit.end(), selectedMarks.begin(), selectedMarks.end());
                 buildSpikeMarks(overlay, choreography, choreographyScale(loop), markDrag, lit);
-                drawSpikeMarkNumbers(bg, choreography, choreographyScale(loop), lastViewProj, viewMin, viewSize, bodies, lit);
+                drawSpikeMarkNumbers(bg, choreography, choreographyScale(loop), lastViewProj, viewMin, viewSize, bodies, lit,
+                                     markGroupView());
             }
             if (showPaths) {
                 const int pathSelected = loop.jugglers == 1 ? 0 : selectedJuggler;

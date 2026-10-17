@@ -119,8 +119,15 @@ struct Choreography {
     std::vector<SpikeMark> marks;
     std::vector<std::vector<Keyframe>> keys;  // per juggler, sorted by beat
     std::vector<WalkLink> links;              // per juggler (missing: none)
+    // Groups of spike marks (Ctrl+1...Ctrl+0 in the app), a quick way to select them again:
+    // groups[g] is group g + 1's marks (group 10 is Ctrl+0), sorted; a mark can be in several.
+    static constexpr int kMarkGroups = 10;
+    std::vector<std::vector<int>> groups;
 
     bool active() const { return !marks.empty(); }
+    // Group g's marks (0-based g; empty if none), and the highest group with any (0 if none).
+    const std::vector<int>& group(int g) const;
+    int groupsUsed() const;
     // A juggler's continuation (see `next`).
     Continuation continuation(int juggler) const;
     // How many times the written-out beats play before everyone's back where they started, on

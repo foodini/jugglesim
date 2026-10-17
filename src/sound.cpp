@@ -79,12 +79,12 @@ std::vector<unsigned char> makePlip() {
 }
 
 // A woodblock-like click: two inharmonic partials with a very fast decay, and a burst of noise
-// at the start for the attack.
+// at the start for the attack. The accent is the same click, a little louder (about 3 dB).
 std::vector<unsigned char> makeTick(bool accent) {
-    const double length = accent ? 0.07 : 0.045;
-    const double pitch = accent ? 1750.0 : 1250.0;
-    const double level = accent ? 0.55 : 0.32;
-    const double decay = accent ? 0.012 : 0.008;
+    const double length = 0.045;
+    const double pitch = 1250.0;
+    const double level = accent ? 0.45 : 0.32;
+    const double decay = 0.008;
     std::vector<double> samples(static_cast<size_t>(length * kSampleRate), 0.0);
     uint32_t noise = 12345u;
     for (size_t i = 0; i < samples.size(); ++i) {

@@ -10,5 +10,5 @@
 const std::vector<unsigned char>& plipWav();
 
 // The metronome's tick (a short wooden click), or with `accent` the one on a count's first beat
-// (higher, louder and a little longer), as complete WAV files.
+// (the same click, a little louder), as complete WAV files.
 const std::vector<unsigned char>& tickWav(bool accent);

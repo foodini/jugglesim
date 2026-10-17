@@ -141,6 +141,10 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         if (hasChoreo) {
             state.choreoRow = std::clamp(state.choreoRow, 0, choreoRows - 1);
             state.choreoBeat = std::clamp(state.choreoBeat, 0, columns - 1);
+            state.choreoAnchorRow = std::clamp(state.choreoAnchorRow, 0, choreoRows - 1);
+            state.choreoAnchorBeat = std::clamp(state.choreoAnchorBeat, 0, columns - 1);
+        } else {
+            state.anchorInChoreo = false;
         }
     };
     clampCursor();
@@ -208,6 +212,7 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         state.editOriginal = target();
         state.editText = std::string(1, c);
         state.anchorRow = state.row;
+        state.anchorInChoreo = false;
         state.anchorBeat = state.beat;
         showTyped();
     };
@@ -217,6 +222,7 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         state.beat = b;
         if (!extend) {
             state.anchorRow = r;
+            state.anchorInChoreo = false;
             state.anchorBeat = b;
         }
         state.scrollToCursor = true;
@@ -255,7 +261,25 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         }
         return false;
     };
+    // A selection from the throws' rows into the choreography's (or back): every row of both,
+    // across its beats.
+    auto crossing = [&]() { return hasChoreo && state.anchorInChoreo != state.inChoreo; };
+    auto selectedBeats = [&](int* b0, int* b1) {
+        const int c = state.inChoreo ? state.choreoBeat : state.beat;
+        const int a = state.anchorInChoreo ? state.choreoAnchorBeat : state.anchorBeat;
+        *b0 = std::min(a, c);
+        *b1 = std::max(a, c);
+    };
+    // The throws' cells selected (r0 > r1: none, the selection being in the choreography's rows).
     auto selection = [&](int* r0, int* r1, int* b0, int* b1) {
+        if (crossing()) {
+            *r0 = 0;
+            *r1 = rows - 1;
+            selectedBeats(b0, b1);
+            *b1 = std::min(*b1, grid.period - 1);
+            if (*b0 > *b1) *r0 = rows;  // (all past the period)
+            return;
+        }
         *r0 = std::min(state.row, state.anchorRow);
         *r1 = std::max(state.row, state.anchorRow);
         *b0 = std::min(state.beat, state.anchorBeat);
@@ -290,14 +314,15 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         }
         return shown;
     };
-    auto copy = [&]() {
-        if (wholeSelected() || (rows == 1 && grid.period == 1)) {
-            ImGui::SetClipboardText(text.c_str());
-            return;
-        }
+    // The throws selected, as siteswap text (everything: the pattern as written, links and all);
+    // "" if none are (the selection's in the choreography's rows).
+    auto throwsText = [&]() -> std::string {
+        if (state.inChoreo && state.anchorInChoreo) return std::string();
+        if (!crossing() && (wholeSelected() || (rows == 1 && grid.period == 1))) return text;
         int r0, r1, b0, b1;
         selection(&r0, &r1, &b0, &b1);
-        ImGui::SetClipboardText(cellsToText(shownGrid(), r0, r1, b0, b1).c_str());
+        if (r0 > r1) return std::string();
+        return cellsToText(shownGrid(), r0, r1, b0, b1);
     };
     // Pasting into cells, once it's settled where: `step` apart, the grid made bigger if asked.
     auto finishPaste = [&](bool extend) {
@@ -337,14 +362,13 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         }
         finishPaste(false);
     };
-    auto paste = [&]() {
-        const char* clipText = ImGui::GetClipboardText();
+    auto pasteThrows = [&](const char* clipText) {
         SiteswapGrid clip;
         if (!clipText || !gridFromText(clipText, &clip) || (clip.period == 0 && !clip.rows[0].linked())) {
             note("The clipboard doesn't hold siteswap.");
             return;
         }
-        if (wholeSelected() || !readable) {
+        if ((wholeSelected() && !crossing()) || !readable) {
             // Everything selected: the pasted pattern replaces it, links and all.
             grid = clip;
             emit(true);
@@ -358,17 +382,21 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
                 note("A link can't go into cells. To paste a whole pattern, select everything first (Ctrl+A).");
                 return;
             }
-        for (int i = 0; i < clip.jugglers() && state.row + i < rows; ++i)
-            if (grid.rows[static_cast<size_t>(state.row + i)].linked()) {
-                note(tName(state.row + i) + " is a copy of another row: unlink it first.");
+        // Into the selection: from its top-left cell (where the cursor is, with nothing selected),
+        // as in a spreadsheet.
+        int r0, r1, b0, b1;
+        selection(&r0, &r1, &b0, &b1);
+        for (int i = 0; i < clip.jugglers() && r0 + i < rows; ++i)
+            if (grid.rows[static_cast<size_t>(r0 + i)].linked()) {
+                note(tName(r0 + i) + " is a copy of another row: unlink it first.");
                 return;
             }
         state.paste.active = true;
         state.paste.clip = clip;
-        state.paste.row = state.row;
-        state.paste.beat = state.beat;
+        state.paste.row = r0;
+        state.paste.beat = b0;
         state.paste.step = 1;
-        if (count.active() && count.countBeat(state.beat) && clip.period > 1)
+        if (count.active() && count.countBeat(b0) && clip.period > 1)
             state.askPasteWhere = true;  // literally, or onto the count's beats?
         else
             continuePaste();
@@ -413,6 +441,20 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
     };
 
     // ---- The choreography's rows: a mark's name typed into a cell is a keyframe on that beat.
+    // The choreography's cells selected (false: none), within the beats written out.
+    auto choreoRange = [&](int* k0, int* k1, int* b0, int* b1) {
+        if (!hasChoreo || (!state.inChoreo && !state.anchorInChoreo) || (state.inChoreo && state.inLoop)) return false;
+        selectedBeats(b0, b1);
+        if (crossing()) {
+            *k0 = 0;
+            *k1 = choreoRows - 1;
+        } else {
+            *k0 = std::min(state.choreoRow, state.choreoAnchorRow);
+            *k1 = std::max(state.choreoRow, state.choreoAnchorRow);
+        }
+        *b1 = std::min(*b1, choreo.written - 1);
+        return *b0 <= *b1;
+    };
     auto choreoCell = [&](int k, int b) -> const ChoreoGridCell& {
         const std::vector<ChoreoGridCell>& cells = choreo.rows[static_cast<size_t>(k)].cells;
         static const ChoreoGridCell none;
@@ -468,13 +510,19 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         return true;
     };
     // To a cell (anything half typed is taken first, where it was: "5" then an arrow is "05").
-    auto choreoGo = [&](int k, int b) {
+    // (`extend`: the selection's other corner stays where it is, in either set of rows.)
+    auto choreoGo = [&](int k, int b, bool extend = false) {
         if (!state.choreoTyped.empty() && state.inChoreo) choreoTake();
         state.inThrowNext = false;
         state.inChoreo = true;
         state.inLoop = false;
         state.choreoRow = k;
         state.choreoBeat = b;
+        if (!extend) {
+            state.anchorInChoreo = true;
+            state.choreoAnchorRow = k;
+            state.choreoAnchorBeat = b;
+        }
         state.choreoTyped.clear();
         state.scrollToCursor = true;
         res.scrubBeat = static_cast<double>(b);
@@ -584,6 +632,7 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
             state.inChoreo = false;
             state.inThrowNext = false;
             state.anchorRow = state.row = r;
+            state.anchorInChoreo = false;
             state.anchorBeat = 0;
             state.beat = grid.period - 1;
         }
@@ -609,9 +658,15 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         const bool hovered = ImGui::IsItemHovered();
         hoveredAny = hoveredAny || hovered;
         if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+            // The row's name: its whole walking (Shift: from the selection's corner to it).
             commitEdit();
             state.focused = true;
-            choreoGo(k, state.inChoreo ? state.choreoBeat : 0);
+            if (io.KeyShift) {
+                choreoGo(k, state.inChoreo ? state.choreoBeat : 0, true);
+            } else {
+                choreoGo(k, 0);
+                state.choreoBeat = std::max(0, choreo.written - 1);
+            }
         }
         if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
             commitEdit();
@@ -688,13 +743,22 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
                     res.walkLinkOffset = hoverBeat;
                 }
             } else {
-                choreoGo(hoverChoreo, hoverBeat);
+                choreoGo(hoverChoreo, hoverBeat, io.KeyShift);
+                state.selecting = true;
             }
         } else if (hoverRow == -1) {
+            // A beat's number: its column (in both sets of rows, with a choreography).
             state.inChoreo = false;
             state.anchorRow = 0;
+            state.anchorInChoreo = false;
             state.row = rows - 1;
             state.anchorBeat = state.beat = throwBeat(hoverBeat);
+            if (hasChoreo && hoverBeat < choreo.written) {
+                state.beat = hoverBeat < grid.period ? hoverBeat : state.beat;
+                state.anchorInChoreo = true;
+                state.choreoAnchorRow = choreoRows - 1;
+                state.choreoAnchorBeat = state.beat;
+            }
         } else if (io.KeyCtrl) {
             state.inChoreo = false;
             if (hoverRow == state.row) {
@@ -715,18 +779,30 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
     }
     if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) state.selecting = false;
     if (state.selecting && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 2.0f)) {
+        // (Into the other set of rows: every row of both, across the beats.)
         int r = 0, b = -1, k = -1;
         cellUnder(io.MousePos, &r, &b, &k);
-        if (b < 0) b = io.MousePos.x < cellsOrigin.x ? 0 : grid.period - 1;
-        r = std::clamp(r, 0, rows - 1);
-        state.row = r;
-        state.beat = std::min(b, grid.period - 1);
+        if (b < 0) b = io.MousePos.x < cellsOrigin.x ? 0 : columns - 1;
+        if (r == kChoreoRow && hasChoreo) {
+            state.inChoreo = true;
+            state.inLoop = false;
+            state.choreoRow = std::clamp(k, 0, choreoRows - 1);
+            state.choreoBeat = std::min(b, std::max(0, choreo.written - 1));
+        } else {
+            state.inChoreo = false;
+            r = r == -2 ? rows - 1 : std::clamp(r, 0, rows - 1);
+            state.row = r;
+            state.beat = std::min(b, grid.period - 1);
+        }
     }
     if (areaHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right) && hoverBeat >= 0 && hoverRow != -2) {
         commitEdit();
         state.focused = true;
         if (hoverRow == kChoreoRow) {
-            choreoGo(hoverChoreo, hoverBeat);
+            int k0, k1, cb0, cb1;
+            const bool inside = choreoRange(&k0, &k1, &cb0, &cb1) && hoverChoreo >= k0 && hoverChoreo <= k1 &&
+                                hoverBeat >= cb0 && hoverBeat <= cb1;
+            if (!inside) choreoGo(hoverChoreo, hoverBeat);
             state.choreoMenuRow = hoverChoreo;
             state.choreoMenuBeat = hoverBeat;
             openChoreoMenu = true;  // (opened outside the scrolling cells, where its menu is)
@@ -754,17 +830,195 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
     // ~ to turn the long way round, Delete or Backspace to clear, arrows, Tab, Home and End.
     // A step along a walking row: into the loop column after the beats written out, and out of it.
     // (The next column is before beat 1, beside the row names.)
-    auto choreoStep = [&](int dir) {
+    auto choreoStep = [&](int dir, bool extend = false) {
         if (state.inLoop) {
             if (dir > 0) choreoGo(state.choreoRow, 0);
             return;
         }
-        if (dir < 0 && state.choreoBeat == 0) {
+        if (dir < 0 && state.choreoBeat == 0 && !extend) {
             loopGo(state.choreoRow);
             return;
         }
         const int b = state.choreoBeat + dir;
-        if (b >= 0 && b < columns) choreoGo(state.choreoRow, b);
+        if (b >= 0 && b < columns) choreoGo(state.choreoRow, b, extend);
+    };
+
+    // ---- The selection, in either set of rows or both: clear, copy, paste, rotate.
+    // The choreography's selected keyframes cleared (rows that walk like another are skipped).
+    auto choreoClearRange = [&]() {
+        int k0, k1, b0, b1;
+        if (!choreoRange(&k0, &k1, &b0, &b1)) return;
+        for (int k = k0; k <= k1; ++k) {
+            if (!choreo.rows[static_cast<size_t>(k)].link.empty()) continue;
+            for (int b = b0; b <= b1; ++b) {
+                if (choreoCell(k, b).text.empty()) continue;
+                ChoreoEdit e;
+                e.kind = ChoreoEdit::Kind::Clear;
+                e.juggler = k;
+                e.beat = b;
+                res.choreoEdits.push_back(e);
+            }
+        }
+    };
+    auto clearAll = [&]() {
+        if (!(state.inChoreo && state.anchorInChoreo)) clearSelection();
+        choreoClearRange();
+    };
+    // The choreography's selected cells as a line of text: "walk: 01 . . 0b~ | 02 . 0c ." (a row
+    // per "|", "." for a beat with no keyframe; "~": the long way round).
+    auto walkText = [&]() -> std::string {
+        int k0, k1, b0, b1;
+        if (!choreoRange(&k0, &k1, &b0, &b1)) return std::string();
+        std::string out = "walk:";
+        for (int k = k0; k <= k1; ++k) {
+            if (k > k0) out += " |";
+            for (int b = b0; b <= b1; ++b) {
+                const std::string& t = choreoCell(k, b).text;
+                out += " " + (t.empty() ? std::string(".") : t);
+            }
+        }
+        return out;
+    };
+    auto copy = [&]() {
+        const std::string throws = throwsText(), walk = walkText();
+        const std::string both = throws + (!throws.empty() && !walk.empty() ? "\n" : "") + walk;
+        if (!both.empty()) ImGui::SetClipboardText(both.c_str());
+    };
+    // Pasting walking ("walk: ..."): from the selection's top-left (its first row, or C1 if it
+    // takes in both sets of rows), only as far as the beats written out and the rows there are.
+    auto pasteWalk = [&](const std::string& line, int k0, int b0) {
+        std::vector<std::vector<std::string>> clip(1);
+        std::string word;
+        for (size_t i = 5; i <= line.size(); ++i) {
+            const char c = i < line.size() ? line[i] : ' ';
+            if (c == ' ' || c == '\t' || c == '|' || c == '\r') {
+                if (!word.empty()) clip.back().push_back(word);
+                word.clear();
+                if (c == '|') clip.emplace_back();
+            } else {
+                word += c;
+            }
+        }
+        bool skipped = false;
+        for (size_t i = 0; i < clip.size(); ++i) {
+            const int k = k0 + static_cast<int>(i);
+            if (k >= choreoRows) break;
+            if (!choreo.rows[static_cast<size_t>(k)].link.empty()) {
+                skipped = true;
+                continue;
+            }
+            for (size_t j = 0; j < clip[i].size(); ++j) {
+                const int b = b0 + static_cast<int>(j);
+                if (b >= choreo.written) break;
+                std::string name = clip[i][j];
+                const bool longWay = !name.empty() && name.back() == '~';
+                if (longWay) name.pop_back();
+                ChoreoEdit e;
+                e.juggler = k;
+                e.beat = b;
+                if (name == ".") {
+                    if (choreoCell(k, b).text.empty()) continue;
+                    e.kind = ChoreoEdit::Kind::Clear;
+                } else {
+                    if (std::find(choreo.markNames.begin(), choreo.markNames.end(), name) == choreo.markNames.end()) continue;
+                    e.kind = ChoreoEdit::Kind::Set;
+                    e.mark = name;
+                    e.longTurn = longWay ? 1 : 0;
+                }
+                res.choreoEdits.push_back(e);
+            }
+        }
+        if (skipped) note("Rows that walk like another were left alone (unlink them to paste there).");
+    };
+    auto paste = [&]() {
+        const char* clipText = ImGui::GetClipboardText();
+        if (!clipText) return;
+        std::string throws, walk;
+        {
+            std::string line;
+            const std::string all = clipText;
+            for (size_t i = 0; i <= all.size(); ++i) {
+                if (i == all.size() || all[i] == '\n') {
+                    if (line.compare(0, 5, "walk:") == 0)
+                        walk = line;
+                    else if (!line.empty() && line != "\r")
+                        throws += (throws.empty() ? "" : "\n") + line;
+                    line.clear();
+                } else {
+                    line += all[i];
+                }
+            }
+        }
+        const bool onlyChoreo = state.inChoreo && state.anchorInChoreo;
+        if (!walk.empty()) {
+            if (!hasChoreo) {
+                note("That's walking (keyframes): there's no choreography here to paste it into.");
+            } else {
+                int k0 = 0, k1 = 0, b0 = 0, b1 = 0;
+                if (!choreoRange(&k0, &k1, &b0, &b1)) {
+                    int r0, r1;
+                    selection(&r0, &r1, &b0, &b1);
+                    k0 = 0;
+                }
+                if (b0 < choreo.written) pasteWalk(walk, k0, b0);
+            }
+        }
+        if (!throws.empty()) {
+            if (onlyChoreo && hasChoreo) {
+                if (walk.empty()) note("That's throws: paste it in the T rows (or select across both).");
+            } else {
+                pasteThrows(throws.c_str());
+            }
+        }
+        if (throws.empty() && walk.empty()) note("The clipboard doesn't hold siteswap or walking.");
+    };
+    // Ctrl+R / Ctrl+L: a beat later or earlier, round the end. The throws: everyone's (as ever);
+    // the choreography: the rows selected (or every row, with a selection across both).
+    // Beats added or taken out: `w` at `at`, in the throws (columns) and/or the walking (everyone's).
+    auto insertBeats = [&](int at, int w, bool throws, bool walking) {
+        if (throws && at <= grid.period) {
+            insertColumns(&grid, at, w, count, false);
+            emit(true);
+        }
+        if (walking && hasChoreo && at <= choreo.written) {
+            ChoreoEdit e;
+            e.kind = ChoreoEdit::Kind::InsertBeat;
+            e.beat = at;
+            e.count = w;
+            res.choreoEdits.push_back(e);
+        }
+    };
+    auto deleteBeats = [&](int from, int w, bool throws, bool walking) {
+        if (throws && from < grid.period) {
+            std::string why;
+            if (deleteColumns(&grid, from, std::min(w, grid.period - from), &why))
+                emit(true);
+            else if (!why.empty())
+                note(why);
+        }
+        if (walking && hasChoreo && from < choreo.written && choreo.written > 1) {
+            ChoreoEdit e;
+            e.kind = ChoreoEdit::Kind::DeleteBeat;
+            e.beat = from;
+            e.count = std::min(w, choreo.written - from);
+            if (e.count >= choreo.written) e.count = choreo.written - 1;  // (at least a beat stays)
+            res.choreoEdits.push_back(e);
+        }
+    };
+    auto beatsLabel = [](int b0, int w) {
+        return w == 1 ? "Beat " + std::to_string(b0 + 1) : "Beats " + std::to_string(b0 + 1) + "-" + std::to_string(b0 + w);
+    };
+    auto rotateChoreo = [&](int steps) {
+        int k0, k1, b0, b1;
+        if (!choreoRange(&k0, &k1, &b0, &b1)) return;
+        for (int k = k0; k <= k1; ++k) {
+            if (!choreo.rows[static_cast<size_t>(k)].link.empty()) continue;
+            ChoreoEdit e;
+            e.kind = ChoreoEdit::Kind::Rotate;
+            e.juggler = k;
+            e.beat = steps;
+            res.choreoEdits.push_back(e);
+        }
     };
     // In the loop column: whose part the juggler takes up next, and how far turned: "2", "2r+1/4",
     // "r1/2" (their own, turned); Enter, Tab or a move takes it; Backspace on nothing, or Delete,
@@ -829,6 +1083,35 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
                     }
                     continue;
                 }
+                if (c == '.' && state.choreoTyped.empty()) {
+                    // The mark of the keyframe before this beat (round from the end, if none is
+                    // before it): they stay where they are till here. Then on a beat.
+                    const int k = state.choreoRow, here = state.choreoBeat;
+                    if (!choreoEditable(k, here, true)) {
+                        res.plip = true;
+                        continue;
+                    }
+                    std::string mark;
+                    for (int i = 1; i < choreo.written && mark.empty(); ++i) {
+                        const int b = ((here - i) % choreo.written + choreo.written) % choreo.written;
+                        mark = choreoCell(k, b).text;
+                    }
+                    if (!mark.empty() && mark.back() == '~') mark.pop_back();
+                    if (mark.empty()) {
+                        note(cName(k) + " has no other keyframe to copy here.");
+                        res.plip = true;
+                        continue;
+                    }
+                    ChoreoEdit e;
+                    e.kind = ChoreoEdit::Kind::Set;
+                    e.juggler = k;
+                    e.beat = here;
+                    e.mark = mark;
+                    e.longTurn = 0;
+                    res.choreoEdits.push_back(e);
+                    if (here + 1 < choreo.written) choreoGo(k, here + 1);
+                    continue;
+                }
                 const bool nameChar = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z');
                 if (!nameChar) continue;
                 if (!choreoEditable(state.choreoRow, state.choreoBeat, true)) {
@@ -854,29 +1137,65 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
             else
                 state.focused = false;
         }
+        // A range selected (more than the cursor's cell, or into the throws): Backspace and Delete
+        // clear it all.
+        const bool rangeNow = crossing() || state.choreoRow != state.choreoAnchorRow || state.choreoBeat != state.choreoAnchorBeat;
         if (pressed(ImGuiKey_Backspace)) {
             if (!state.choreoTyped.empty())
                 state.choreoTyped.pop_back();
+            else if (rangeNow)
+                clearAll();
             else
                 choreoClear();
         }
         if (pressed(ImGuiKey_Delete)) {
             state.choreoTyped.clear();
-            choreoClear();
+            if (rangeNow)
+                clearAll();
+            else
+                choreoClear();
         }
         if (!ctrl && (pressed(ImGuiKey_LeftArrow) || pressed(ImGuiKey_RightArrow))) {
             // (A mark half typed is taken where it is first.)
             if (!state.choreoTyped.empty()) choreoTake();
-            choreoStep(ImGui::IsKeyPressed(ImGuiKey_RightArrow, true) ? 1 : -1);
+            choreoStep(ImGui::IsKeyPressed(ImGuiKey_RightArrow, true) ? 1 : -1, shift);
         }
         if (!ctrl && (pressed(ImGuiKey_UpArrow) || pressed(ImGuiKey_DownArrow))) {
             const int k = state.choreoRow + (ImGui::IsKeyPressed(ImGuiKey_UpArrow, true) ? -1 : 1);
             if (k >= 0 && k < choreoRows) {
-                choreoGo(k, state.choreoBeat);
-            } else if (k < 0) {  // up into the throws
+                choreoGo(k, state.choreoBeat, shift);
+            } else if (k < 0) {  // up into the throws (Shift: selecting into them)
                 if (!state.choreoTyped.empty()) choreoTake();
                 state.inChoreo = false;
-                moveTo(rows - 1, snapToCount(rows - 1, throwBeat(state.choreoBeat)), false);
+                moveTo(rows - 1, snapToCount(rows - 1, throwBeat(state.choreoBeat)), shift);
+            }
+        }
+        // Ctrl+A select all (the choreography's rows), C copy, X cut, V paste, R / L rotate.
+        if (ctrl) {
+            if (!state.choreoTyped.empty() &&
+                (ImGui::IsKeyPressed(ImGuiKey_A, false) || ImGui::IsKeyPressed(ImGuiKey_C, false) ||
+                 ImGui::IsKeyPressed(ImGuiKey_X, false) || ImGui::IsKeyPressed(ImGuiKey_V, false) ||
+                 ImGui::IsKeyPressed(ImGuiKey_R) || ImGui::IsKeyPressed(ImGuiKey_L)))
+                choreoTake();
+            if (ImGui::IsKeyPressed(ImGuiKey_A, false)) {
+                state.anchorInChoreo = true;
+                state.choreoAnchorRow = 0;
+                state.choreoAnchorBeat = 0;
+                state.choreoRow = choreoRows - 1;
+                state.choreoBeat = std::max(0, choreo.written - 1);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_C, false)) copy();
+            if (ImGui::IsKeyPressed(ImGuiKey_X, false)) {
+                copy();
+                clearAll();
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_V, false)) paste();
+            if (!shift && (ImGui::IsKeyPressed(ImGuiKey_R) || ImGui::IsKeyPressed(ImGuiKey_L))) {
+                // (Across both sets of rows, a whole count at a time, as the throws go.)
+                const bool right = ImGui::IsKeyPressed(ImGuiKey_R);
+                const int steps = (right ? 1 : -1) * (crossing() && count.active() ? count.n : 1);
+                rotateChoreo(steps);
+                if (crossing() && rotateGrid(&grid, steps)) emit(true);
             }
         }
         if (pressed(ImGuiKey_Home)) choreoGo(state.choreoRow, 0);
@@ -998,7 +1317,7 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
                 if (!state.editText.empty()) state.editText.pop_back();
                 showTyped();
             } else {
-                clearSelection();
+                clearAll();
             }
         }
         if (pressed(ImGuiKey_Delete)) {
@@ -1006,7 +1325,7 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
                 state.editText.clear();
                 commitEdit();
             } else {
-                clearSelection();
+                clearAll();
             }
         }
         // Moving: arrows (Shift: select), Tab / Shift+Tab, Home / End.
@@ -1020,6 +1339,7 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
             } else if (!right && !shift && hasThrowNext) {
                 state.inThrowNext = true;  // back into the next column, before beat 1
                 state.anchorRow = state.row;
+                state.anchorInChoreo = false;
                 state.anchorBeat = state.beat;
                 state.scrollToCursor = true;
             }
@@ -1041,8 +1361,8 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
                 } else if (!why.empty()) {
                     note(why);
                 }
-            } else if (!ctrl && hasChoreo && !shift && delta < 0 && state.row == rows - 1) {
-                choreoGo(0, state.beat);  // down into the choreography's rows
+            } else if (!ctrl && hasChoreo && delta < 0 && state.row == rows - 1) {
+                choreoGo(0, state.beat, shift);  // down into the choreography's rows (Shift: selecting into them)
             } else if (!ctrl) {
                 const int r = std::clamp(state.row - delta, 0, rows - 1);
                 moveTo(r, snapToCount(r, state.beat), shift);
@@ -1072,6 +1392,7 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
             if (ImGui::IsKeyPressed(ImGuiKey_A, false)) {
                 commitEdit();
                 state.anchorRow = 0;
+                state.anchorInChoreo = false;
                 state.anchorBeat = 0;
                 state.row = rows - 1;
                 state.beat = grid.period - 1;
@@ -1083,7 +1404,7 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
             if (ImGui::IsKeyPressed(ImGuiKey_X, false)) {
                 commitEdit();
                 copy();
-                clearSelection();
+                clearAll();
             }
             if (ImGui::IsKeyPressed(ImGuiKey_V, false)) {
                 commitEdit();
@@ -1100,6 +1421,7 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
                     emit(true);
                 else
                     note("Nothing to rotate: a pattern needs two or more beats.");
+                if (crossing()) rotateChoreo(steps);
             }
         }
     }
@@ -1150,7 +1472,10 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
     const int nowBeat = columns > 0 ? static_cast<int>(std::floor(playBeat)) % columns : 0;
     int r0, r1, b0, b1;
     selection(&r0, &r1, &b0, &b1);
-    const bool rangeSelected = r0 != r1 || b0 != b1;
+    const bool rangeSelected = r0 != r1 || b0 != b1 || crossing();
+    // ...and the choreography's.
+    int ck0 = 0, ck1 = -1, cb0 = 0, cb1 = -1;
+    const bool choreoSelected = choreoRange(&ck0, &ck1, &cb0, &cb1) && (crossing() || ck0 != ck1 || cb0 != cb1);
     for (int b = 0; b < columns; ++b) {
         const float x = cellsOrigin.x + colX[static_cast<size_t>(b)];
         const float w = colW[static_cast<size_t>(b)];
@@ -1197,7 +1522,8 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
                 fg = IM_COL32(0, 0, 0, 255);
             }
             draw->AddRectFilled(a, z, bg);
-            if (!repeat && throwCursor && rangeSelected && r >= r0 && r <= r1 && tb >= b0 && tb <= b1) draw->AddRectFilled(a, z, selectBg);
+            if (!repeat && (throwCursor || crossing()) && rangeSelected && r >= r0 && r <= r1 && tb >= b0 && tb <= b1)
+                draw->AddRectFilled(a, z, selectBg);
             const std::string shown = editingHere ? state.editText : cell.text();
             if (!shown.empty()) {
                 const ImVec2 size = ImGui::CalcTextSize(shown.c_str());
@@ -1228,6 +1554,7 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
             const bool copy = cell.locked || b >= choreo.written;
             const bool cursorHere = state.inChoreo && !state.inLoop && k == state.choreoRow && b == state.choreoBeat;
             draw->AddRectFilled(a, z, copy ? linkBg : frameBg);
+            if (choreoSelected && k >= ck0 && k <= ck1 && b >= cb0 && b <= cb1) draw->AddRectFilled(a, z, selectBg);
             const ImU32 markCol = copy ? IM_COL32(236, 226, 150, 120) : IM_COL32(236, 226, 150, 255);
             if (cell.stay)
                 draw->AddRectFilled(ImVec2(a.x - kGap, (a.y + z.y) * 0.5f - 1.5f), ImVec2(z.x, (a.y + z.y) * 0.5f + 1.5f), markCol);
@@ -1274,14 +1601,17 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
                 note(why);
             }
         };
-        if (ImGui::MenuItem("Insert Column Left")) {
-            insertColumns(&grid, b, 1, count, false);
-            changedBy(true);
-        }
-        if (ImGui::MenuItem("Insert Column Right")) {
-            insertColumns(&grid, b + 1, 1, count, false);
-            changedBy(true);
-        }
+        // The columns selected (if the menu's on one of them), else just this one; with a selection
+        // across both sets of rows, the walking's beats too.
+        int sr0, sr1, sb0, sb1;
+        selection(&sr0, &sr1, &sb0, &sb1);
+        if (!(sr0 <= sr1 && b >= sb0 && b <= sb1)) sb0 = sb1 = b;
+        const int w = sb1 - sb0 + 1;
+        const bool both = crossing();
+        const std::string cols = w == 1 ? std::string("Column") : std::to_string(w) + " Columns";
+        const std::string too = both ? " (Walking Too)" : "";
+        if (ImGui::MenuItem(("Insert " + cols + " Left" + too).c_str())) insertBeats(sb0, w, true, both);
+        if (ImGui::MenuItem(("Insert " + cols + " Right" + too).c_str())) insertBeats(sb1 + 1, w, true, both);
         if (count.active()) {
             const std::string what = "a " + std::to_string(n) + "-count";
             if (ImGui::MenuItem(("Insert " + what + " Left").c_str())) {
@@ -1294,7 +1624,9 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
             }
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Delete Column")) changedBy(deleteColumns(&grid, b, 1, &why));
+        if (ImGui::MenuItem(("Delete " + (w == 1 ? std::string("Column") : "Columns " + std::to_string(sb0 + 1) + "-" +
+                                                                          std::to_string(sb1 + 1)) + too).c_str()))
+            deleteBeats(sb0, w, true, both);
         // Everything from this beat to the end (a pattern written out longer than it needs).
         if (ImGui::MenuItem(("Delete Beat " + std::to_string(b + 1) + " and All After").c_str(), nullptr, false, b > 0))
             changedBy(deleteColumns(&grid, b, grid.period - b, &why));
@@ -1316,11 +1648,11 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         ImGui::Separator();
         if (ImGui::MenuItem("Cut", "Ctrl+X")) {
             copy();
-            clearSelection();
+            clearAll();
         }
         if (ImGui::MenuItem("Copy", "Ctrl+C")) copy();
         if (ImGui::MenuItem("Paste", "Ctrl+V")) paste();
-        if (ImGui::MenuItem("Clear", "Delete")) clearSelection();
+        if (ImGui::MenuItem("Clear", "Delete")) clearAll();
         ImGui::EndPopup();
     }
     ImGui::EndChild();
@@ -1411,6 +1743,7 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
                 state.inChoreo = false;
                 state.inThrowNext = true;
                 state.row = state.anchorRow = r;
+                state.anchorInChoreo = false;
                 state.anchorBeat = state.beat;
                 if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
                     state.throwNextMenuRow = r;
@@ -1494,29 +1827,34 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         const int b = state.choreoMenuBeat;
         if (b >= 0) {
             ImGui::Separator();
-            if (ImGui::MenuItem(("Insert a Beat Before " + std::to_string(b + 1)).c_str(), nullptr, false, b <= choreo.written)) {
-                ChoreoEdit e;
-                e.kind = ChoreoEdit::Kind::InsertBeat;
-                e.beat = b;
-                res.choreoEdits.push_back(e);
-            }
-            if (ImGui::MenuItem(("Insert a Beat After " + std::to_string(b + 1)).c_str(), nullptr, false, b < choreo.written)) {
-                ChoreoEdit e;
-                e.kind = ChoreoEdit::Kind::InsertBeat;
-                e.beat = b + 1;
-                res.choreoEdits.push_back(e);
-            }
-            if (ImGui::MenuItem(("Delete Beat " + std::to_string(b + 1)).c_str(), nullptr, false,
-                                b < choreo.written && choreo.written > 1)) {
-                ChoreoEdit e;
-                e.kind = ChoreoEdit::Kind::DeleteBeat;
-                e.beat = b;
-                res.choreoEdits.push_back(e);
-            }
+            // The beats selected (if the menu's on one of them), else just this one; with a selection
+            // across both sets of rows, the throws' columns too.
+            int k0, k1, sb0 = b, sb1 = b;
+            if (!(choreoRange(&k0, &k1, &sb0, &sb1) && b >= sb0 && b <= sb1)) sb0 = sb1 = b;
+            const int w = sb1 - sb0 + 1;
+            const bool both = crossing();
+            const std::string too = both ? " (Throws Too)" : "";
+            if (ImGui::MenuItem(((w == 1 ? std::string("Insert a Beat") : "Insert " + std::to_string(w) + " Beats") +
+                                 " Before " + std::to_string(sb0 + 1) + too).c_str(), nullptr, false, sb0 <= choreo.written))
+                insertBeats(sb0, w, both, true);
+            if (ImGui::MenuItem(((w == 1 ? std::string("Insert a Beat") : "Insert " + std::to_string(w) + " Beats") +
+                                 " After " + std::to_string(sb1 + 1) + too).c_str(), nullptr, false, sb1 < choreo.written))
+                insertBeats(sb1 + 1, w, both, true);
+            if (ImGui::MenuItem(("Delete " + beatsLabel(sb0, w) + too).c_str(), nullptr, false,
+                                sb0 < choreo.written && choreo.written > 1))
+                deleteBeats(sb0, w, both, true);
             if (b >= choreo.written && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("Beat %d is a copy (the loop): only beats 1-%d are written out.", b + 1, choreo.written);
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && b < choreo.written)
-                ImGui::SetTooltip("Everyone's walking: their keyframes on this beat go, and the later ones move up.");
+                ImGui::SetTooltip("Everyone's walking: their keyframes on these beats go, and the later ones move up.");
+            ImGui::Separator();
+            if (ImGui::MenuItem("Cut", "Ctrl+X")) {
+                copy();
+                clearAll();
+            }
+            if (ImGui::MenuItem("Copy", "Ctrl+C")) copy();
+            if (ImGui::MenuItem("Paste", "Ctrl+V")) paste();
+            if (ImGui::MenuItem("Clear", "Delete")) clearAll();
         }
         ImGui::EndPopup();
     }
@@ -1534,10 +1872,12 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         if (ImGui::MenuItem("Add Juggler Above", nullptr, false, rows < kMaxJugglers)) {
             changedBy(addJuggler(&grid, r, count, &why));
             state.row = state.anchorRow = r;
+            state.anchorInChoreo = false;
         }
         if (ImGui::MenuItem("Add Juggler Below", nullptr, false, rows < kMaxJugglers)) {
             changedBy(addJuggler(&grid, r + 1, count, &why));
             state.row = state.anchorRow = r + 1;
+            state.anchorInChoreo = false;
         }
         if (ImGui::MenuItem(("Remove " + tName(r) + " (and a juggler)").c_str(), nullptr, false, rows > 1))
             changedBy(removeJuggler(&grid, r, &why));
@@ -1701,6 +2041,11 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
         if (ImGui::Button("Make the Pattern Bigger")) {
             ImGui::CloseCurrentPopup();
             finishPaste(true);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Paste What Fits")) {
+            ImGui::CloseCurrentPopup();
+            finishPaste(false);
         }
         ImGui::SameLine();
         if (ImGui::Button("Don't Paste") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {

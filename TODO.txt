@@ -1,14 +1,7 @@
-P0
-* If we make marks the only way to keyframe a juggler, we can have a parallel grid for movement
-
-P?
 * When a juggler is passing through a spike, smooth their motion. They shouldn't come to a
   stop at all.
 * I need to be able to click on an arrow to select a spike.	
 * Clicing the arrow of spike marks doesn't work if you click on the stem instead of the arrowhead.
-* IT's hard to click on spikes. You have to be pixel-accurate on their outline.
-* left-click shouldn't be moving the camera anymore. 
-* I have a 24-beat pattern and have just assigned beat 4. There's a LOT of cruft drawing on the floor.
 * Home and B have too-similar functions. Make ONE of them reset the camera to autoframe and the
   other send the playhead back to 1.
 * allow user to choose which error types to audio mute and which to allow.
@@ -38,7 +31,6 @@ P?
   * hovering over a throw in the ladder will tell you it's spin rate.
 * Provide the option to set the # of spins for different heights. I'd make this pattern-
   global. So, ALL 8s in the pattern are 2s, for example.
-* Make animation of 1s more of a hand-across. The hands should nearly touch.
 
   
 Easter eggs

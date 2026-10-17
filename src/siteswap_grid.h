@@ -57,11 +57,14 @@ struct ChoreoGridView {
     bool looping = false;     // the walking loop hands rows round (so a row can show someone else)
 };
 struct ChoreoEdit {
-    // Set, Clear, LongTurn: a keyframe; InsertBeat, DeleteBeat: a beat of the walking (everyone's);
-    // Loop: a juggler's loop column.
-    enum class Kind { Set, Clear, LongTurn, InsertBeat, DeleteBeat, Loop } kind = Kind::Set;
+    // Set, Clear, LongTurn: a keyframe; InsertBeat, DeleteBeat: `count` beats of the walking
+    // (everyone's) at `beat`; Loop: a row's next column; Rotate: a row's keyframes `beat` beats
+    // later (round the beats written out; negative: earlier).
+    enum class Kind { Set, Clear, LongTurn, InsertBeat, DeleteBeat, Loop, Rotate } kind = Kind::Set;
     int juggler = 0, beat = 0;
+    int count = 1;
     std::string mark;      // Set: the mark's name; Loop: what was typed ("2r+1/4"; "": their own)
+    int longTurn = -1;     // Set: the long way round (1) or not (0); -1: as the keyframe there was
 };
 
 // The throwing loop (passing patterns): a next column (beside the row names) saying which T row
@@ -101,6 +104,11 @@ struct SiteswapGridState {
         int step = 1;           // 1: beats in a row; n: onto the count's beats
     } paste;
     bool askPasteWhere = false, askPasteExtend = false;
+    // The selection's other corner in the choreography's rows (anchorInChoreo; else it's anchorRow,
+    // anchorBeat in the throws'). A selection from one set of rows into the other takes every row
+    // of both, across its beats.
+    bool anchorInChoreo = false;
+    int choreoAnchorRow = 0, choreoAnchorBeat = 0;
     // The cursor in the choreography's rows (instead of the throws').
     bool inChoreo = false;
     int choreoRow = 0, choreoBeat = 0;

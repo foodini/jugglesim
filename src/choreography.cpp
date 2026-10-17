@@ -239,6 +239,18 @@ bool readContinuation(const std::string& text, Continuation* n) {
     return true;
 }
 
+const std::vector<int>& Choreography::group(int g) const {
+    static const std::vector<int> none;
+    return g >= 0 && g < static_cast<int>(groups.size()) ? groups[static_cast<size_t>(g)] : none;
+}
+
+int Choreography::groupsUsed() const {
+    int used = 0;
+    for (size_t g = 0; g < groups.size(); ++g)
+        if (!groups[g].empty()) used = static_cast<int>(g) + 1;
+    return used;
+}
+
 Continuation Choreography::continuation(int juggler) const {
     if (juggler >= 0 && juggler < static_cast<int>(next.size())) return next[static_cast<size_t>(juggler)];
     Continuation n;
@@ -584,6 +596,12 @@ bool removeSpikeMark(Choreography* c, int mark, int jugglers, std::string* why) 
     for (std::vector<Keyframe>& keys : c->keys)
         for (Keyframe& k : keys)
             if (k.mark > mark) --k.mark;
+    // Out of its groups; the marks after it move down one.
+    for (std::vector<int>& group : c->groups) {
+        group.erase(std::remove(group.begin(), group.end(), mark), group.end());
+        for (int& m : group)
+            if (m > mark) --m;
+    }
     c->marks.erase(c->marks.begin() + mark);
     return true;
 }
@@ -614,6 +632,13 @@ std::string choreographyToText(const Choreography& c) {
         const SpikeMark& mark = c.marks[m];
         out += "/M" + std::to_string(m + 1) + "=" + mark.name + "(" + number(mark.x) + "," + number(mark.z) + "," +
                std::to_string(degrees(mark.yaw)) + ")";
+    }
+    // Groups of marks: "/S1(M1,M3)" (group 10 is Ctrl+0's).
+    for (size_t g = 0; g < c.groups.size(); ++g) {
+        if (c.groups[g].empty()) continue;
+        out += "/S" + std::to_string(g + 1) + "(";
+        for (size_t i = 0; i < c.groups[g].size(); ++i) out += (i == 0 ? "M" : ",M") + std::to_string(c.groups[g][i] + 1);
+        out += ")";
     }
     for (size_t j = 0; j < c.links.size(); ++j) {
         const WalkLink& l = c.links[j];
@@ -706,6 +731,19 @@ bool choreographyFromText(const std::string& text, Choreography* result) {
             }
             if (!r.spot(&m.x, &m.z, &m.yaw)) return false;
             c.marks.push_back(m);
+        } else if (r.take('S')) {  // a group of marks: "S1(M1,M3)"
+            int g = 0;
+            if (!r.integer(&g) || g < 1 || g > Choreography::kMarkGroups || !r.take('(')) return false;
+            std::vector<int> members;
+            while (!r.take(')')) {
+                int mark = 0;
+                if ((!members.empty() && !r.take(',')) || !r.take('M') || !r.integer(&mark) || mark < 1) return false;
+                members.push_back(mark - 1);
+            }
+            std::sort(members.begin(), members.end());
+            members.erase(std::unique(members.begin(), members.end()), members.end());
+            if (static_cast<int>(c.groups.size()) < g) c.groups.resize(static_cast<size_t>(g));
+            c.groups[static_cast<size_t>(g - 1)] = members;
         } else if (r.take('J')) {
             int juggler = 0;
             if (!r.integer(&juggler) || juggler < 1 || juggler > 64 || !r.take('(')) return false;
@@ -746,6 +784,9 @@ bool choreographyFromText(const std::string& text, Choreography* result) {
     for (const std::vector<Keyframe>& keys : c.keys)
         for (const Keyframe& k : keys)
             if (k.mark >= static_cast<int>(c.marks.size())) return false;
+    for (const std::vector<int>& group : c.groups)
+        for (const int m : group)
+            if (m >= static_cast<int>(c.marks.size())) return false;
     // Marks without names (older files) are named; keyframes not on marks are put on them.
     nameMarks(&c);
     keyframesOntoMarks(&c);

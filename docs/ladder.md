@@ -24,7 +24,7 @@ can trace any point on a throw straight across to its beat number.
   throws are still drawn, so passes to and from them still show, but without value labels. The
   toolbar's arrows button, **C** or *View > Collapse All Jugglers* collapses every strip, or
   expands them all if they're all collapsed already. **Ctrl+1** to **Ctrl+6** collapse or expand
-  one juggler's strip.
+  one juggler's strip (except in choreography mode, where they make groups of spike marks).
 - **Resting the mouse on a throw** says what it is ("J2, beat 6: 3"); with clubs or rings, also
   its spin ("a double, 0.45 spins a beat").
 - **Throws.** Each throw is drawn from the beat it's thrown on to the beat it lands on, with an
@@ -405,8 +405,8 @@ are letters too; **Space** still plays and pauses, and **Ctrl+S** and **Ctrl+Z**
 - **Ctrl+C**, **Ctrl+X** and **Ctrl+V** copy, cut and paste as siteswap text, so patterns go to
   and from forums and other programs. A paste fills cells from the one you're on: pasting
   `<5 3 1|5 3 1|5 3 1>` on J2's beat 5 puts `5 3 1` on beats 5, 6 and 7 of J2, J3 and J4. If it
-  runs past the last beat or juggler you're asked whether to make the pattern bigger or not
-  paste. **Ctrl+A** selects everything, and pasting over everything replaces the whole pattern
+  runs past the last beat or juggler you're asked whether to make the pattern bigger, paste
+  what fits, or not paste. **Ctrl+A** selects everything, and pasting over everything replaces the whole pattern
   (links and all).
 - **Ctrl+click** (**Cmd+click** on a Mac) a throw in another juggler's row to make the cursor's
   juggler a copy of that juggler, starting with the throw you clicked: with the cursor in J2's
@@ -414,7 +414,8 @@ are letters too; **Space** still plays and pauses, and **Ctrl+S** and **Ctrl+Z**
   colliding is made all the same (the collisions show as errors), since it can take links for
   several jugglers before the pattern comes right.
 - **Right-click a cell** to insert a column left or right of it, or delete its column (every
-  juggler's), or cut, copy, paste and clear. **Delete Beat n and All After** cuts the pattern off
+  juggler's; as many columns as are selected, if it's in the selection; with a selection across
+  into the C rows, the walking's beats too), or cut, copy, paste and clear. **Delete Beat n and All After** cuts the pattern off
   there, and **Shorten to Repeat** cuts a pattern written out longer than it needs (`531531`)
   down to the shortest length it repeats at (`531`; a whole number of counts, with a count). **Right-click a juggler** (J1, J2, ...) to add a
   juggler above or below, remove them, make them the **Same as** another juggler from any of their
@@ -502,18 +503,34 @@ choreography, a count's columns aren't drawn narrow: keyframes can be on any bea
 - **Click a cell** to go to that beat (paused), with that juggler selected, so the stage shows
   it. Arrows, Tab, Home and End move the same way; Up from the top row goes into the throws, and
   Down from the last throw row comes here.
+- **Selecting** works as in the throws' rows: **Shift+click**, **Shift+arrows** or dragging
+  select a block, a row's name (C2) selects its whole walking, and **Ctrl+A** all of them.
+  **Backspace** or **Delete** clears the keyframes selected; **Ctrl+C**, **Ctrl+X** and **Ctrl+V**
+  copy, cut and paste them (as text: `walk: 01 . . 0b~ | 02 . 0c .`, a row per `|`, `.` for no
+  keyframe), pasting from the selection's top-left and only as far as the beats written out (it
+  doesn't wrap); **Ctrl+R** / **Ctrl+L** move the selected rows' keyframes a beat later or earlier,
+  round the end. Rows that walk like another are left alone (unlink them first).
+- **A selection from one set of rows into the other** (Shift+click or drag from a throw into a C
+  row, Shift+Down from the last T row, Shift+Up from C1) takes every row of both across its beats,
+  and clicking a **beat's number** selects that column in both. Then clearing, copying and pasting
+  take in throws and walking together, Ctrl+R / Ctrl+L move both a beat (a whole count, with a
+  count directive), and the right-click menus insert or delete the beats in both, so they stay
+  lined up; each is one undo step. (Where the two lengths differ, each set of rows takes only the
+  beats it has.)
 - **Type a mark's name** for a keyframe on that mark on that beat: two characters (`0b`), or
   one and **Tab** (`5` Tab is `05`); one and Enter, an arrow or a click elsewhere takes it as
   `05` too, then goes where that says. The cursor moves on a beat. A name no mark has is refused.
   **~** turns the long way round on the way to the keyframe; **Backspace** or **Delete** clears
-  it.
+  it. **.** (a full stop) copies the mark of the row's keyframe before this beat (round from the
+  end, if there's none before it), so the juggler stays where they are until here; the cursor then
+  moves on a beat.
 - **In the next column**, type which C row (`2`), and a turn if it's turned (`2r+1/4`, `r1/2`);
   Enter, Tab or a move takes it, and **Backspace** on nothing or **Delete** puts back its own
   path, unturned. **Right-click** for a builder. Left arrow from beat 1 goes into it; Right or
   Tab goes back to beat 1.
-- **Right-click a cell** for **Insert a Beat Before / After** and **Delete Beat**: everyone's
-  walking gets a beat longer or shorter there (the keyframes after it move along, and the
-  Length with them).
+- **Right-click a cell** for **Insert a Beat Before / After** and **Delete Beat** (as many as are
+  selected, if it's in the selection): everyone's walking gets longer or shorter there (the
+  keyframes after move along, and the Length with them); and Cut, Copy, Paste and Clear.
 - A row that **walks like** another shows the leader's marks, dim, and its header says how
   (`C2 @1[16] -1/6`: C1's walking 16 beats on, turned 1/6 of a circle clockwise). **Ctrl+click** a beat in
   another juggler's row to make the cursor's juggler walk like them from that beat (as

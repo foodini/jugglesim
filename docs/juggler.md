@@ -199,7 +199,30 @@ on a stage floor) and **keyframes**. This is the first stage; see the design not
   The grid is saved with the choreography (so it's the pattern's): loading a pattern puts its
   grid back as you left it, and undo undoes a change to it. Changing it never moves anything
   already placed. Patterns saved before the grid was kept leave whatever grid is in use.
-- **Spike marks:** drag anywhere inside a mark's ring to move it (snapping to the grid; **Shift**:
+- **Spike marks:** **click** a mark (or its name: handy where several share a spot) to select it (its arrow and name go white; any selected
+  juggler isn't any more), and **Shift+click** to add more marks or take one out again. Dragging
+  any selected mark moves them all together, keeping their shape (the one you drag snaps to the
+  grid; **Shift**: freely). **Esc**, or a click on the empty floor or a juggler, clears the
+  selection.
+- **Groups of marks**, to select again with one key, as in a strategy game: select some marks and
+  press **Ctrl+1** (up to **Ctrl+9**, and **Ctrl+0** for a tenth); then **1** selects them again
+  (replacing the selection) and **Shift+1** adds them to it. Ctrl+1 with nothing selected empties
+  group 1. A mark can be in any number of groups, and dragging a mark moves only what's selected,
+  never a whole group. **Hold Ctrl** to see the groups: under each mark's name, a column for each
+  group up to the highest there is, with the group's number where the mark is in it and a gap where
+  it isn't (`1 3 5`, `  34 `), so where a digit sits says which group it is even before you can
+  read it; and each group's marks joined by the shortest lines that connect them, in the group's
+  colour and dash pattern, with its number in a disc on its longest line. The lines run between
+  the marks' names, so where marks share a spot it's clear which one is in the group. The
+  Choreography panel has a chip for each group (its number and how many marks): rest the mouse on
+  one to see just that group, click it to select the group (Shift+click: add it), right-click to
+  empty it. A group just selected shows its lines until the selection changes. Groups are saved
+  with the choreography (and undo undoes them); deleting a mark takes it out of its groups. (In
+  choreography mode Ctrl+1 to Ctrl+6 are the groups', not the ladder's strips.)
+- A mark's name sits on its middle, so it's never nearer another mark; where names
+  would overlap (marks on the same spot, say), each moves out along its own arrow just far
+  enough to clear the others. A name behind a juggler is dimmed rather than hidden, so it can
+  still be read. Drag anywhere inside a mark's ring to move it (snapping to the grid; **Shift**:
   freely), and its arrow (anywhere along it, or near its tip) to turn it (in 15-degree steps; **Shift**: freely; with the radial grid, the steps are
   counted from facing the middle, so one of them always points along the mark's spoke). Right-click a mark to make it
   **Face the Middle**, to **Rename** it, to **Delete** it, or to **Add Another Spike Mark Here**
@@ -216,8 +239,7 @@ on a stage floor) and **keyframes**. This is the first stage; see the design not
   - **drag the juggler** to where they should be: dropped on a mark, they stand on it, facing as
     it says; anywhere else, they stand there (snapped to the grid; **Shift**: freely) facing as
     they were, and a new mark is made there for them (every keyframe is on a mark); or
-  - **select the juggler** and **click a mark** (its ring, if someone's standing on it).
-  - or, from the keyboard, type the mark's name in the juggler's **choreography row** under the
+  - from the keyboard, type the mark's name in the juggler's **choreography row** under the
     siteswap grid's throws (see *Choreography rows* in [ladder.md](ladder.md)).
 
   Either way, a small popup then asks how long they **loiter** there: click **0** to **4**, one
@@ -233,7 +255,10 @@ on a stage floor) and **keyframes**. This is the first stage; see the design not
   mark (J1 on mark 1, and so on).
 - **The choreography's length** (*Length* in the Choreography panel) is how many beats it takes
   to come round. It starts as the siteswap's period, but it's the choreography's own: editing
-  the siteswap doesn't change it, and it doesn't have to match. Shortening it past some
+  the siteswap doesn't change it, and it doesn't have to match. Type a length and press Enter,
+  or use **-**/**+** for a beat at a time (**Ctrl+click** them: a whole period of the pattern).
+  Lengthening adds empty beats at the end; to add or take out a beat in the middle, right-click a
+  beat in the C rows under the siteswap grid. Shortening it past some
   keyframes asks first, listing the keyframes that would be deleted. When neither length is a
   multiple of the other (a 3-beat siteswap with an 8-beat walk, say), a warning in the top-left
   of the juggler pane says how long it takes them to line up again (24 beats). **Dismiss** it if
