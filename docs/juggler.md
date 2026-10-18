@@ -30,6 +30,13 @@ remembered; dragging its slider turns slow motion on.
 Loading a pattern from the library, starting a new one, or pasting a whole pattern over the siteswap grid
 starts again from beat 1.
 
+While the throws have an error (two props landing together, props that don't add up, a pass with
+no target yet), the stage shows the pattern as it last worked, tinted red round the edge, with the
+jugglers, spike marks and paths all there, so you can see where everyone is while you put it right.
+The walking rows (C1, C2, ...) stay in the grid too, as they were.
+Playback pauses when the error first appears (you're usually looking at a moment); press Space to
+play on.
+
 Stepping works in both directions, by any amount: the juggler's position at any moment is
 worked out directly from the pattern (every flight is an exact parabola), so nothing has to be
 replayed to get there.
@@ -221,12 +228,15 @@ on a stage floor) and **keyframes**. This is the first stage; see the design not
   choreography mode Ctrl+1 to Ctrl+6 are the groups', not the ladder's strips.)
 - A mark's name sits on its middle, so it's never nearer another mark; where names
   would overlap (marks on the same spot, say), each moves out along its own arrow just far
-  enough to clear the others. A name behind a juggler is dimmed rather than hidden, so it can
+  enough to clear the others; marks pointing nearly the same way are spread side by side in
+  the order of their arrows, and a name moved off its middle gets a thin leader line to its
+  own arrow. A name behind a juggler is dimmed rather than hidden, so it can
   still be read. Drag anywhere inside a mark's ring to move it (snapping to the grid; **Shift**:
   freely), and its arrow (anywhere along it, or near its tip) to turn it (in 15-degree steps; **Shift**: freely; with the radial grid, the steps are
   counted from facing the middle, so one of them always points along the mark's spoke). Right-click a mark to make it
   **Face the Middle**, to **Rename** it, to **Delete** it, or to **Add Another Spike Mark Here**
-  (on the same spot: turn it by its arrow); right-click the floor to **Add a Spike Mark** there.
+  (on the same spot, facing the other way: turn it by its arrow); right-click the floor to **Add a
+  Spike Mark** there. A new mark comes selected (white), so you can see which it is.
   A mark comes before the path points drawn on it; someone standing on it is picked only where
   the mouse is squarely on their body. Where several marks share a spot, putting a juggler there lights up their arrows and names:
   click the one they stand on (**Esc** keeps the one they're on).

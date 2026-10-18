@@ -31,6 +31,9 @@
   * hovering over a throw in the ladder will tell you it's spin rate.
 * Provide the option to set the # of spins for different heights. I'd make this pattern-
   global. So, ALL 8s in the pattern are 2s, for example.
+* allow click to select an SM so I can hit delete on one.
+* Delete/Add juggler
+  * Deleting a juggler should turn all passes to them into selfs and recompute offsets.
 
   
 Easter eggs
