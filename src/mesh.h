@@ -31,6 +31,12 @@ Mesh makeLatheMesh(const float* ys, const float* radii, int count, int slices);
 Mesh makeRingSectorsMesh(float innerRadius, float outerRadius, float halfThickness,
                          const float* startAngles, const float* endAngles, int count);
 
+// Pieces of a torus (in the XZ plane, centered at the origin, normal +Y; the tube's middle
+// majorRadius from the center, the tube minorRadius thick): one for each [startAngles[i],
+// endAngles[i]] (radians, measured from +X toward +Z), all in one mesh, the ends closed.
+Mesh makeTorusSectorsMesh(float majorRadius, float minorRadius, const float* startAngles, const float* endAngles,
+                          int count);
+
 void destroyMesh(Mesh& mesh);
 
 // The fixed set of primitives everything in the scene is built from.

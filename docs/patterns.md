@@ -76,7 +76,7 @@ siteswap ; name ; settings
 
 It's plain text, so you can back it up, copy it to another computer, or edit it by hand
 (JuggleSim reads it when it starts). The settings are optional:
-`props=balls|clubs|rings`, `tempo=` (beats per minute), `dwell=` (beats) and, for passing
+`props=balls|clubs|rings|hoops`, `tempo=` (beats per minute), `dwell=` (beats) and, for passing
 patterns, `distance=` (meters, 1 to 5, or `auto`). Two more are written by JuggleSim:
 `choreo=` (the choreography: spike marks and keyframes) and `camera=x,y,z,yaw,pitch` (a free
 camera: where it is in meters, and the way it looks in degrees; see

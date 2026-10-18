@@ -25,7 +25,7 @@ can trace any point on a throw straight across to its beat number.
   toolbar's arrows button, **C** or *View > Collapse All Jugglers* collapses every strip, or
   expands them all if they're all collapsed already. **Ctrl+1** to **Ctrl+6** collapse or expand
   one juggler's strip (except in choreography mode, where they make groups of spike marks).
-- **Resting the mouse on a throw** says what it is ("J2, beat 6: 3"); with clubs or rings, also
+- **Resting the mouse on a throw** says what it is ("J2, beat 6: 3"); with clubs, rings or hoops, also
   its spin ("a double, 0.45 spins a beat").
 - **Throws.** Each throw is drawn from the beat it's thrown on to the beat it lands on, with an
   arrowhead at the landing.

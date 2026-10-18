@@ -119,7 +119,7 @@ void poseBody(JugglerPose& p, const BodyMotion& m) {
 }
 
 void poseArmsForPalms(JugglerPose& p, Vec3 palmRight, Vec3 palmLeft, float elbowFlare,
-                      bool grip) {
+                      bool grip, const Vec3* gripRight, const Vec3* gripLeft) {
     // Palms face up; the fingers point the way the arm is reaching, seen from above (out from
     // the shoulder toward the palm), and the wrist sits half a hand-length back from the palm
     // center along that. The wrist bends as needed, so the palm stays level under the ball.
@@ -147,6 +147,16 @@ void poseArmsForPalms(JugglerPose& p, Vec3 palmRight, Vec3 palmLeft, float elbow
         // Palms face each other (the right hand is at -X, so its palm faces +X).
         p.palmNormalR = Vec3(1.0f, 0.0f, 0.0f);
         p.palmNormalL = Vec3(-1.0f, 0.0f, 0.0f);
+        // Holding a prop: the palm lies along it (its normal square to the prop, still facing
+        // in as far as that allows).
+        auto alongProp = [](Vec3 normal, const Vec3* axis) {
+            if (!axis) return normal;
+            const Vec3 a = normalize(*axis);
+            const Vec3 n = normal - a * dot(normal, a);
+            return length(n) > 0.2f ? normalize(n) : normal;
+        };
+        p.palmNormalR = alongProp(p.palmNormalR, gripRight);
+        p.palmNormalL = alongProp(p.palmNormalL, gripLeft);
     } else {
         p.palmNormalR = p.palmNormalL = Vec3(0.0f, 1.0f, 0.0f);
     }

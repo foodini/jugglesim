@@ -104,14 +104,49 @@ Vec3 hermite(Vec3 p0, Vec3 v0, Vec3 p1, Vec3 v1, float T, float tau) {
 // rim, so its center is a ring-radius away. Clubs and rings spin as they fly.
 constexpr float kClubGripToCenter = kClubGrip - kClubCenterOfMass;                // 0.172 m
 constexpr float kRingGripToCenter = 0.5f * (kRingOuterRadius + kRingInnerRadius);  // band middle
+constexpr float kHoopGripToCenter = kHoopRadius;                                    // tube middle
 // How far a prop reaches from its center of mass in any direction (for framing the camera).
 float propReach(PropType prop) {
     switch (prop) {
         case PropType::Club: return std::max(kClubCenterOfMass, kClubLength - kClubCenterOfMass);
         case PropType::Ring: return kRingOuterRadius;
+        case PropType::Hoop: return kHoopRadius + kHoopTubeRadius;
         default: return kBallRadius;
     }
 }
+// ---- Air drag. Props are slowed by the air in proportion to their speed (linear drag: not
+// quite the real thing, which goes with the square of the speed, but close enough, and a
+// flight still has an exact formula, so any moment can be worked out directly). With
+// tau = terminal speed / g, and w = (0, -g tau, 0) the velocity a prop would settle to falling:
+//   velocity(t) = w + (v0 - w) e^(-t/tau)
+//   position(t) = p0 + w t + (v0 - w) tau (1 - e^(-t/tau))
+// It hardly shows for balls, clubs and rings; a hoop is light for its size and visibly isn't
+// thrown on a parabola.
+float terminalSpeed(PropType prop) {
+    switch (prop) {
+        case PropType::Club: return 20.0f;  // m/s
+        case PropType::Ring: return 15.0f;
+        case PropType::Hoop: return 8.0f;   // 180 g, flying about edge-on
+        default: return 30.0f;              // a beanbag
+    }
+}
+struct Drag {
+    float tau = 1.0f;  // seconds
+    Vec3 terminal() const { return Vec3(0.0f, -kGravity * tau, 0.0f); }
+    float reach(float t) const { return tau * (1.0f - std::exp(-t / tau)); }  // (about t, early on)
+    Vec3 position(Vec3 p0, Vec3 v0, float t) const { return p0 + terminal() * t + (v0 - terminal()) * reach(t); }
+    Vec3 velocity(Vec3 v0, float t) const { return terminal() + (v0 - terminal()) * std::exp(-t / tau); }
+    // The launch velocity that takes a prop from p0 to p1 in T seconds.
+    Vec3 launch(Vec3 p0, Vec3 p1, float T) const {
+        return terminal() + (p1 - p0 - terminal() * T) * (1.0f / std::max(reach(T), 1e-4f));
+    }
+};
+Drag dragFor(PropType prop) {
+    Drag d;
+    d.tau = terminalSpeed(prop) / kGravity;
+    return d;
+}
+
 // Clubs and rings spin about the line through the shoulders, the top turning back toward the
 // juggler as they leave the hand (clockwise, seen from the juggler's left). The axis is turned
 // about 7 degrees (counterclockwise seen from above for the right hand, clockwise for the
@@ -145,6 +180,10 @@ PropAngles propAngles(PropType prop) {
     switch (prop) {
         case PropType::Club: return {-1.31f, -1.00f, -2.65f};
         case PropType::Ring: return {0.10f, -0.35f, -0.50f};
+        // A hoop is held by its near side, out in front of the hand (so it stays clear of the
+        // juggler): caught pointing forward, hanging down and a little forward at the bottom of
+        // the swoop, and let go above the hand, leaning a little forward.
+        case PropType::Hoop: return {-0.40f, -1.57f, -2.82f};
         default: return {};
     }
 }
@@ -178,6 +217,47 @@ Vec3 passCatchPoint(bool right, float heightFraction) {
     return Vec3(right ? -x : x, 1.22f + 0.18f * heightFraction, 0.25f);
 }
 
+// ---- Throwing to someone behind you, and catching from someone behind you. A partner more
+// than kBehindAngle off the way a juggler faces is behind them.
+//   - A throw to someone behind is a dropback: after the usual low scoop, the hand comes
+//     straight up in front of the body and lets go about head high, the upper arm reaching
+//     forward and the elbow bent about square: in front of the throwing shoulder (a target
+//     straight back), or in front of the face (one across the body, like the left hand of a
+//     partner a couple of meters back): the hand comes at the face, without hitting it. The
+//     prop spins the usual way.
+//   - A pass from someone behind is caught high, the hand up by the head on its own side, and
+//     taken down into the usual scoop.
+//   - A dropback to a partner looking at your back spins, for them, the way their own selfs
+//     do, so they catch it as they would a self (palm up, forearm about level).
+constexpr float kBehindAngle = 100.0f * kPi / 180.0f;
+constexpr float kDropbackAcross = 14.0f * kPi / 180.0f;  // a target this far across: in front of the face
+// ...if it's far enough back to need aiming: up close (back to back), the arm just swings up
+// about the shoulder.
+constexpr float kDropbackAimNear = 0.8f, kDropbackAimFar = 1.6f;  // m back
+Vec3 dropbackOverShoulder(bool right) { return Vec3(right ? -0.20f : 0.20f, 1.72f, 0.28f); }
+Vec3 dropbackByFace(bool right) { return Vec3(right ? -0.09f : 0.09f, 1.66f, 0.30f); }
+Vec3 dropbackLowPoint(bool right) { return Vec3(right ? -0.12f : 0.12f, 0.92f, 0.33f); }
+Vec3 behindCatchPoint(bool right) { return Vec3(right ? -0.27f : 0.27f, 1.70f, 0.06f); }
+
+// Hoops are thrown from high up, the arm reaching up and forward above the head, after a low
+// swoop at about waist height (from video of a hoop juggler).
+Vec3 hoopThrowPoint(bool right) { return Vec3(right ? -0.15f : 0.15f, 1.90f, 0.30f); }
+Vec3 hoopLowPoint(bool right) { return Vec3(right ? -0.14f : 0.14f, 0.95f, 0.33f); }
+// Dropbacks with hoops let go higher too.
+const Vec3 kHoopDropbackLift(0.0f, 0.20f, 0.0f);
+// The angle a club or ring leaves the hand at on a dropback (see PropAngles): about upright.
+constexpr float kClubDropbackRelease = -0.30f, kRingDropbackRelease = 0.60f;
+
+// Pushes a point (juggler-local) out of the space around the head, so a hand never goes
+// through it.
+Vec3 clearOfHead(Vec3 p) {
+    const Vec3 head(0.0f, 1.63f, 0.0f);
+    const float clearance = 0.19f;
+    const Vec3 d = p - head;
+    const float dist = length(d);
+    return dist < clearance && dist > 1e-4f ? head + d * (clearance / dist) : p;
+}
+
 // A juggler's local frame in the world: a position, and a turn about +Y (yaw) that takes their
 // facing direction (+Z) to (sin yaw, 0, cos yaw). Matches Mat4::translation * Mat4::rotationY.
 struct Placement {
@@ -205,7 +285,8 @@ JugglingLoop physicsLoop(const JugglingLoop& loop) {
 class Evaluator {
 public:
     Evaluator(const JugglingLoop& loop, const JuggleParams& params, float intensity = 0.0f)
-        : loop_(loop), period_(loop.period), jugglers_(loop.jugglers), params_(params), intensity_(intensity) {
+        : loop_(loop), period_(loop.period), jugglers_(loop.jugglers), params_(params), intensity_(intensity),
+          drag_(dragFor(params.prop)) {
         // With a choreography the jugglers move: where they are depends on the time. Otherwise
         // they stand still, in the default formation.
         cycle_ = choreographyCycle(loop, params);
@@ -335,13 +416,72 @@ public:
     // Where j's hand releases on beat b and catches before throwing on beat b (j-local).
     Vec3 throwPointAt(int j, int b) const {
         if (valueAt(j, b) == 1 && destAt(j, b) == j) return handAcrossThrowPoint(rightHand(j, b));
+        if (isDropback(j, b)) return dropbackThrowPoint(j, b) + (prop() == PropType::Hoop ? kHoopDropbackLift : Vec3());
+        if (prop() == PropType::Hoop && valueAt(j, b) > 0 && !isHeld(j, b))
+            return turned(hoopThrowPoint(rightHand(j, b)), throwTurn(j, b));
         return turned(throwPoint(rightHand(j, b), heightFraction(j, b)), throwTurn(j, b));
     }
     Vec3 catchPointAt(int j, int b) const {
         if (incomingAt(j, b) == 1 && incomingFrom(j, b) == j) return handAcrossCatchPoint(rightHand(j, b));
-        if (incomingPass(j, b) && prop() != PropType::Ball)
-            return turned(passCatchPoint(rightHand(j, b), incomingHeightFraction(j, b)), catchTurn(j, b));
+        if (catchFromBehind(j, b)) return behindCatchPoint(rightHand(j, b));
+        if (incomingPass(j, b) && prop() != PropType::Ball) {
+            // (A dropback to someone looking at your back: caught like a self.)
+            const int src = incomingFrom(j, b), from = b - incomingAt(j, b);
+            if (!isDropback(src, from) || flips(src, from))
+                return turned(passCatchPoint(rightHand(j, b), incomingHeightFraction(j, b)), catchTurn(j, b));
+        }
         return turned(catchPoint(rightHand(j, b), incomingHeightFraction(j, b)), catchTurn(j, b));
+    }
+
+    // ---- Behind (see kBehindAngle). The angle (radians, positive toward j's left) from where
+    // j faces at beat tj to where `other` is at beat tOther.
+    float bearingTo(int j, double tj, int other, double tOther) const {
+        const Vec3 local = placement(j, tj).localPoint(placement(other, tOther).position);
+        return std::atan2(local.x, local.z);
+    }
+    // The throw j makes on beat b goes to someone behind them (a dropback).
+    bool isDropback(int j, int b) const {
+        const int v = valueAt(j, b);
+        if (v <= 0 || isHeld(j, b) || destAt(j, b) == j) return false;
+        ThrowGeometry& g = geometry(j, b);
+        if (g.dropback < 0) {
+            const int r = destAt(j, b);
+            g.dropback = std::fabs(bearingTo(j, b, r, catchTimeFor(r, b + v))) > kBehindAngle ? 1 : 0;
+        }
+        return g.dropback != 0;
+    }
+    // The pass j catches before throwing on beat b comes from someone behind them.
+    bool catchFromBehind(int j, int b) const {
+        if (!incomingPass(j, b)) return false;
+        ThrowGeometry& g = geometry(j, b);
+        if (g.fromBehind < 0)
+            g.fromBehind = std::fabs(bearingTo(j, catchTimeFor(j, b), incomingFrom(j, b), b - incomingAt(j, b))) >
+                                   kBehindAngle
+                               ? 1
+                               : 0;
+        return g.fromBehind != 0;
+    }
+    // Whether the throw j makes on beat b starts from a low scoop and comes all the way up to a
+    // high release (a dropback, or any hoop throw), and the low point it starts from.
+    bool longDrive(int j, int b) const {
+        return isDropback(j, b) || (prop() == PropType::Hoop && valueAt(j, b) > 0 && !isHeld(j, b));
+    }
+    Vec3 longDriveLowPoint(int j, int b) const {
+        return prop() == PropType::Hoop ? hoopLowPoint(rightHand(j, b)) : dropbackLowPoint(rightHand(j, b));
+    }
+    // A dropback's release (j-local): in front of the throwing shoulder for a catching hand straight
+    // back (or close behind), blending to in front of the face for one kDropbackAcross or more
+    // across the body, a couple of meters back.
+    Vec3 dropbackThrowPoint(int j, int b) const {
+        const bool right = rightHand(j, b);
+        const int r = destAt(j, b);
+        const double catchTime = catchTimeFor(r, b + valueAt(j, b));
+        const Vec3 hand = placement(j, b).localPoint(placement(r, catchTime).point(catchPointAt(r, b + valueAt(j, b))));
+        const float across = (hand.x - neutralShoulder(right).x) * (right ? 1.0f : -1.0f);
+        const float u = std::clamp(std::atan2(across, std::max(-hand.z, 0.1f)) / kDropbackAcross, 0.0f, 1.0f);
+        const float n = std::clamp((-hand.z - kDropbackAimNear) / (kDropbackAimFar - kDropbackAimNear), 0.0f, 1.0f);
+        const float w = u * u * (3.0f - 2.0f * u) * n * n * (3.0f - 2.0f * n);
+        return dropbackOverShoulder(right) * (1.0f - w) + dropbackByFace(right) * w;
     }
 
     // ---- Turning toward a partner who isn't straight ahead (radians about +Y, positive toward
@@ -349,10 +489,17 @@ public:
     float throwTurn(int j, int b) const {
         const int v = valueAt(j, b);
         if (v <= 0 || isHeld(j, b)) return 0.0f;
+        if (isDropback(j, b)) {
+            // (Turned from straight back toward the target.)
+            const int r = destAt(j, b);
+            const float angle = bearingTo(j, b, r, catchTimeFor(r, b + v));
+            const float off = angle - (angle > 0.0f ? kPi : -kPi);
+            return std::clamp(kPassTurnShare * off, -kMaxPassTurn, kMaxPassTurn);
+        }
         return turnTo(j, destAt(j, b), b);
     }
     float catchTurn(int j, int b) const {
-        if (!incomingPass(j, b)) return 0.0f;
+        if (!incomingPass(j, b) || catchFromBehind(j, b)) return 0.0f;
         return turnTo(j, incomingFrom(j, b), b);
     }
     // Whether j throws with the right hand on beat b (their hands may be swapped: LRswap).
@@ -390,8 +537,12 @@ public:
     // ---- Props: how each throw's prop is turned and how fast it spins.
     PropType prop() const { return params_.prop; }
     float gripToCenter() const {
-        return prop() == PropType::Club ? kClubGripToCenter
-                                        : (prop() == PropType::Ring ? kRingGripToCenter : 0.0f);
+        switch (prop()) {
+            case PropType::Club: return kClubGripToCenter;
+            case PropType::Ring: return kRingGripToCenter;
+            case PropType::Hoop: return kHoopGripToCenter;
+            default: return 0.0f;
+        }
     }
     // The plane the throw made on beat b spins in (thrower-local): clubs and rings both spin end
     // over end, in the plane running front to back through the juggler (turned by
@@ -424,8 +575,50 @@ public:
     // The angle (in the thrower's frame) the throw arrives at: whatever puts it at the caught
     // angle in the catcher's frame.
     float arrivalAngle(int j, int b) const {
-        const float caught = propAngles(prop()).caught;
+        const float caught = caughtAngle(j, b);
         return flips(j, b) ? -caught : caught;
+    }
+    // The angle the throw j makes on beat b is caught at, in its arrival frame (see
+    // arrivalFrame): square to its flight, as a hand takes it (the palm along the club), the
+    // top being whichever end is higher (if it's about level, the end toward where it came
+    // from: forward, for a self). 1s and held 2s keep the usual caught angle.
+    float caughtAngle(int j, int b) const {
+        const PropAngles a = propAngles(prop());
+        const int v = valueAt(j, b);
+        const int r = destAt(j, b);
+        if (prop() == PropType::Ball || v <= 0 || isHeld(j, b) || (r == j && v < 3)) return a.caught;
+        ThrowGeometry& g = geometry(j, b);
+        if (g.caughtSet) return g.caught;
+        // How it's moving as it arrives (catcher-local): the flight from hand to hand.
+        const double catchTime = catchTimeFor(r, b + v);
+        const float T = std::max(flightSeconds(j, b, v), 1e-3f);
+        const Vec3 from = placement(j, b).point(throwPointAt(j, b));
+        const Placement catcher = placement(r, catchTime);
+        const Vec3 to = catcher.point(catchPointAt(r, b + v));
+        const Vec3 arriving = catcher.localDir(drag_.velocity(drag_.launch(from, to, T), T));
+        const SpinFrame f = arrivalFrame(j, b, nullptr);
+        const float square = std::atan2(-dot(arriving, f.up), dot(arriving, f.dir));
+        Vec3 back(0.0f, 0.0f, 1.0f);
+        if (r != j) {
+            const Vec3 p = catcher.localPoint(placement(j, b).position);
+            const Vec3 flat(p.x, 0.0f, p.z);
+            if (length(flat) > 1e-3f) back = normalize(flat);
+        }
+        const Vec3 ref = Vec3(0.0f, 1.0f, 0.0f) + back * 0.2f;
+        const float other = square + kPi;
+        const float pick = dot(f.at(square), ref) >= dot(f.at(other), ref) ? square : other;
+        g.caught = std::remainder(pick, 2.0f * kPi);
+        g.caughtSet = true;
+        return g.caught;
+    }
+    // The angle the throw j makes on beat b leaves the hand at (see PropAngles): about upright
+    // for a dropback.
+    float releaseAngle(int j, int b) const {
+        if (isDropback(j, b)) {
+            if (prop() == PropType::Club) return kClubDropbackRelease;
+            if (prop() == PropType::Ring || prop() == PropType::Hoop) return kRingDropbackRelease;
+        }
+        return propAngles(prop()).release;
     }
     // The prop's spin frame as the catcher sees it (catcher-local), and the sign that turns
     // the thrower's angles and spin into the catcher's.
@@ -451,8 +644,9 @@ public:
     // release angle to the arrival angle, over exactly the flight time.
     float spinRate(int j, int b, int v) const {
         if (prop() == PropType::Ball || v <= 0 || isHeld(j, b)) return 0.0f;
-        const float turn = 2.0f * kPi * static_cast<float>(spins(j, b, v)) + arrivalAngle(j, b) -
-                           propAngles(prop()).release;
+        // (Whole turns, give or take the half turn or so the angles need.)
+        const float turn = 2.0f * kPi * static_cast<float>(spins(j, b, v)) +
+                           std::remainder(arrivalAngle(j, b) - releaseAngle(j, b), 2.0f * kPi);
         return turn / flightSeconds(j, b, v);
     }
 
@@ -460,29 +654,26 @@ public:
     // where the center is when the hand is at the throw point (release) and at the catch point
     // (catch), so flights don't depend on the hand paths.
     Vec3 launchPoint(int j, int b) const {
-        return placement(j, b).point(throwPointAt(j, b) + propOffset(frameFor(j, b), propAngles(prop()).release));
+        return placement(j, b).point(throwPointAt(j, b) + propOffset(frameFor(j, b), releaseAngle(j, b)));
     }
     Vec3 landingPoint(int j, int b, int v) const {
         const int r = destAt(j, b);
         const SpinFrame f = arrivalFrame(j, b, nullptr);
         // Where the catcher is when they catch it (they may be walking).
-        return placement(r, catchTimeFor(r, b + v)).point(catchPointAt(r, b + v) + propOffset(f, propAngles(prop()).caught));
+        return placement(r, catchTimeFor(r, b + v)).point(catchPointAt(r, b + v) + propOffset(f, caughtAngle(j, b)));
     }
     float flightSeconds(int j, int b, int v) const {
         return static_cast<float>((catchTimeFor(destAt(j, b), b + v) - b) * secondsPerBeat());
     }
-    // Launch velocity: chosen so the parabola from the launch point reaches the landing point
-    // exactly when the catch is due.
+    // Launch velocity: chosen so the flight (see Drag) from the launch point reaches the
+    // landing point exactly when the catch is due.
     Vec3 launchVelocity(int j, int b, int v) const {
-        const float T = flightSeconds(j, b, v);
-        const Vec3 accel(0.0f, -kGravity, 0.0f);
-        return (landingPoint(j, b, v) - launchPoint(j, b)) * (1.0f / T) - accel * (0.5f * T);
+        return drag_.launch(launchPoint(j, b), landingPoint(j, b, v), flightSeconds(j, b, v));
     }
     // Position of a prop's center in flight: thrown by j on beat b (value v), at time t.
     Vec3 flightPosition(int j, int b, int v, double t) const {
         const float tau = static_cast<float>((t - b) * secondsPerBeat());
-        const Vec3 accel(0.0f, -kGravity, 0.0f);
-        return launchPoint(j, b) + launchVelocity(j, b, v) * tau + accel * (0.5f * tau * tau);
+        return drag_.position(launchPoint(j, b), launchVelocity(j, b, v), tau);
     }
     // The whole prop in flight: center, and the turn it has made since the release.
     void flightProp(int j, int b, int v, double t, BallState* out) const {
@@ -490,7 +681,7 @@ public:
         out->center = flightPosition(j, b, v, t);
         const SpinFrame f = frameFor(j, b);
         const float tau = static_cast<float>((t - b) * secondsPerBeat());
-        const float theta = propAngles(prop()).release + spinRate(j, b, v) * tau;
+        const float theta = releaseAngle(j, b) + spinRate(j, b, v) * tau;
         const Placement pl = placement(j, b);
         out->axis = pl.dir(f.at(theta));
         out->spinAxis = pl.dir(f.spinAxis());
@@ -506,7 +697,7 @@ public:
         const float turning = spinRate(j, b, v) * gripToCenter();
         // (Relative to the juggler, who may be walking.)
         const Placement pl = placement(j, b);
-        const Vec3 world = launchVelocity(j, b, v) - pl.dir(frameFor(j, b).rate(propAngles(prop()).release)) * turning -
+        const Vec3 world = launchVelocity(j, b, v) - pl.dir(frameFor(j, b).rate(releaseAngle(j, b))) * turning -
                            walkVelocity(j, b);
         return pl.localDir(world);
     }
@@ -517,8 +708,7 @@ public:
         if (vIn <= 0 || incomingHeld(j, b)) return Vec3(0.0f, 0.0f, 0.0f);
         const int src = incomingFrom(j, b);
         const int from = b - vIn;
-        const Vec3 accel(0.0f, -kGravity, 0.0f);
-        const Vec3 centerVelocity = launchVelocity(src, from, vIn) + accel * flightSeconds(src, from, vIn);
+        const Vec3 centerVelocity = drag_.velocity(launchVelocity(src, from, vIn), flightSeconds(src, from, vIn));
         const float turning = spinRate(src, from, vIn) * gripToCenter();
         const double catchTime = catchTimeFor(j, b);
         const Vec3 gripVelocity = centerVelocity -
@@ -539,6 +729,10 @@ public:
         d.carrySeconds = static_cast<float>(catchDwell(j, b) * secondsPerBeat());
         d.distance = std::clamp(speed * speed / (2.0f * kHandDriveAccel), kMinScoop, kMaxDrive);
         d.seconds = speed > 0.05f ? 2.0f * d.distance / speed : 0.5f * d.carrySeconds;
+        // A dropback's hand, or a hoop's, comes all the way up from the low scoop (along a
+        // curve: a bit more than the straight line).
+        if (speed > 0.05f && longDrive(j, b))
+            d.seconds = 2.0f * 1.15f * length(throwPointAt(j, b) - longDriveLowPoint(j, b)) / speed;
         d.seconds = std::min(d.seconds, 0.7f * d.carrySeconds);
         return d;
     }
@@ -654,7 +848,7 @@ public:
                 const ThrowInfo& info = throwInfo(k, b);
                 if (info.flightBeats <= 0.0f || t < b || t >= b + info.flightBeats) continue;
                 const float tau = static_cast<float>(tSeconds - b * spb);
-                const Vec3 p = info.launch + info.launchVelocity * tau + Vec3(0.0f, -0.5f * kGravity * tau * tau, 0.0f);
+                const Vec3 p = drag_.position(info.launch, info.launchVelocity, tau);
                 // Fade each ball's weight in after the throw and out before the catch, so balls
                 // joining and leaving the set don't make the gaze jump.
                 const float edge = std::sin(kPi * static_cast<float>((t - b) / info.flightBeats));
@@ -710,8 +904,8 @@ public:
             followSeconds = 0.45f * emptySeconds;
             followDist = 0.5f * outSpeed * followSeconds;
         }
-        const Vec3 followPoint = withinReach(shoulderAt(j, right, prev + followSeconds / spb),
-                                             tpPrev + normalize(vOut) * followDist);
+        const Vec3 followPoint = clearOfHead(withinReach(shoulderAt(j, right, prev + followSeconds / spb),
+                                                         tpPrev + normalize(vOut) * followDist));
         const float returnSeconds = emptySeconds - followSeconds;
 
         // 3-4. Scoop down to the low point, then drive up to the release on `next`.
@@ -723,7 +917,8 @@ public:
         // at that moment).
         const Vec3 driveDir = length(vIn) > 0.05f ? normalize(vIn) : Vec3(0.0f, 1.0f, 0.0f);
         const double lowTime = next - driveSeconds / spb;
-        const Vec3 lowPoint = withinReach(shoulderAt(j, right, lowTime), tp - driveDir * drive.distance);
+        const Vec3 lowPoint = withinReach(shoulderAt(j, right, lowTime), longDrive(j, next) ? longDriveLowPoint(j, next)
+                                                                                            : tp - driveDir * drive.distance);
         const float scoopSeconds = drive.carrySeconds - driveSeconds;
 
         // 2/3. The hand's velocity at the catch: it gives with the ball, but no faster than a
@@ -775,7 +970,7 @@ public:
                 const int src = incomingFrom(j, next);
                 float sign = 1.0f;
                 from = arrivalFrame(src, next - vIn, &sign);
-                startAngle = a.caught;
+                startAngle = caughtAngle(src, next - vIn);
                 startRate = kCatchSoftness * spinRate(src, next - vIn, vIn) * sign;
             }
             const SpinFrame to = frameFor(j, next);
@@ -789,14 +984,26 @@ public:
             const float tau = static_cast<float>((t - catchTime) * secondsPerBeat());
             const int v = valueAt(j, next);
             const float endRate = (v > 0 && !isHeld(j, next)) ? spinRate(j, next, v) : 0.0f;
+            const float release = (v > 0 && !isHeld(j, next)) ? releaseAngle(j, next) : a.release;
             // The wind-up is as big as there's time for: a quick carry only cocks a little.
-            const float fullWindUp = std::fabs(a.cocked - a.release);
+            const float fullWindUp = std::fabs(a.cocked - release);
             const float windUp = std::min(std::clamp(drive.carrySeconds / kFullWindUpSeconds, 0.2f, 1.0f),
                                           kMaxFlickRate * flickSeconds / std::max(fullWindUp, 1e-3f));
-            const float cocked = a.release + (a.cocked - a.release) * windUp;
+            const float cocked = release + (a.cocked - release) * windUp;
+            // From the catch to the cocked angle: on round the way it was spinning, if that's not
+            // much more than half a turn (a pass tips on over into the scoop), or else back the
+            // short way (a self is stopped, and drops back down).
+            {
+                const float ahead = startRate >= 0.0f ? cocked - startAngle : startAngle - cocked;
+                const float onward = ahead - 2.0f * kPi * std::floor(ahead / (2.0f * kPi));  // 0 .. 2 pi
+                if (onward < 1.25f * kPi)
+                    startAngle = startRate >= 0.0f ? cocked - onward : cocked + onward;
+                else
+                    startAngle = cocked + std::remainder(startAngle - cocked, 2.0f * kPi);
+            }
             theta = tau < dropSeconds
                         ? hermite1(startAngle, startRate, cocked, 0.0f, dropSeconds, tau)
-                        : hermite1(cocked, 0.0f, a.release, endRate, flickSeconds, tau - dropSeconds);
+                        : hermite1(cocked, 0.0f, release, endRate, flickSeconds, tau - dropSeconds);
             const float u = std::clamp(tau / std::max(drive.carrySeconds, 1e-4f), 0.0f, 1.0f);
             const float w = u * u * (3.0f - 2.0f * u);  // smoothstep: no kink at either end
             frame.dir = normalize(from.dir * (1.0f - w) + to.dir * w);
@@ -861,7 +1068,21 @@ private:
         return throwCache_.emplace(key, info).first->second;
     }
 
+    // Per-throw geometry (see isDropback, catchFromBehind, caughtAngle), worked out when first
+    // asked for, like throwInfo.
+    struct ThrowGeometry {
+        signed char dropback = -1, fromBehind = -1;  // -1: not worked out yet
+        bool caughtSet = false;
+        float caught = 0.0f;
+    };
+    ThrowGeometry& geometry(int j, int beat) const {
+        const long long key = static_cast<long long>(j) * span_ + modPositive(beat, span_);
+        return geometry_[key];
+    }
+    mutable std::unordered_map<long long, ThrowGeometry> geometry_;
+
     float intensity_;
+    Drag drag_;
     std::vector<int> incomingValue_, incomingFrom_;
     int span_ = 0;
     mutable std::unordered_map<long long, ThrowInfo> throwCache_;
@@ -984,10 +1205,10 @@ SceneExtents computeSceneExtents(const JugglingLoop& sketchOrLoop, const JuggleP
                 if (params.prop != PropType::Ball) {
                     BallState held;
                     ev.heldProp(j, right != 0, t, &held);
-                    // The near end of a club (the knob) or the bottom of a ring.
+                    // The near end of a club (the knob) or the bottom of a ring or hoop.
                     const float low = params.prop == PropType::Club
                                           ? (held.center - held.axis * (kClubLength - kClubCenterOfMass)).y
-                                          : held.center.y - kRingOuterRadius;
+                                          : held.center.y - reach;
                     e.lowestHandY = std::min(e.lowestHandY, low);
                     e.highestPropY = std::max(e.highestPropY, held.center.y + reach);
                     includeX(held.center.x, reach);
@@ -1064,6 +1285,19 @@ JugglerScene evaluateScene(const JugglingLoop& sketchOrLoop, const BallOrbits& o
         scene.jugglers.push_back(js);
     }
 
+    // (Which way each hand's prop points, for the hand's pose.)
+    auto noteGrip = [&](int j, bool right, const BallState& held) {
+        JugglerState& js = scene.jugglers[static_cast<size_t>(j)];
+        const Vec3 axis = ev.placement(j, t).localDir(held.axis);
+        if (right) {
+            js.holdingRight = true;
+            js.gripRight = axis;
+        } else {
+            js.holdingLeft = true;
+            js.gripLeft = axis;
+        }
+    };
+
     // Every ball is, at any moment, in exactly one segment: in flight after a throw, held before
     // its next throw, or riding a 2. Look at throws within reach of t (values are at most 35).
     const int now = static_cast<int>(std::floor(t));
@@ -1082,6 +1316,7 @@ JugglerScene evaluateScene(const JugglingLoop& sketchOrLoop, const BallOrbits& o
                     BallState held;
                     held.ball = ball;
                     ev.heldProp(j, right, t, &held);
+                    noteGrip(j, right, held);
                     scene.balls.push_back(held);
                 }
                 const double age = (t - b) * ev.secondsPerBeat() / kPuffSeconds;
@@ -1119,6 +1354,7 @@ JugglerScene evaluateScene(const JugglingLoop& sketchOrLoop, const BallOrbits& o
                     BallState held;
                     held.ball = ball;
                     ev.heldProp(j, right, t, &held);
+                    noteGrip(j, right, held);
                     scene.balls.push_back(held);
                 }
             }
@@ -1131,6 +1367,7 @@ JugglerScene evaluateScene(const JugglingLoop& sketchOrLoop, const BallOrbits& o
                     held.throwValue = v;
                     held.thrower = held.catcher = j;
                     ev.heldProp(j, right, t, &held);
+                    noteGrip(j, right, held);
                     scene.balls.push_back(held);
                 }
                 continue;
@@ -1201,6 +1438,7 @@ const char* propTypeName(PropType prop) {
     switch (prop) {
         case PropType::Club: return "Clubs";
         case PropType::Ring: return "Rings";
+        case PropType::Hoop: return "Hoops";
         default: return "Balls";
     }
 }
@@ -1209,6 +1447,7 @@ const char* propTypeKey(PropType prop) {
     switch (prop) {
         case PropType::Club: return "clubs";
         case PropType::Ring: return "rings";
+        case PropType::Hoop: return "hoops";
         default: return "balls";
     }
 }

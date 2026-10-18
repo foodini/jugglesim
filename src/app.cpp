@@ -600,7 +600,8 @@ Mat4 jugglerMatrix(const JugglerState& juggler) {
 JugglerPose posedJuggler(const JugglerState& juggler, PropType prop) {
     JugglerPose pose = makeNeutralPose();
     poseBody(pose, juggler.body);
-    poseArmsForPalms(pose, juggler.palmRight, juggler.palmLeft, juggler.body.intensity, prop != PropType::Ball);
+    poseArmsForPalms(pose, juggler.palmRight, juggler.palmLeft, juggler.body.intensity, prop != PropType::Ball,
+                     juggler.holdingRight ? &juggler.gripRight : nullptr, juggler.holdingLeft ? &juggler.gripLeft : nullptr);
     return pose;
 }
 
@@ -1520,8 +1521,10 @@ void drawPropValueLabels(ImDrawList* dl, const JugglerScene& scene, const Mat4& 
     dl->PushClipRect(rectMin, ImVec2(rectMin.x + rectSize.x, rectMin.y + rectSize.y), true);
     const float em = ImGui::GetFontSize();
     const int jugglers = static_cast<int>(scene.jugglers.size());
-    // Above the prop: clear of a ball, or of a club or ring, whichever way it's turned.
-    const float above = scene.prop == PropType::Ball ? kBallRadius + 0.05f : 0.34f;
+    // Above the prop: clear of a ball, or of a club, ring or hoop, whichever way it's turned.
+    const float above = scene.prop == PropType::Ball  ? kBallRadius + 0.05f
+                        : scene.prop == PropType::Hoop ? kHoopRadius + kHoopTubeRadius + 0.05f
+                                                       : 0.34f;
     for (const BallState& b : scene.balls) {
         if (b.throwValue <= 0) continue;
         ImVec2 anchor;

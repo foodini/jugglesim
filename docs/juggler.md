@@ -38,8 +38,12 @@ Playback pauses when the error first appears (you're usually looking at a moment
 play on.
 
 Stepping works in both directions, by any amount: the juggler's position at any moment is
-worked out directly from the pattern (every flight is an exact parabola), so nothing has to be
+worked out directly from the pattern (every flight has an exact formula), so nothing has to be
 replayed to get there.
+
+Props fly with a little air drag (in proportion to their speed). It hardly shows for balls,
+clubs and rings, which fly almost exact parabolas; a hoop is light for its size (180 g), so it
+leaves the hand faster, rises more steeply and comes down more steeply than a parabola would.
 
 Picking up a throw on the ladder pauses the juggler, so the pattern doesn't change under him
 mid-throw. Press Space to carry on when you're done.
@@ -162,9 +166,22 @@ ring, reaches toward them: the hands throw and catch most of the way round towar
 (with a club's spin turned to match), and the upper body twists part of the way, easing in and
 out around the pass.
 
-- Balls passed to a juggler are caught where they catch their own throws. Clubs and rings are
+- Balls passed to a juggler are caught where they catch their own throws. Clubs, rings and hoops are
   caught further out, about 20 cm outside the shoulder and 20 cm in front, and higher passes
   are caught higher, the way club passers reach for a pass.
+- **Dropbacks and passes from behind.** Nothing needs writing: who's behind whom comes from
+  where the jugglers stand and face (a partner more than 100 degrees off the way you face is
+  behind you).
+  - A pass to someone behind you is a **dropback**. After the usual low scoop the hand comes
+    straight up in front of you and lets go about head high, the upper arm reaching forward
+    and the elbow bent about square: in front of the throwing shoulder, or, for a target
+    across the body a couple of meters back (the left hand of a partner behind you, throwing
+    with your right), in front of the face (stopping well short of it). The club spins the
+    usual way.
+  - A pass from someone behind you is caught high, the hand up by the head on its own side,
+    and taken down into the usual scoop.
+  - A dropback to a partner who's looking at your back spins, for them, the way their own
+    selfs do, so they catch it as they would a self: palm up, forearm about level.
 - **Click** a juggler to select them: their number turns dark-on-light and they're drawn in
   gold. Click empty space to deselect. (Clicking a juggler's number over their strip on the
   ladder does the same.)
@@ -386,16 +403,18 @@ faster tempo means lower throws.
 
 ## Props
 
-The **Props** menu chooses what's juggled: **Balls**, **Clubs** or **Rings**. Your choice is
+The **Props** menu chooses what's juggled: **Balls**, **Clubs**, **Rings** or **Hoops**. Your choice is
 remembered the next time you start JuggleSim. Every prop has the same color as its ball on the
 ladder, and every flight leaves the same dashed trail.
 
 - **Clubs** are modeled on a real 515 mm club: the hand holds the handle between the collar
   and the knob, and the club's center of mass (about 17 cm up from the hand) is what flies on
-  the parabola. Clubs spin end over end, the top turning back toward the juggler as the club
+  its arc. Clubs spin end over end, the top turning back toward the juggler as the club
   leaves the hand (clockwise, seen from the juggler's left), with the spin axis turned about
   7 degrees so each club leaves the hand pointing a little toward the other side. In the hand,
-  a club is caught pointing forward and up, hangs from the wrist pointing down and forward
+  a club is caught square to its flight (the palm along the club; of the two ends, the top is
+  the higher one, so a pass coming down steeply arrives leaning back toward the catcher), hangs
+  from the wrist pointing down and forward
   (about 60 degrees below horizontal) at the bottom of the scoop, and is flicked up so it
   leaves the hand pointing forward, about 15 degrees above horizontal, already spinning. The
   top, collar and knob are a darker shade of the club's color.
@@ -404,10 +423,15 @@ ladder, and every flight leaves the same dashed trail.
   its ball's dash pattern (dark where the ladder line has gaps), so you can see it spin and
   tell rings apart without color. A ring whose ladder line is solid gets two narrow dark
   bands.
-- **Spins.** Each throw of a club or ring makes a whole number of turns, as jugglers throw
-  them whatever the tempo: half the throw's value, rounded down (a single on a 3, a double on a
-  4 or 5, a triple on a 6 or 7, and so on; passes the same, so a `4p` is a double). The prop then turns at exactly the rate that
-  brings it round in time for the catch. 1s go across flat, without turning; 2s are held.
+- **Hoops** are 60 cm across (through the middle of the tube) and drawn as a 4.5 cm tube so
+  they stay visible edge-on. They're held by the near side, out in front of the hand: caught
+  pointing forward, hanging down and forward at the bottom of a low swoop, and let go high above
+  the head. They spin and are banded just like rings, and they feel the air (see above).
+- **Spins.** Each throw of a club, ring or hoop makes about a whole number of turns, as jugglers
+  throw them whatever the tempo: half the throw's value, rounded down (a single on a 3, a double
+  on a 4 or 5, a triple on a 6 or 7, and so on; passes the same, so a `4p` is a double), give or
+  take the part of a turn that gets it from the way it leaves the hand to the way it's caught.
+  The prop turns at exactly the rate that brings it round in time for the catch. 1s go across flat, without turning; 2s are held.
   Pause and rest the mouse on a club or ring in the air to see its throw and spin rate, in
   spins a beat (so it doesn't depend on the tempo); the ladder shows the same when you rest the
   mouse on a throw.

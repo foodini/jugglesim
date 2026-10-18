@@ -42,9 +42,10 @@ void poseBody(JugglerPose& pose, const BodyMotion& motion);
 // down and out; elbowFlare (0..1) swings the elbows further out to the sides. Targets out of
 // reach are clamped to full extension. Palms face up (for balls), or with `grip`, inward
 // toward each other with the thumbs up, as when holding a club handle or a ring's rim. Call
-// after poseBody, which moves the shoulders.
+// after poseBody, which moves the shoulders. With a grip, gripRight / gripLeft (if given) are
+// the way the prop each hand holds points (juggler-local): the palm turns to lie along it.
 void poseArmsForPalms(JugglerPose& pose, Vec3 palmRight, Vec3 palmLeft, float elbowFlare = 0.0f,
-                      bool grip = false);
+                      bool grip = false, const Vec3* gripRight = nullptr, const Vec3* gripLeft = nullptr);
 
 struct JugglerStyle {
     Vec3 bodyColor{0.78f, 0.80f, 0.86f};

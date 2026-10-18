@@ -34,9 +34,9 @@ struct Choreography;
 
 // What's being juggled. (Per pattern for now; BallState carries it per prop, so mixed props
 // can come later.)
-enum class PropType { Ball, Club, Ring, Count };
+enum class PropType { Ball, Club, Ring, Hoop, Count };
 
-const char* propTypeName(PropType prop);  // "Balls", "Clubs", "Rings" (menu text)
+const char* propTypeName(PropType prop);  // "Balls", "Clubs", "Rings", "Hoops" (menu text)
 const char* propTypeKey(PropType prop);   // "balls", ... (settings file)
 bool propTypeFromKey(const char* key, PropType* prop);
 
@@ -82,12 +82,16 @@ constexpr float kClubGrip = 0.387f;          // from the top: midway between col
 constexpr float kRingOuterRadius = 0.16f;
 constexpr float kRingInnerRadius = 0.125f;
 constexpr float kRingHalfThickness = 0.003f;
+// Hoop dimensions: 600 mm across (through the middle of the tube), the tube 45 mm thick, so
+// it stays visible edge-on. Hoops are held and spin like rings.
+constexpr float kHoopRadius = 0.30f;
+constexpr float kHoopTubeRadius = 0.0225f;
 
 // One prop at a moment. `center` is the center of mass (what flies on the parabola and what
 // the trails follow). Clubs and rings also have an orientation:
-//   - axis: for a club, along the club from the handle toward the top; for a ring, from the
-//     point on the rim the hand holds toward the center (it turns as the ring spins).
-//   - spinAxis: what it spins around (perpendicular to axis). For a ring, the ring's normal.
+//   - axis: for a club, along the club from the handle toward the top; for a ring or hoop,
+//     from the point on the rim the hand holds toward the center (it turns as it spins).
+//   - spinAxis: what it spins around (perpendicular to axis). For a ring or hoop, its normal.
 struct BallState {
     int ball = 0;   // ball id (BallOrbits numbering, same as the ladder)
     PropType prop = PropType::Ball;
@@ -150,6 +154,10 @@ inline Vec3 bodyPoint(const BodyMotion& m, Vec3 neutral) {
 struct JugglerState {
     Vec3 position;
     float yaw = 0.0f;
+    // Which way the prop each hand holds points (juggler-local, from the hand toward its top),
+    // if the hand holds one.
+    bool holdingRight = false, holdingLeft = false;
+    Vec3 gripRight, gripLeft;
     Vec3 palmRight, palmLeft;  // where each hand's palm is (a ball sits just above it; a club
                                // handle or ring rim passes through it)
     BodyMotion body;           // lookAt is in the juggler's own coordinates too

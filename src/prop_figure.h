@@ -1,9 +1,10 @@
-// prop_figure.h - drawing the props (balls, clubs, rings) in the 3D view.
+// prop_figure.h - drawing the props (balls, clubs, rings, hoops) in the 3D view.
 //
 // Each prop is drawn in its ball's ladder color. Clubs have a darker top, collar and knob (in
 // the same hue, kept bright enough to stand out against the background). Rings are banded in
 // the same dash pattern as the ball's ladder line, so you can see them spin and tell them
 // apart without relying on color; a ring whose line is solid gets two narrow dark bands.
+// Hoops are banded the same way.
 #pragma once
 
 #include "color_vision.h"
@@ -18,6 +19,9 @@ struct PropMeshes {
     // dark bands, one pair per dash pattern.
     Mesh ringColored[static_cast<int>(DashPattern::Count)];
     Mesh ringDark[static_cast<int>(DashPattern::Count)];
+    // A hoop the same way (a torus), banded like the rings.
+    Mesh hoopColored[static_cast<int>(DashPattern::Count)];
+    Mesh hoopDark[static_cast<int>(DashPattern::Count)];
 
     void create();
     void destroy();

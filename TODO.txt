@@ -13,7 +13,8 @@
   all peak at the same time. Something to think about for the long run.
 * add a config to choose between straight and spline lines in the ladder.
 * add some really ridiculous props;
-  * Torches (not ridiculous.) Chainsaw, birthday cake, salmon, dry ice, open 2L bottle of soda?
+  * Torches (not ridiculous.) 
+  * Chainsaw, birthday cake, salmon, dry ice, open 2L bottle of soda, bowling balls?
 * If the primary read head leaves the ladder view, scroll to follow it? Do we pop back to
   beat1 when it fades? If so, we should do so in a way that doesn't appear to move the 
   entire ladder. Rather, the ladder should bump back by exactly the cycle length. The only

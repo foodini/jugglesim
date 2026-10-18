@@ -221,6 +221,50 @@ Mesh makeRingSectorsMesh(float innerRadius, float outerRadius, float halfThickne
     return b.upload();
 }
 
+Mesh makeTorusSectorsMesh(float majorRadius, float minorRadius, const float* startAngles, const float* endAngles,
+                          int count) {
+    MeshBuilder b;
+    const int around = 16;  // round the tube
+    for (int k = 0; k < count; ++k) {
+        const float a0 = startAngles[k], a1 = endAngles[k];
+        const int steps = std::max(1, static_cast<int>(std::ceil((a1 - a0) / (2.0f * kPi) * 128.0f)));
+        const std::uint32_t first = static_cast<std::uint32_t>(b.vertices.size() / 6);
+        for (int j = 0; j <= steps; ++j) {
+            const float theta = a0 + (a1 - a0) * static_cast<float>(j) / steps;
+            const Vec3 radial(std::cos(theta), 0.0f, std::sin(theta));
+            for (int i = 0; i <= around; ++i) {
+                const float phi = 2.0f * kPi * static_cast<float>(i) / around;
+                const Vec3 n = radial * std::cos(phi) + Vec3(0.0f, std::sin(phi), 0.0f);
+                b.addVertex(radial * majorRadius + n * minorRadius, n);
+            }
+        }
+        const std::uint32_t row = static_cast<std::uint32_t>(around + 1);
+        for (int j = 0; j < steps; ++j)
+            for (int i = 0; i < around; ++i) {
+                const std::uint32_t a = first + static_cast<std::uint32_t>(j) * row + static_cast<std::uint32_t>(i);
+                b.addTriangle(a, a + 1, a + row);
+                b.addTriangle(a + row, a + 1, a + row + 1);
+            }
+        // Close the ends (a disc across the tube), so a piece isn't hollow.
+        for (int end = 0; end < 2; ++end) {
+            const float theta = end == 0 ? a0 : a1;
+            const Vec3 radial(std::cos(theta), 0.0f, std::sin(theta));
+            const Vec3 n = end == 0 ? Vec3(std::sin(theta), 0.0f, -std::cos(theta)) : Vec3(-std::sin(theta), 0.0f, std::cos(theta));
+            const std::uint32_t center = b.addVertex(radial * majorRadius, n);
+            for (int i = 0; i <= around; ++i) {
+                const float phi = 2.0f * kPi * static_cast<float>(i) / around;
+                b.addVertex(radial * (majorRadius + minorRadius * std::cos(phi)) + Vec3(0.0f, minorRadius * std::sin(phi), 0.0f), n);
+            }
+            for (int i = 0; i < around; ++i) {
+                const std::uint32_t a = center + 1 + static_cast<std::uint32_t>(i);
+                if (end == 0) b.addTriangle(center, a + 1, a);
+                else b.addTriangle(center, a, a + 1);
+            }
+        }
+    }
+    return b.upload();
+}
+
 void destroyMesh(Mesh& mesh) {
     if (mesh.ebo) gl::DeleteBuffers(1, &mesh.ebo);
     if (mesh.vbo) gl::DeleteBuffers(1, &mesh.vbo);
