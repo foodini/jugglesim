@@ -530,7 +530,8 @@ choreography, a count's columns aren't drawn narrow: keyframes can be on any bea
   Tab goes back to beat 1.
 - **Right-click a cell** for **Insert a Beat Before / After** and **Delete Beat** (as many as are
   selected, if it's in the selection): everyone's walking gets longer or shorter there (the
-  keyframes after move along, and the Length with them); and Cut, Copy, Paste and Clear.
+  keyframes after move along, and the Length with them); **Delete Beat n and All After**, which
+  cuts the walking off there (the Length becomes n - 1); and Cut, Copy, Paste and Clear.
 - A row that **walks like** another shows the leader's marks, dim, and its header says how
   (`C2 @1[16] -1/6`: C1's walking 16 beats on, turned 1/6 of a circle clockwise). **Ctrl+click** a beat in
   another juggler's row to make the cursor's juggler walk like them from that beat (as

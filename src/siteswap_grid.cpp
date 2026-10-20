@@ -1847,6 +1847,19 @@ SiteswapGridResult drawSiteswapGrid(SiteswapGridState& state, const std::string&
                 ImGui::SetTooltip("Beat %d is a copy (the loop): only beats 1-%d are written out.", b + 1, choreo.written);
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal) && b < choreo.written)
                 ImGui::SetTooltip("Everyone's walking: their keyframes on these beats go, and the later ones move up.");
+            // Everything from this beat to the end of the beats written out (a walk written out
+            // longer than it needs).
+            if (ImGui::MenuItem(("Delete Beat " + std::to_string(b + 1) + " and All After").c_str(), nullptr, false,
+                                b > 0 && b < choreo.written))
+                deleteBeats(b, choreo.written - b, false, true);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                if (b == 0)
+                    ImGui::SetTooltip("The walking needs at least one beat.");
+                else if (b >= choreo.written)
+                    ImGui::SetTooltip("Beat %d is a copy (the loop): only beats 1-%d are written out.", b + 1, choreo.written);
+                else
+                    ImGui::SetTooltip("Everyone's walking: the Length becomes %d beats, and keyframes from beat %d on go.", b, b + 1);
+            }
             ImGui::Separator();
             if (ImGui::MenuItem("Cut", "Ctrl+X")) {
                 copy();
