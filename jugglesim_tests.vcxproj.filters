@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="tests">
+      <UniqueIdentifier>{8C2E4A19-3B7D-4E6F-9A1C-5D8B2F0E7A41}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="src">
+      <UniqueIdentifier>{8C2E4A19-3B7D-4E6F-9A1C-5D8B2F0E7A42}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="third_party\imgui">
+      <UniqueIdentifier>{8C2E4A19-3B7D-4E6F-9A1C-5D8B2F0E7A43}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="data">
+      <UniqueIdentifier>{8C2E4A19-3B7D-4E6F-9A1C-5D8B2F0E7A44}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="tests\test_choreography.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\test_grid.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\test_library.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\test_main.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\test_physics.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="tests\test_siteswap.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
+    <ClCompile Include="src\choreography.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\color_vision.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\draw_helpers.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\juggle_sim.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\ladder_edit.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\loop_ops.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\pattern.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\pattern_library.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\settings.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\siteswap.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\siteswap_edit.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui.cpp">
+      <Filter>third_party\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_draw.cpp">
+      <Filter>third_party\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_tables.cpp">
+      <Filter>third_party\imgui</Filter>
+    </ClCompile>
+    <ClCompile Include="third_party\imgui\imgui_widgets.cpp">
+      <Filter>third_party\imgui</Filter>
+    </ClCompile>
+    <ClInclude Include="tests\check.h">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <ClInclude Include="tests\test_data.h">
+      <Filter>tests</Filter>
+    </ClInclude>
+    <None Include="data\patterns.txt">
+      <Filter>data</Filter>
+    </None>
+  </ItemGroup>
+</Project>

@@ -10,6 +10,7 @@
 #   make -f mac.mk app          ...and wrap it as bin/mac/JuggleSim.app
 #   make -f mac.mk universal    JuggleSim.app for both Apple Silicon and Intel Macs (to hand out)
 #   make -f mac.mk run          build and start it
+#   make -f mac.mk test         build the tests (tests/) and run them (build_mac.sh does, every build)
 #   make -f mac.mk clean
 #
 # CONFIG=Debug for an unoptimized build with debug info (default: Release).
@@ -73,9 +74,22 @@ CXXFLAGS += -std=c++17 $(OPT) $(PLATFORM_FLAGS) $(INCLUDES) -DGLFW_INCLUDE_NONE 
 CFLAGS += $(OPT) $(PLATFORM_FLAGS) $(GLFW_DEFS) -I$(GLFW)/include -MMD -MP
 LDFLAGS += $(PLATFORM_FLAGS)
 
+# ---- Tests: the parts of src/ that don't draw anything, plus tests/ (see tests/check.h).
+# Always optimized; run from here, the repository root, so they find data/patterns.txt.
+
+TEST_APP_SRCS := $(addprefix src/,choreography.cpp color_vision.cpp draw_helpers.cpp juggle_sim.cpp \
+                   ladder_edit.cpp loop_ops.cpp pattern.cpp pattern_library.cpp settings.cpp \
+                   siteswap.cpp siteswap_edit.cpp)
+TEST_IMGUI_SRCS := $(IMGUI)/imgui.cpp $(IMGUI)/imgui_draw.cpp $(IMGUI)/imgui_tables.cpp $(IMGUI)/imgui_widgets.cpp
+TEST_SRCS := $(wildcard tests/*.cpp)
+TEST_BUILD := build/tests/$(ARCH)
+TEST_OBJS := $(patsubst %,$(TEST_BUILD)/%.o,$(TEST_APP_SRCS) $(TEST_IMGUI_SRCS) $(TEST_SRCS))
+TEST_BIN := $(TEST_BUILD)/jugglesim_tests
+TEST_CXXFLAGS := -std=c++17 -O2 $(PLATFORM_FLAGS) -Isrc -Itests -I$(IMGUI) -MMD -MP
+
 APP := bin/mac/JuggleSim.app
 
-.PHONY: all app universal run clean check-submodules
+.PHONY: all app universal run clean check-submodules test
 all: check-submodules $(BIN)
 
 check-submodules:
@@ -107,6 +121,16 @@ $(PATTERNS_SRC): data/patterns.txt
 	@printf 'extern const char kBuiltInPatternText[];\nconst char kBuiltInPatternText[] = R"JSPATTERNS(' >> $@
 	@cat $< >> $@
 	@printf ')JSPATTERNS";\n' >> $@
+
+test: check-submodules $(TEST_BIN)
+	./$(TEST_BIN)
+
+$(TEST_BIN): $(TEST_OBJS)
+	$(CXX) $(LDFLAGS) -o $@ $^
+
+$(TEST_BUILD)/%.cpp.o: %.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(TEST_CXXFLAGS) -c $< -o $@
 
 # ---- macOS app bundle
 
@@ -155,4 +179,4 @@ run: all
 clean:
 	rm -rf build bin/mac
 
--include $(DEPS)
+-include $(DEPS) $(TEST_OBJS:.o=.d)

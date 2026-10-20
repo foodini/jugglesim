@@ -268,8 +268,8 @@ Vec3 behindCatchPoint(bool right) { return Vec3(right ? -0.27f : 0.27f, 1.70f, 0
 
 // Hoops are thrown with a long swing of the arm. A hoop going up (a self) is let go high, the
 // arm reaching up and forward above the head, after a low swoop at about waist height (from
-// video of a hoop juggler); one going out to someone (flatter) is let go lower, in front of
-// the chest, from an underhand swing that starts down beside the hip. The swing runs back
+// video of a hoop juggler); a flatter self, and any pass, is let go lower, in front of the
+// chest, from an underhand swing that starts down beside the hip. The swing runs back
 // along the way the hoop leaves the hand, so the hand is already moving that way.
 // Rings (from video of a 3-ring cascade): caught high, about head height with the arm
 // reaching up and forward, and thrown low, about waist height with the arm well forward.
@@ -281,15 +281,15 @@ Vec3 hoopThrowPointOut(bool right) { return Vec3(right ? -0.18f : 0.18f, 1.35f, 
 constexpr float kHoopSteep = 75.0f * kPi / 180.0f, kHoopFlat = 45.0f * kPi / 180.0f;  // launch angles
 constexpr float kHoopSwing = 0.95f;  // m: how far back along its launch the swing starts
 constexpr float kHoopLowestHand = 0.90f;  // m: and no lower than this
+constexpr float kHoopFurthestBack = -0.15f;  // m: nor further back than this (behind the body)
 // Dropbacks with hoops let go higher too.
 const Vec3 kHoopDropbackLift(0.0f, 0.20f, 0.0f);
 // The angle a club or ring leaves the hand at on a dropback (see PropAngles): about upright.
 constexpr float kClubDropbackRelease = -0.30f, kRingDropbackRelease = 0.60f;
 
-// Pushes a point (juggler-local) out of the space around the head, so a hand never goes
-// through it.
-Vec3 clearOfHead(Vec3 p) {
-    const Vec3 head(0.0f, 1.63f, 0.0f);
+// Pushes a point (juggler-local) out of the space around the head (its center at `head`), so a
+// hand never goes through it.
+Vec3 clearOfHead(Vec3 p, Vec3 head) {
     const float clearance = 0.19f;
     const Vec3 d = p - head;
     const float dist = length(d);
@@ -319,6 +319,16 @@ JugglingLoop physicsLoop(const JugglingLoop& loop) {
         if (phys.throws[i].value == kOpenThrow) phys.throws[i] = {0, static_cast<int>(i) / std::max(1, loop.period)};
     return phys;
 }
+
+// How the upper body has moved from upright (see Evaluator::bodyFrame).
+struct BodyFrame {
+    Vec3 hips;          // the hips' offset
+    float lean = 0.0f;  // extra lean (radians, forward)
+};
+const Vec3 kNeutralHead(0.0f, 1.63f, 0.0f);
+constexpr int kQuickBodyTaps = 5;  // see Evaluator::useQuickBody
+// About how far the hand travels on a long drive (a dropback's, or a hoop's), for the body.
+constexpr float kLongDriveLength = 0.85f;
 
 class Evaluator {
 public:
@@ -451,8 +461,27 @@ public:
         return vIn > 0 ? heightFraction(incomingFrom(j, b), b - vIn) : 0.0f;
     }
 
-    // Where j's hand releases on beat b and catches before throwing on beat b (j-local).
+    // Where j's hand releases on beat b and catches before throwing on beat b (j-local). The
+    // points below are for a juggler standing upright (as measured from video); they move with
+    // the upper body (see withBody), so a juggler leaning back or crouching can still reach them.
     Vec3 throwPointAt(int j, int b) const {
+        ThrowGeometry& g = geometry(j, b);
+        if (!g.releaseBodySet) {
+            g.releaseBody = bodyFrame(j, b);
+            g.releaseBodySet = true;
+        }
+        return withBody(g.releaseBody, uprightThrowPoint(j, b));
+    }
+    Vec3 catchPointAt(int j, int b) const {
+        ThrowGeometry& g = geometry(j, b);
+        if (!g.catchBodySet) {
+            g.catchBody = bodyFrame(j, catchTimeFor(j, b));
+            g.catchBodySet = true;
+        }
+        return withBody(g.catchBody, uprightCatchPoint(j, b));
+    }
+    // The upright points:
+    Vec3 uprightThrowPoint(int j, int b) const {
         if (valueAt(j, b) == 1 && destAt(j, b) == j) return handAcrossThrowPoint(rightHand(j, b));
         if (isDropback(j, b)) return dropbackThrowPoint(j, b) + (prop() == PropType::Hoop ? kHoopDropbackLift : Vec3());
         if (prop() == PropType::Hoop && valueAt(j, b) > 0 && !isHeld(j, b))
@@ -461,7 +490,7 @@ public:
             return turned(ringThrowPoint(rightHand(j, b)), throwTurn(j, b));
         return turned(throwPoint(rightHand(j, b), heightFraction(j, b)), throwTurn(j, b));
     }
-    Vec3 catchPointAt(int j, int b) const {
+    Vec3 uprightCatchPoint(int j, int b) const {
         if (incomingAt(j, b) == 1 && incomingFrom(j, b) == j) return handAcrossCatchPoint(rightHand(j, b));
         if (catchFromBehind(j, b)) return behindCatchPoint(rightHand(j, b));
         if (incomingPass(j, b) && prop() != PropType::Ball) {
@@ -510,19 +539,27 @@ public:
     }
     Vec3 longDriveLowPoint(int j, int b) const {
         if (prop() != PropType::Hoop) return dropbackLowPoint(rightHand(j, b));
-        const Vec3 v = releaseVelocity(j, b);
+        // Back along the way the hoop leaves (not the hand: a hoop spinning about the hand
+        // leaves at quite a different angle from it, mostly forward for a high self, and the
+        // swing would start behind the head).
+        const Placement pl = placement(j, b);
+        const Vec3 v = pl.localDir(launchVelocity(j, b, valueAt(j, b)) - walkVelocity(j, b));
         const Vec3 dir = length(v) > 0.05f ? normalize(v) : Vec3(0.0f, 1.0f, 0.0f);
         Vec3 low = throwPointAt(j, b) - dir * kHoopSwing;
         low.y = std::max(low.y, kHoopLowestHand);
+        low.z = std::max(low.z, kHoopFurthestBack);  // (beside the hip at the furthest)
         return low;
     }
-    // A hoop's release (j-local, before turning toward a partner): high for a steep throw, out in
-    // front for a flat one (see hoopThrowPointHigh). How steep is estimated from where the hoop
+    // A hoop's release (j-local, before turning toward a partner): high for a steep self, out in
+    // front for a flat one or a pass (see hoopThrowPointHigh). How steep is estimated from where the hoop
     // goes and how long it flies, from about the hands (the release itself depends on this).
     Vec3 hoopThrowPoint(int j, int b) const {
         const bool right = rightHand(j, b);
         const int v = valueAt(j, b);
         const int r = destAt(j, b);
+        // A pass is swung out underhand however high it goes (lobbing it to someone close, the
+        // swing just comes up more steeply); only a self goes up overhead.
+        if (r != j) return hoopThrowPointOut(right);
         const double catchTime = catchTimeFor(r, b + v);
         const Vec3 from = placement(j, b).point(Vec3(0.0f, 1.4f, 0.3f));
         const Vec3 to = placement(r, catchTime).point(catchPointAt(r, b + v));
@@ -816,7 +853,7 @@ public:
     //
     // Returns the bump's shape (0..1) at time t (seconds) for j's throw on beat n.
     float bumpAt(int j, int n, double tSeconds) const {
-        const ThrowInfo& info = throwInfo(j, n);
+        const BodyInfo& info = bodyInfo(j, n);
         const double spb = secondsPerBeat();
         const double start = (n - info.catchDwell) * spb;
         const double release = n * spb;
@@ -843,7 +880,7 @@ public:
         for (int n = now - 1; n <= now + 2; ++n) {
             const float shape = bumpAt(j, n, tSeconds);
             if (shape <= 0.0f) continue;
-            const ThrowInfo& info = throwInfo(j, n);
+            const BodyInfo& info = bodyInfo(j, n);
             const float d = shape * info.dip;
             dip4 += (d * d) * (d * d);
             // The two hands' bumps overlap (one hand scoops while the other is still holding),
@@ -861,11 +898,13 @@ public:
     // Quick changes, like a deep dip for every beat of a fast high pattern, come out as a
     // steadier crouch with a small bob, much as they do for a real juggler. Smoothing looks
     // ahead as well as back, so the body anticipates a big throw a little, as people do.
-    BodyMotion bodyAt(int j, double t) const {
+    BodyMotion bodyAt(int j, double t) const { return bodyAt(j, t, bodyTaps_); }
+    // ...smoothed with `taps` samples each side.
+    BodyMotion bodyAt(int j, double t, int taps) const {
         BodyMotion m;
         m.intensity = intensity_;
         const double tSeconds = t * secondsPerBeat();
-        const int kTaps = bodyTaps_;  // each side
+        const int kTaps = taps;  // each side
         float dip = 0.0f, sway = 0.0f, weightSum = 0.0f;
         for (int k = -kTaps; k <= kTaps; ++k) {
             const float u = 3.0f * static_cast<float>(k) / kTaps;  // in sigmas
@@ -916,8 +955,9 @@ public:
         const int now = static_cast<int>(std::floor(t));
         for (int k = 0; k < jugglers_; ++k) {
             for (int b = now - 36; b <= now; ++b) {  // flights last under 36 beats
-                const ThrowInfo& info = throwInfo(k, b);
-                if (info.flightBeats <= 0.0f || t < b || t >= b + info.flightBeats) continue;
+                const ThrowInfo& timing = throwInfo(k, b);
+                if (timing.flightBeats <= 0.0f || t < b || t >= b + timing.flightBeats) continue;
+                const ThrowInfo& info = launched(k, b);
                 const float tau = static_cast<float>(tSeconds - b * spb);
                 const Vec3 p = drag_.position(info.launch, info.launchVelocity, tau);
                 // Fade each ball's weight in after the throw and out before the catch, so balls
@@ -944,6 +984,26 @@ public:
     }
     Vec3 shoulderAt(int j, bool right, double t) const {
         return bodyPoint(bodyAt(j, t), neutralShoulder(right));
+    }
+    // How the upper body has moved from the upright stance the throw and catch points are
+    // measured for (knees just soft, kBaseCrouch): its hips' offset from there, and its extra
+    // lean. (Only forward and back and up and down: a hand turned toward a partner is turned
+    // already, and the sway is small.)
+    BodyFrame bodyFrame(int j, double t) const {
+        // (The quick smoothing: within a few millimeters of the full one, and much cheaper. These
+        // are worked out for every throw near the moment drawn.)
+        const BodyMotion m = bodyAt(j, t, kQuickBodyTaps);
+        BodyFrame f;
+        f.hips = m.pelvisOffset - Vec3(0.0f, -kBaseCrouch, -kHipsBack * kBaseCrouch);
+        f.hips.x = 0.0f;
+        f.lean = m.lean - kLeanPerCrouch * kBaseCrouch;
+        return f;
+    }
+    static Vec3 withBody(const BodyFrame& f, Vec3 upright) {
+        const Vec3 pivot = kNeutralWaist + Vec3(0.0f, -kBaseCrouch, -kHipsBack * kBaseCrouch);
+        const Vec3 d = upright - pivot;
+        const float c = std::cos(f.lean), s = std::sin(f.lean);
+        return pivot + f.hips + Vec3(d.x, d.y * c - d.z * s, d.y * s + d.z * c);
     }
 
     // ---- Hands (j-local). Each hand's cycle, from one of its releases (prev) to the next
@@ -975,8 +1035,11 @@ public:
             followSeconds = 0.45f * emptySeconds;
             followDist = 0.5f * outSpeed * followSeconds;
         }
-        const Vec3 followPoint = clearOfHead(withinReach(shoulderAt(j, right, prev + followSeconds / spb),
-                                                         tpPrev + normalize(vOut) * followDist));
+        const BodyMotion followBody = bodyAt(j, prev + followSeconds / spb);
+        const Vec3 followShoulder = bodyPoint(followBody, neutralShoulder(right));
+        const Vec3 follow = normalize(vOut) * followDist;
+        const Vec3 followPoint = clearOfHead(withinReach(followShoulder, tpPrev + follow),
+                                             bodyPoint(followBody, kNeutralHead));
         const float returnSeconds = emptySeconds - followSeconds;
 
         // 3-4. Scoop down to the low point, then drive up to the release on `next`.
@@ -1087,7 +1150,7 @@ public:
 
     // Smooths the body with fewer samples (see bodyAt): a little rougher, and several times
     // quicker, which is plenty for framing the camera.
-    void useQuickBody() { bodyTaps_ = 5; }
+    void useQuickBody() { bodyTaps_ = kQuickBodyTaps; }
 
 private:
     int bodyTaps_ = 20;  // samples each side for bodyAt's smoothing
@@ -1103,27 +1166,54 @@ private:
     std::vector<float> turnTo_;  // [j * jugglers + other]: how far j's hands turn toward other
     struct ThrowInfo {
         int value = 0;
-        double catchDwell = 0.0;
-        Drive drive;
-        float dip = 0.0f;    // how far this throw wants the hips to dip
-        float sway = 0.0f;   // how far it wants the torso to sway toward its hand
-        Vec3 launch, launchVelocity;  // world
         float flightBeats = 0.0f;  // 0 if not thrown (empty beat or a held 2)
+        // Where it's launched from and how fast (world): worked out only once it's asked for
+        // (see launched), as only the throws in the air need it.
+        bool launchSet = false;
+        Vec3 launch, launchVelocity;
     };
-    // Per-throw data used many times a frame by the body and gaze, worked out when first asked
-    // for: only the throws around the moment being drawn are (the span can be long, when the
-    // walking and the throws take a long time to line up).
-    const ThrowInfo& throwInfo(int j, int beat) const {
+    // Per-throw data used many times a frame by the gaze, worked out when first asked for: only
+    // the throws around the moment being drawn are (the span can be long, when the walking and
+    // the throws take a long time to line up).
+    ThrowInfo& throwInfo(int j, int beat) const {
         const int b = modPositive(beat, span_);
         const long long key = static_cast<long long>(j) * span_ + b;
-        const std::unordered_map<long long, ThrowInfo>::const_iterator found = throwCache_.find(key);
+        const std::unordered_map<long long, ThrowInfo>::iterator found = throwCache_.find(key);
         if (found != throwCache_.end()) return found->second;
         ThrowInfo info;
-        const int k = j;
-        info.value = valueAt(k, b);
-        info.catchDwell = catchDwell(k, b);
-        info.drive = driveFor(k, b);
-        const float hf = heightFraction(k, b);
+        info.value = valueAt(j, b);
+        if (info.value > 0 && !isHeld(j, b))
+            info.flightBeats = static_cast<float>(catchTimeFor(destAt(j, b), b + info.value) - b);
+        return throwCache_.emplace(key, info).first->second;
+    }
+    // ...with its launch filled in.
+    const ThrowInfo& launched(int j, int beat) const {
+        ThrowInfo& info = throwInfo(j, beat);
+        if (!info.launchSet && info.flightBeats > 0.0f) {
+            info.launch = launchPoint(j, beat);
+            info.launchVelocity = launchVelocity(j, beat, info.value);
+        }
+        info.launchSet = true;
+        return info;
+    }
+
+    // What each throw asks of the body (see bodyAt). Worked out from the timing and where the
+    // jugglers stand alone, not from the hands' throw and catch points: those move with the body.
+    struct BodyInfo {
+        double catchDwell = 0.0;
+        Drive drive;         // about the hand's (driveFor)
+        float dip = 0.0f;    // how far this throw wants the hips to dip
+        float sway = 0.0f;   // how far it wants the torso to sway toward its hand
+    };
+    const BodyInfo& bodyInfo(int j, int beat) const {
+        const int b = modPositive(beat, span_);
+        const long long key = static_cast<long long>(j) * span_ + b;
+        const std::unordered_map<long long, BodyInfo>::const_iterator found = bodyCache_.find(key);
+        if (found != bodyCache_.end()) return found->second;
+        BodyInfo info;
+        info.catchDwell = catchDwell(j, b);
+        info.drive = bodyDriveFor(j, b);
+        const float hf = heightFraction(j, b);
         const float bodyDrive = std::max(0.0f, info.drive.distance - kMaxArmDrive);
         // A body can only sink and rise so fast: with too little time (a short dwell at a slow
         // tempo), it dips less.
@@ -1131,12 +1221,26 @@ private:
         const float maxDip = kMaxBodySpeed * std::max(bumpSeconds, 0.0f);
         info.dip = std::min(kCrouchPerBodyDrive * bodyDrive + kFervorBob * intensity_ * hf, maxDip);
         info.sway = std::min(kMaxSway * hf * (0.4f + 0.6f * intensity_), 0.4f * maxDip);
-        if (info.value > 0 && !isHeld(k, b)) {
-            info.launch = launchPoint(k, b);
-            info.launchVelocity = launchVelocity(k, b, info.value);
-            info.flightBeats = static_cast<float>(catchTimeFor(destAt(k, b), b + info.value) - b);
+        return bodyCache_.emplace(key, info).first->second;
+    }
+    // The drive for j's release on beat b, as driveFor works it out but with the launch speed
+    // estimated from the flight's time and the distance between the jugglers (no drag).
+    Drive bodyDriveFor(int j, int b) const {
+        Drive d;
+        const int v = valueAt(j, b);
+        d.carrySeconds = static_cast<float>(catchDwell(j, b) * secondsPerBeat());
+        float speed = 0.0f;
+        if (v > 0 && !isHeld(j, b)) {
+            const int r = destAt(j, b);
+            const float T = std::max(flightSeconds(j, b, v), 1e-3f);
+            const Vec3 across = placement(r, catchTimeFor(r, b + v)).position - placement(j, b).position;
+            speed = std::hypot(kGravity * T * 0.5f, length(across) / T);
         }
-        return throwCache_.emplace(key, info).first->second;
+        d.distance = std::clamp(speed * speed / (2.0f * kHandDriveAccel), kMinScoop, kMaxDrive);
+        d.seconds = speed > 0.05f ? 2.0f * d.distance / speed : 0.5f * d.carrySeconds;
+        if (speed > 0.05f && longDrive(j, b)) d.seconds = 2.0f * 1.15f * kLongDriveLength / speed;
+        d.seconds = std::min(d.seconds, 0.7f * d.carrySeconds);
+        return d;
     }
 
     // Per-throw geometry (see isDropback, catchFromBehind, caughtAngle), worked out when first
@@ -1145,6 +1249,9 @@ private:
         signed char dropback = -1, fromBehind = -1;  // -1: not worked out yet
         bool caughtSet = false;
         float caught = 0.0f;
+        // The upper body at the release and at the catch before it (see throwPointAt).
+        bool releaseBodySet = false, catchBodySet = false;
+        BodyFrame releaseBody, catchBody;
     };
     ThrowGeometry& geometry(int j, int beat) const {
         const long long key = static_cast<long long>(j) * span_ + modPositive(beat, span_);
@@ -1157,6 +1264,7 @@ private:
     std::vector<int> incomingValue_, incomingFrom_;
     int span_ = 0;
     mutable std::unordered_map<long long, ThrowInfo> throwCache_;
+    mutable std::unordered_map<long long, BodyInfo> bodyCache_;
 };
 
 }  // namespace

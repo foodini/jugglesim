@@ -94,10 +94,28 @@ On a Mac, the shortcuts written with **Ctrl** in these docs use **Cmd** instead 
 to zoom the ladder, and so on). Settings and your patterns live in
 `~/Library/Application Support/JuggleSim`.
 
+## Tests
+
+`tests/` holds the tests: the siteswap reader, the siteswap grid, the pattern library and
+choreography text, and the physics (every library pattern played through, checking that hands
+and props stay finite, clear of heads, and within reach, and that nothing pops). Every pattern
+added to `data/patterns.txt` is tested too.
+
+They run on every build: in Visual Studio (and `build.bat`) the `jugglesim_tests` project runs
+them after it builds, and a failed check shows in the Error List and fails the build;
+`build_mac.sh` runs them before building the app (`./build_mac.sh test` runs just them). Nothing
+to install: `tests/check.h` is a small stand-in for [doctest](https://github.com/doctest/doctest)
+with the same macros. To run some of them, pass part of their names
+(`bin\x64\Debug\jugglesim_tests.exe physics`), from the repository root.
+
+A test for a known problem not fixed yet is marked `may_fail`: its failures are listed as
+warnings and don't fail the build.
+
 ## Layout
 
 ```
 jugglesim.sln / jugglesim.vcxproj
+jugglesim_tests.vcxproj  the tests (tests/), run after every build
 jugglesim.rc          resources compiled into the exe (the pattern library)
 build.bat             command-line build on Windows (see above)
 mac.mk, build_mac.sh  the macOS build (see above)
@@ -129,6 +147,10 @@ src/
   color_vision.*      color-vision modes; per-ball color + marker shape + dash pattern
   draw_helpers.*      markers, dashed curves, arrowheads for ImGui draw lists
   settings.*          user preferences in %APPDATA%\JuggleSim\settings.ini
+tests/
+  check.h             the test framework (doctest's macros, in one header)
+  test_main.cpp       runs them: all, or those whose names contain the argument
+  test_*.cpp          the tests
 data/patterns.txt     the built-in pattern library (compiled into the exe by jugglesim.rc)
 docs/                 user documentation: ladder.md, juggler.md, patterns.md
 docs/design/          design notes (multi_juggler.md: passing, linking, choreography)

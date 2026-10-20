@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- jugglesim_tests: JuggleSim's tests (tests/, see tests/check.h). Builds the parts of src/ that
+     don't draw anything, plus the tests, and runs them after every build (from the repository
+     root, so they find data/patterns.txt). Failed checks show up in the Error List, and fail
+     the build. Always optimized, so they don't take long in Debug either. -->
+<Project DefaultTargets="Build" ToolsVersion="Current" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>18.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{4E8D2B71-9C3A-4F15-A6B2-7D0E5C9F1A38}</ProjectGuid>
+    <RootNamespace>jugglesim_tests</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="PropertySheets">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup>
+    <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(SolutionDir)build\$(Platform)\$(Configuration)\tests\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(ProjectDir)src;$(ProjectDir)tests;$(ProjectDir)third_party\imgui;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+    </Link>
+    <PostBuildEvent>
+      <Message>Running the tests</Message>
+      <Command>cd /d "$(SolutionDir)" &amp;&amp; "$(TargetPath)"</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <ClCompile Include="src\choreography.cpp" />
+    <ClCompile Include="src\color_vision.cpp" />
+    <ClCompile Include="src\draw_helpers.cpp" />
+    <ClCompile Include="src\juggle_sim.cpp" />
+    <ClCompile Include="src\ladder_edit.cpp" />
+    <ClCompile Include="src\loop_ops.cpp" />
+    <ClCompile Include="src\pattern.cpp" />
+    <ClCompile Include="src\pattern_library.cpp" />
+    <ClCompile Include="src\settings.cpp" />
+    <ClCompile Include="src\siteswap.cpp" />
+    <ClCompile Include="src\siteswap_edit.cpp" />
+    <ClCompile Include="third_party\imgui\imgui.cpp" />
+    <ClCompile Include="third_party\imgui\imgui_draw.cpp" />
+    <ClCompile Include="third_party\imgui\imgui_tables.cpp" />
+    <ClCompile Include="third_party\imgui\imgui_widgets.cpp" />
+    <ClCompile Include="tests\test_choreography.cpp" />
+    <ClCompile Include="tests\test_grid.cpp" />
+    <ClCompile Include="tests\test_library.cpp" />
+    <ClCompile Include="tests\test_main.cpp" />
+    <ClCompile Include="tests\test_physics.cpp" />
+    <ClCompile Include="tests\test_siteswap.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="tests\check.h" />
+    <ClInclude Include="tests\test_data.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="data\patterns.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The tests read the library when they run: a change to it rebuilds (and so reruns) them. -->
+    <UpToDateCheckInput Include="data\patterns.txt" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

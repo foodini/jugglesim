@@ -1,5 +1,6 @@
 @echo off
-rem build.bat - command-line build for JuggleSim.
+rem build.bat - command-line build for JuggleSim, and its tests (which run after every build:
+rem a failed test fails the build).
 rem
 rem   build.bat [Debug|Release] [Build|Rebuild|Clean]      (defaults: Debug Build)
 rem
@@ -43,7 +44,7 @@ if not defined MSBUILD (
     exit /b 2
 )
 
-echo Building jugglesim %CONFIG%^|x64 [%TARGET%]
+echo Building jugglesim and jugglesim_tests %CONFIG%^|x64 [%TARGET%]
 echo Using "%MSBUILD%"
 
 "%MSBUILD%" jugglesim.sln -t:%TARGET% -p:Configuration=%CONFIG% -p:Platform=x64 -m -nologo ^
@@ -60,6 +61,8 @@ for %%A in (build_issues.log) do if %%~zA==0 (
 ) else (
     type build_issues.log
 )
+rem The tests' summary ("N test cases, M failed").
+findstr /c:" test cases, " /c:" test case, " build.log
 echo.
 if "%RESULT%"=="0" (echo BUILD SUCCEEDED) else (echo BUILD FAILED ^(exit code %RESULT%^))
 exit /b %RESULT%

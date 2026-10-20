@@ -6,8 +6,10 @@
 #                              to hand out (bin/mac/JuggleSim-mac.zip)
 #   ./build_mac.sh debug       unoptimized, with debug info
 #   ./build_mac.sh run         build and start it (its messages appear in this terminal)
+#   ./build_mac.sh test        just build and run the tests
 #   ./build_mac.sh clean
 #
+# Every build runs the tests first (tests/): if one fails, the build stops there.
 # Needs Apple's Command Line Tools: xcode-select --install
 set -e
 cd "$(dirname "$0")"
@@ -23,6 +25,10 @@ fi
 
 JOBS=$(sysctl -n hw.ncpu 2> /dev/null || echo 4)
 case "${1:-release}" in
+    release|debug|universal|run|test) make -f mac.mk -j"$JOBS" test ;;
+esac
+case "${1:-release}" in
+    test)      ;;
     release)   make -f mac.mk -j"$JOBS" app ;;
     debug)     make -f mac.mk -j"$JOBS" CONFIG=Debug app ;;
     universal)
@@ -34,7 +40,7 @@ case "${1:-release}" in
     run)       make -f mac.mk -j"$JOBS" app && ./bin/mac/JuggleSim.app/Contents/MacOS/JuggleSim ;;
     clean)     make -f mac.mk clean ;;
     *)
-        echo "usage: ./build_mac.sh [release|debug|universal|run|clean]"
+        echo "usage: ./build_mac.sh [release|debug|universal|run|test|clean]"
         exit 1
         ;;
 esac
