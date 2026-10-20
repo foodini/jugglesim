@@ -272,11 +272,98 @@ void destroyMesh(Mesh& mesh) {
     mesh = Mesh{};
 }
 
+namespace {
+
+// The pumpkin's shape: an ellipsoid (kPumpkinWide across, kPumpkinTall high), ribbed, dimpled
+// top and bottom.
+constexpr float kPumpkinWide = 0.135f, kPumpkinTall = 0.112f;
+constexpr int kPumpkinRibs = 8;
+
+Vec3 pumpkinPoint(float phi, float theta) {  // phi 0 at the top to pi at the bottom
+    const float rib = 1.0f - 0.045f * (0.5f - 0.5f * std::cos(kPumpkinRibs * theta));
+    const float dimple = 1.0f - 0.18f * (std::exp(-phi * phi * 10.0f) + std::exp(-(kPi - phi) * (kPi - phi) * 10.0f));
+    return Vec3(std::sin(phi) * std::cos(theta) * kPumpkinWide * rib, std::cos(phi) * kPumpkinTall * dimple,
+                std::sin(phi) * std::sin(theta) * kPumpkinWide * rib);
+}
+
+Mesh makePumpkinMesh() {
+    MeshBuilder b;
+    const int stacks = 20, slices = 64;
+    const float e = 1e-3f;
+    for (int i = 0; i <= stacks; ++i) {
+        const float phi = std::clamp(kPi * static_cast<float>(i) / stacks, 2e-3f, kPi - 2e-3f);
+        for (int j = 0; j <= slices; ++j) {
+            const float theta = 2.0f * kPi * static_cast<float>(j) / slices;
+            const Vec3 p = pumpkinPoint(phi, theta);
+            Vec3 n = cross(pumpkinPoint(phi, theta + e) - pumpkinPoint(phi, theta - e),
+                           pumpkinPoint(phi + e, theta) - pumpkinPoint(phi - e, theta));
+            if (dot(n, p) < 0.0f) n = n * -1.0f;
+            b.addVertex(p, normalize(n));
+        }
+    }
+    const int row = slices + 1;
+    for (int i = 0; i < stacks; ++i)
+        for (int j = 0; j < slices; ++j) {
+            const std::uint32_t a = static_cast<std::uint32_t>(i * row + j), c = static_cast<std::uint32_t>((i + 1) * row + j);
+            b.addTriangle(a, c, a + 1);
+            b.addTriangle(a + 1, c, c + 1);
+        }
+    return b.upload();
+}
+
+// The carved face, in the plane of the face (x across, y up), each point then laid on the
+// pumpkin's surface (a little proud of it).
+Mesh makePumpkinFaceMesh() {
+    MeshBuilder b;
+    auto onSurface = [](float x, float y) {
+        const float u = (x / kPumpkinWide) * (x / kPumpkinWide) + (y / kPumpkinTall) * (y / kPumpkinTall);
+        return Vec3(x, y, kPumpkinWide * std::sqrt(std::max(0.0f, 1.0f - u)) + 0.004f);
+    };
+    auto triangle = [&](float x0, float y0, float x1, float y1, float x2, float y2) {
+        const Vec3 n(0.0f, 0.0f, 1.0f);
+        const std::uint32_t a = b.addVertex(onSurface(x0, y0), n);
+        b.addVertex(onSurface(x1, y1), n);
+        b.addVertex(onSurface(x2, y2), n);
+        b.addTriangle(a, a + 1, a + 2);
+    };
+    // Eyes (triangles, points up) and a nose.
+    for (int side = -1; side <= 1; side += 2) {
+        const float s = static_cast<float>(side);
+        triangle(s * 0.062f, 0.008f, s * 0.020f, 0.008f, s * 0.041f, 0.050f);
+    }
+    triangle(-0.013f, -0.014f, 0.013f, -0.014f, 0.0f, 0.010f);
+    // A grin: between an upper and a lower curve, smiling up at the ends, with two teeth down
+    // from the top and one up from the bottom.
+    const int n = 25;
+    const float half = 0.078f;
+    std::vector<float> xs(n), top(n), bottom(n);
+    for (int i = 0; i < n; ++i) {
+        const float x = -half + 2.0f * half * static_cast<float>(i) / (n - 1);
+        const float u = (x / half) * (x / half);
+        float yt = -0.030f + 0.026f * u, yb = -0.062f + 0.042f * u;
+        if (std::fabs(std::fabs(x) - 0.028f) < 0.008f) yt -= 0.013f;  // upper teeth
+        if (std::fabs(x) < 0.008f) yb += 0.013f;                        // a lower tooth
+        xs[static_cast<size_t>(i)] = x;
+        top[static_cast<size_t>(i)] = yt;
+        bottom[static_cast<size_t>(i)] = std::min(yb, yt - 0.002f);
+    }
+    for (int i = 0; i + 1 < n; ++i) {
+        const size_t k = static_cast<size_t>(i);
+        triangle(xs[k], top[k], xs[k], bottom[k], xs[k + 1], top[k + 1]);
+        triangle(xs[k + 1], top[k + 1], xs[k], bottom[k], xs[k + 1], bottom[k + 1]);
+    }
+    return b.upload();
+}
+
+}  // namespace
+
 void Primitives::create() {
     sphere = makeSphereMesh(32, 16);
     cylinder = makeFrustumMesh(1.0f, 1.0f, 24);
     torso = makeFrustumMesh(0.5f, 1.0f, 32);
     cube = makeCubeMesh();
+    pumpkin = makePumpkinMesh();
+    pumpkinFace = makePumpkinFaceMesh();
 }
 
 void Primitives::destroy() {
@@ -284,4 +371,6 @@ void Primitives::destroy() {
     destroyMesh(cylinder);
     destroyMesh(torso);
     destroyMesh(cube);
+    destroyMesh(pumpkin);
+    destroyMesh(pumpkinFace);
 }

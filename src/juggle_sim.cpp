@@ -108,12 +108,14 @@ Vec3 hermite(Vec3 p0, Vec3 v0, Vec3 p1, Vec3 v1, float T, float tau) {
 // knob), so its center of mass is out along the club from the hand; a ring is held at its
 // rim, so its center is a ring-radius away. Clubs and rings spin as they fly.
 constexpr float kClubGripToCenter = kClubGrip - kClubCenterOfMass;                // 0.172 m
+constexpr float kTorchGripToCenter = kTorchGrip - kTorchCenterOfMass;             // 0.162 m
 constexpr float kRingGripToCenter = 0.5f * (kRingOuterRadius + kRingInnerRadius);  // band middle
 constexpr float kHoopGripToCenter = kHoopRadius;                                    // tube middle
 // How far a prop reaches from its center of mass in any direction (for framing the camera).
 float propReach(PropType prop) {
     switch (prop) {
         case PropType::Club: return std::max(kClubCenterOfMass, kClubLength - kClubCenterOfMass);
+        case PropType::Torch: return std::max(kTorchCenterOfMass, kTorchLength - kTorchCenterOfMass) + 0.15f;  // (flame)
         case PropType::Ring: return kRingOuterRadius;
         case PropType::Hoop: return kHoopRadius + kHoopTubeRadius;
         default: return kBallRadius;
@@ -130,6 +132,7 @@ float propReach(PropType prop) {
 float terminalSpeed(PropType prop) {
     switch (prop) {
         case PropType::Club: return 20.0f;  // m/s
+        case PropType::Torch: return 20.0f;
         case PropType::Ring: return 15.0f;
         case PropType::Hoop: return 8.0f;   // 180 g, flying about edge-on
         default: return 30.0f;              // a beanbag
@@ -186,7 +189,8 @@ struct PropAngles {
 };
 PropAngles propAngles(PropType prop) {
     switch (prop) {
-        case PropType::Club: return {-0.98f, -0.96f, -2.48f};
+        case PropType::Club:
+        case PropType::Torch: return {-0.98f, -0.96f, -2.48f};
         case PropType::Ring: return {-1.20f, -0.79f, -1.75f};
         // A hoop is held by its near side, out in front of the hand (so it stays clear of the
         // juggler): caught pointing forward, hanging down and a little forward at the bottom of
@@ -598,6 +602,7 @@ public:
     float gripToCenter() const {
         switch (prop()) {
             case PropType::Club: return kClubGripToCenter;
+            case PropType::Torch: return kTorchGripToCenter;
             case PropType::Ring: return kRingGripToCenter;
             case PropType::Hoop: return kHoopGripToCenter;
             default: return 0.0f;
@@ -649,7 +654,7 @@ public:
         const int r = destAt(j, b);
         if (prop() == PropType::Ball || v <= 0 || isHeld(j, b) || (r == j && v < 3)) return a.caught;
         // Selfs: as filmed (clubs by their spins; rings as caught high).
-        if (r == j && prop() == PropType::Club) return clubSelfCaughtAngle(spins(j, b, v));
+        if (r == j && clubLike(prop())) return clubSelfCaughtAngle(spins(j, b, v));
         if (r == j && prop() == PropType::Ring) return a.caught;
         ThrowGeometry& g = geometry(j, b);
         if (g.caughtSet) return g.caught;
@@ -679,11 +684,11 @@ public:
     // for a dropback.
     float releaseAngle(int j, int b) const {
         if (isDropback(j, b)) {
-            if (prop() == PropType::Club) return kClubDropbackRelease;
+            if (clubLike(prop())) return kClubDropbackRelease;
             if (prop() == PropType::Ring || prop() == PropType::Hoop) return kRingDropbackRelease;
         }
         const int v = valueAt(j, b);
-        if (prop() == PropType::Club && v > 0 && !isHeld(j, b)) return clubReleaseAngle(spins(j, b, v));
+        if (clubLike(prop()) && v > 0 && !isHeld(j, b)) return clubReleaseAngle(spins(j, b, v));
         return propAngles(prop()).release;
     }
     // The prop's spin frame as the catcher sees it (catcher-local), and the sign that turns
@@ -1274,7 +1279,9 @@ SceneExtents computeSceneExtents(const JugglingLoop& sketchOrLoop, const JuggleP
                     // The near end of a club (the knob) or the bottom of a ring or hoop.
                     const float low = params.prop == PropType::Club
                                           ? (held.center - held.axis * (kClubLength - kClubCenterOfMass)).y
-                                          : held.center.y - reach;
+                                          : params.prop == PropType::Torch
+                                                ? (held.center - held.axis * (kTorchLength - kTorchCenterOfMass)).y
+                                                : held.center.y - reach;
                     e.lowestHandY = std::min(e.lowestHandY, low);
                     e.highestPropY = std::max(e.highestPropY, held.center.y + reach);
                     includeX(held.center.x, reach);
@@ -1339,6 +1346,7 @@ JugglerScene evaluateScene(const JugglingLoop& sketchOrLoop, const BallOrbits& o
     };
     auto isOpen = [&](int j, int b) { return sketch && sketchOrLoop.at(j, b).value == kOpenThrow; };
     scene.prop = params.prop;
+    scene.seconds = t * ev.secondsPerBeat();
     for (int j = 0; j < loop.jugglers; ++j) {
         const Placement pl = ev.placement(j, t);
         JugglerState js;
@@ -1364,6 +1372,43 @@ JugglerScene evaluateScene(const JugglingLoop& sketchOrLoop, const BallOrbits& o
         }
     };
 
+    // A torch's flame (see BallState::flame): where the wick of the prop j throws on beat b was at
+    // time s (beats): in the air after the throw, in j's hand before it, or in the air before
+    // that (the flight that brought it); false further back than that.
+    const bool torches = params.prop == PropType::Torch;
+    const double flameStep = kFlameSampleSeconds / ev.secondsPerBeat();
+    auto wickOf = [](const BallState& st) {
+        return st.center + normalize(st.axis) * (kTorchCenterOfMass - 0.5f * kTorchWickLength);
+    };
+    auto wickAt = [&](int j, int b, double s, Vec3* out) {
+        BallState st;
+        const int v = ev.valueAt(j, b);
+        const bool right = loop.rightHandBeat(j, b);
+        if (s >= b) {
+            if (v <= 0) return false;
+            if (ev.isHeld(j, b))
+                ev.heldProp(j, right, s, &st);
+            else
+                ev.flightProp(j, b, v, s, &st);
+        } else if (s >= (ev.incomingHeld(j, b) ? b - 2.0 : ev.catchTimeFor(j, b))) {
+            ev.heldProp(j, right, s, &st);
+        } else {
+            const int vIn = ev.incomingAt(j, b);
+            if (vIn <= 0 || ev.incomingHeld(j, b) || s < b - vIn) return false;
+            ev.flightProp(ev.incomingFrom(j, b), b - vIn, vIn, s, &st);
+        }
+        *out = wickOf(st);
+        return true;
+    };
+    auto addFlame = [&](BallState& st, int j, int b) {
+        if (!torches) return;
+        for (int k = 0; k < kFlameSamples; ++k) {
+            Vec3 p;
+            if (!wickAt(j, b, t - k * flameStep, &p)) break;
+            st.flame.push_back(p);
+        }
+    };
+
     // Every ball is, at any moment, in exactly one segment: in flight after a throw, held before
     // its next throw, or riding a 2. Look at throws within reach of t (values are at most 35).
     const int now = static_cast<int>(std::floor(t));
@@ -1383,6 +1428,7 @@ JugglerScene evaluateScene(const JugglingLoop& sketchOrLoop, const BallOrbits& o
                     held.ball = ball;
                     ev.heldProp(j, right, t, &held);
                     noteGrip(j, right, held);
+                    addFlame(held, j, b);
                     scene.balls.push_back(held);
                 }
                 const double age = (t - b) * ev.secondsPerBeat() / kPuffSeconds;
@@ -1421,6 +1467,7 @@ JugglerScene evaluateScene(const JugglingLoop& sketchOrLoop, const BallOrbits& o
                     held.ball = ball;
                     ev.heldProp(j, right, t, &held);
                     noteGrip(j, right, held);
+                    addFlame(held, j, b);
                     scene.balls.push_back(held);
                 }
             }
@@ -1434,6 +1481,7 @@ JugglerScene evaluateScene(const JugglingLoop& sketchOrLoop, const BallOrbits& o
                     held.thrower = held.catcher = j;
                     ev.heldProp(j, right, t, &held);
                     noteGrip(j, right, held);
+                    addFlame(held, j, b);
                     scene.balls.push_back(held);
                 }
                 continue;
@@ -1451,6 +1499,7 @@ JugglerScene evaluateScene(const JugglingLoop& sketchOrLoop, const BallOrbits& o
                 flying.spins = ev.spins(j, b, v);
                 flying.flightBeats = static_cast<float>(catchTime - b);
                 ev.flightProp(j, b, v, t, &flying);
+                addFlame(flying, j, b);
                 scene.balls.push_back(flying);
             }
             // Half the flight long, but at most kMaxTrailBeats: a hand throws at most every
@@ -1503,6 +1552,7 @@ float patternIntensity(const JugglingLoop& sketchOrLoop, const JuggleParams& par
 const char* propTypeName(PropType prop) {
     switch (prop) {
         case PropType::Club: return "Clubs";
+        case PropType::Torch: return "Torches";
         case PropType::Ring: return "Rings";
         case PropType::Hoop: return "Hoops";
         default: return "Balls";
@@ -1512,6 +1562,7 @@ const char* propTypeName(PropType prop) {
 const char* propTypeKey(PropType prop) {
     switch (prop) {
         case PropType::Club: return "clubs";
+        case PropType::Torch: return "torches";
         case PropType::Ring: return "rings";
         case PropType::Hoop: return "hoops";
         default: return "balls";

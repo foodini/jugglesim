@@ -10,10 +10,11 @@ namespace {
 constexpr int kClubSlices = 28;
 
 // Builds a lathe from (distance from the top of the club, radius) pairs, in club space (+Y
-// toward the top, center of mass at the origin).
-Mesh clubPart(const std::vector<float>& fromTop, const std::vector<float>& radii) {
+// toward the top, center of mass at the origin, `centerOfMass` from the top).
+Mesh clubPart(const std::vector<float>& fromTop, const std::vector<float>& radii,
+              float centerOfMass = kClubCenterOfMass) {
     std::vector<float> ys(fromTop.size());
-    for (size_t i = 0; i < fromTop.size(); ++i) ys[i] = kClubCenterOfMass - fromTop[i];
+    for (size_t i = 0; i < fromTop.size(); ++i) ys[i] = centerOfMass - fromTop[i];
     // makeLatheMesh wants heights increasing, so go from the knob end up.
     std::vector<float> y(ys.rbegin(), ys.rend()), r(radii.rbegin(), radii.rend());
     return makeLatheMesh(y.data(), r.data(), static_cast<int>(y.size()), kClubSlices);
@@ -30,6 +31,16 @@ void PropMeshes::create() {
     clubHandle = clubPart({0.282f, 0.40f, 0.492f}, {0.0145f, 0.0125f, 0.0105f});
     clubKnob = clubPart({0.492f, 0.497f, 0.503f, 0.509f, 0.515f},
                         {0.0100f, 0.0145f, 0.0170f, 0.0145f, 0.0100f});
+
+    // The torch (505 mm), measured from the wick end, in meters.
+    const float t = kTorchCenterOfMass;
+    torchWick = clubPart({0.0f, 0.004f, 0.054f, 0.058f}, {0.016f, kTorchWickRadius, kTorchWickRadius, 0.016f}, t);
+    torchShaft = clubPart({0.056f, 0.139f}, {0.008f, 0.008f}, t);
+    torchCap = clubPart({0.137f, 0.141f, 0.159f}, {0.020f, 0.032f, 0.032f}, t);
+    torchCone = clubPart({0.159f, 0.240f}, {0.031f, 0.017f}, t);
+    torchBand = clubPart({0.240f, 0.259f}, {0.0170f, 0.0165f}, t);
+    torchHandle = clubPart({0.259f, 0.479f}, {0.0150f, 0.0130f}, t);
+    torchKnob = clubPart({0.479f, 0.484f, 0.492f, 0.500f, 0.505f}, {0.0110f, 0.0150f, 0.0170f, 0.0150f, 0.0105f}, t);
 
     // Rings and hoops: the dash pattern laid around the middle of the band (or tube), repeated a
     // whole number of times, the dashes colored and the gaps dark. A hoop's dashes are longer,
@@ -93,6 +104,7 @@ void PropMeshes::destroy() {
     destroyMesh(clubCollar);
     destroyMesh(clubHandle);
     destroyMesh(clubKnob);
+    for (Mesh* m : {&torchWick, &torchShaft, &torchCap, &torchCone, &torchBand, &torchHandle, &torchKnob}) destroyMesh(*m);
     for (int d = 0; d < static_cast<int>(DashPattern::Count); ++d) {
         destroyMesh(ringColored[d]);
         destroyMesh(ringDark[d]);
@@ -119,6 +131,23 @@ void drawProp(Renderer& r, const PropMeshes& m, const Mesh& ballSphere, const Ba
             r.drawMesh(m.clubCap, model, trim);
             r.drawMesh(m.clubCollar, model, trim);
             r.drawMesh(m.clubKnob, model, trim);
+            break;
+        }
+        case PropType::Torch: {
+            const Vec3 y = normalize(prop.axis);
+            const Vec3 x = normalize(prop.spinAxis);
+            const Mat4 model = Mat4::fromBasis(x, y, cross(x, y), prop.center);
+            const Vec3 soot(0.06f, 0.06f, 0.065f);
+            r.drawMesh(m.torchWick, model, soot);
+            r.drawMesh(m.torchShaft, model, soot);
+            r.drawMesh(m.torchCap, model, soot);
+            r.drawMesh(m.torchBand, model, soot);
+            r.drawMesh(m.torchKnob, model, soot);
+            // (The colored parts glow a little, so the colors read on a dark stage.)
+            r.setEmissive(0.22f);
+            r.drawMesh(m.torchCone, model, color);
+            r.drawMesh(m.torchHandle, model, color);
+            r.setEmissive(0.0f);
             break;
         }
         case PropType::Ring:

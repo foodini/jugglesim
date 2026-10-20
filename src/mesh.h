@@ -45,6 +45,11 @@ struct Primitives {
     Mesh cylinder;
     Mesh torso;  // inverted frustum: narrow at the waist (y=0), wide at the shoulders (y=1)
     Mesh cube;
+    // A jack-o'-lantern (torch mode, in October): a ribbed pumpkin about a head's size, centered
+    // at the origin; and its carved face (eyes, nose, a toothy grin) lying on the pumpkin's
+    // surface, facing +Z, drawn glowing.
+    Mesh pumpkin;
+    Mesh pumpkinFace;
 
     void create();
     void destroy();

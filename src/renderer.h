@@ -28,6 +28,13 @@ public:
 
     // lightDir is the direction light travels (pointing from the light into the scene).
     void beginScene(const Mat4& viewProj, Vec3 lightDir);
+    // Firelight (between beginScene and endScene): instead of the usual lighting, a dark stage
+    // lit by point lights (warm, fading with distance), up to kMaxFires of them; `power` is each
+    // one's strength (about 1). beginScene turns it off again.
+    static constexpr int kMaxFires = 48;
+    void setFirelight(const std::vector<Vec3>& positions, const std::vector<float>& power);
+    // How much of a mesh's own color it gives off (0 to 1), whatever the light: 0 by default.
+    void setEmissive(float amount);
     void drawMesh(const Mesh& mesh, const Mat4& model, Vec3 color);
     // A see-through object (between beginScene and endScene): draw it once in the Depth pass,
     // then again in the SeeThrough pass (alpha 0-1), then set Off. Each pixel is blended once,
@@ -51,6 +58,10 @@ private:
     GLint locColor_ = -1;
     GLint locLightDir_ = -1;
     GLint locAlpha_ = -1;
+    GLint locEmissive_ = -1;
+    GLint locFireCount_ = -1;
+    GLint locFirePos_ = -1;
+    GLint locFirePower_ = -1;
 
     GLuint glowProgram_ = 0;
     GLint locGlowViewProj_ = -1;

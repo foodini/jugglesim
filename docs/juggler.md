@@ -404,7 +404,7 @@ faster tempo means lower throws.
 
 ## Props
 
-The **Props** menu chooses what's juggled: **Balls**, **Clubs**, **Rings** or **Hoops**. Your choice is
+The **Props** menu chooses what's juggled: **Balls**, **Clubs**, **Rings**, **Hoops** or **Torches**. Your choice is
 remembered the next time you start JuggleSim. Every prop has the same color as its ball on the
 ladder, and every flight leaves the same dashed trail.
 
@@ -438,7 +438,16 @@ ladder, and every flight leaves the same dashed trail.
   the head; a flatter throw out to a partner is let go lower, in front of the chest, from an
   underhand swing. They spin like rings (but square to the shoulders, so they never lean in
   toward the head), are banded like rings, and feel the air (see above).
-- **Spins.** Each throw of a club, ring or hoop makes about a whole number of turns, as jugglers
+- **Torches** are modeled on a real one: about a centimeter shorter than a club, balanced a
+  little nearer the knob, and thrown, spun and caught just as clubs are. The wick, the shaft and
+  the rubber cap are soot-black; the cone and the handle are in the prop's color, glowing a
+  little so the colors read in the dark. They're lit: each wick burns with a flickering flame
+  that streams out behind it as it moves (a fast torch leaves a long tail of fire) and rises when
+  it's still, and the stage goes dark, lit only by the flames (and a little night light, so the
+  jugglers stay visible). In choreography mode the stage keeps its ordinary light, for working
+  on the floor. In October, by torchlight, the jugglers' heads are jack-o'-lanterns, their carved
+  faces glowing and turning to look where the eyes would.
+- **Spins.** Each throw of a club, ring, hoop or torch makes about a whole number of turns, as jugglers
   throw them whatever the tempo: half the throw's value, rounded down (a single on a 3, a double
   on a 4 or 5, a triple on a 6 or 7, and so on; passes the same, so a `4p` is a double), give or
   take the part of a turn that gets it from the way it leaves the hand to the way it's caught.

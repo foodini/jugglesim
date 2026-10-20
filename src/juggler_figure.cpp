@@ -168,11 +168,31 @@ void drawJuggler(Renderer& r, const Primitives& prims, const JugglerPose& p, con
     const float lr = style.limbRadius;
 
     // Head and neck.
-    drawJoint(r, prims, placement, p.head, p.headRadius, body);
     Vec3 headBottom = p.head - Vec3(0.0f, p.headRadius * 0.8f, 0.0f);
     drawLimbSegment(r, prims, placement, p.neckBase - Vec3(0, 0.02f, 0), headBottom, lr * 1.1f, body);
-    // Eyes, so you can see where the juggler is looking.
-    {
+    if (style.pumpkinHead) {
+        // The pumpkin, turned with the gaze (upright, as heads are), its stem, and the carved face
+        // glowing from the candle inside.
+        Vec3 f = normalize(p.headForward);
+        Vec3 side = cross(Vec3(0.0f, 1.0f, 0.0f), f);
+        side = length(side) > 1e-3f ? normalize(side) : Vec3(1.0f, 0.0f, 0.0f);
+        const Vec3 up = cross(f, side);
+        // (A big pumpkin, 30% over the pumpkin mesh's head size, sitting up a little so it clears
+        // the shoulders.)
+        const float k = 1.3f;
+        const Vec3 center = p.head + Vec3(0.0f, 0.03f, 0.0f);
+        const Mat4 head = placement * Mat4::fromBasis(side * k, up * k, f * k, center);
+        r.setEmissive(0.10f);
+        r.drawMesh(prims.pumpkin, head, Vec3(0.93f, 0.42f, 0.07f));
+        r.setEmissive(0.0f);
+        drawLimbSegment(r, prims, placement, center + up * (0.095f * k), center + up * (0.145f * k) + f * (-0.012f * k),
+                        0.011f * k, Vec3(0.32f, 0.36f, 0.14f));
+        r.setEmissive(1.0f);
+        r.drawMesh(prims.pumpkinFace, head, Vec3(1.0f, 0.72f, 0.22f));
+        r.setEmissive(0.0f);
+    } else {
+        drawJoint(r, prims, placement, p.head, p.headRadius, body);
+        // Eyes, so you can see where the juggler is looking.
         const Vec3 f = normalize(p.headForward);
         Vec3 side = cross(Vec3(0.0f, 1.0f, 0.0f), f);
         side = length(side) > 1e-3f ? normalize(side) : Vec3(1.0f, 0.0f, 0.0f);

@@ -15,6 +15,9 @@
 struct PropMeshes {
     // A club, along +Y with its center of mass at the origin (top at +Y). Split by color.
     Mesh clubCap, clubBody, clubCollar, clubHandle, clubKnob;
+    // A torch (from a real one): wick, shaft, rubber cap and knob soot-black; the cone below
+    // the cap and the handle in the prop's color; a black band of tape between them.
+    Mesh torchWick, torchShaft, torchCap, torchCone, torchBand, torchHandle, torchKnob;
     // A ring in the XZ plane (normal +Y), centered at the origin, split into its colored and
     // dark bands, one pair per dash pattern.
     Mesh ringColored[static_cast<int>(DashPattern::Count)];

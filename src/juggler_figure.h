@@ -53,6 +53,9 @@ struct JugglerStyle {
     Vec3 eyeColor{0.10f, 0.11f, 0.14f};
     float limbRadius = 0.028f;
     bool drawLegs = true;
+    // A jack-o'-lantern for a head (torch mode, in October), its carved face turning to look
+    // where the eyes would.
+    bool pumpkinHead = false;
 };
 
 // placement maps juggler-local space into the world (position + facing).

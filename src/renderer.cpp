@@ -11,25 +11,48 @@ layout(location = 1) in vec3 aNormal;
 uniform mat4 uModel;
 uniform mat4 uViewProj;
 out vec3 vNormal;
+out vec3 vWorld;
 void main() {
     // Inverse-transpose so non-uniformly scaled primitives still get correct normals.
     vNormal = mat3(transpose(inverse(uModel))) * aNormal;
-    gl_Position = uViewProj * uModel * vec4(aPos, 1.0);
+    vec4 world = uModel * vec4(aPos, 1.0);
+    vWorld = world.xyz;
+    gl_Position = uViewProj * world;
 }
 )";
 
 const char* kFragmentShader = R"(#version 330 core
 in vec3 vNormal;
+in vec3 vWorld;
 uniform vec3 uColor;
 uniform vec3 uLightDir;
 uniform float uAlpha;
+uniform float uEmissive;
+// Firelight (torches): a dark stage lit by point lights (uFireCount of them, each a position
+// and a strength), plus a little cool night light so the jugglers stay readable.
+const int kMaxFires = 48;
+uniform int uFireCount;
+uniform vec3 uFirePos[kMaxFires];
+uniform float uFirePower[kMaxFires];
 out vec4 fragColor;
 void main() {
     vec3 n = normalize(vNormal);
-    float key = max(dot(n, -uLightDir), 0.0);
-    float fill = max(dot(n, vec3(0.0, 0.0, 1.0)), 0.0) * 0.2;  // soft light from the camera side
-    vec3 c = uColor * (0.28 + 0.65 * key + fill);
-    fragColor = vec4(c, uAlpha);
+    vec3 c;
+    if (uFireCount < 0) {
+        float key = max(dot(n, -uLightDir), 0.0);
+        float fill = max(dot(n, vec3(0.0, 0.0, 1.0)), 0.0) * 0.2;  // soft light from the camera side
+        c = uColor * (0.28 + 0.65 * key + fill);
+    } else {
+        vec3 lit = vec3(0.07, 0.08, 0.11) + vec3(0.05, 0.06, 0.09) * max(dot(n, -uLightDir), 0.0);
+        for (int i = 0; i < uFireCount; ++i) {
+            vec3 d = uFirePos[i] - vWorld;
+            float r2 = dot(d, d);
+            float facing = 0.25 + 0.75 * max(dot(n, d * inversesqrt(max(r2, 1e-6))), 0.0);
+            lit += vec3(1.0, 0.62, 0.30) * (uFirePower[i] * facing / (1.0 + 2.2 * r2));
+        }
+        c = uColor * lit;
+    }
+    fragColor = vec4(c + uColor * uEmissive, uAlpha);
 }
 )";
 
@@ -111,6 +134,10 @@ bool Renderer::init(std::string* error) {
     locColor_ = gl::GetUniformLocation(program_, "uColor");
     locLightDir_ = gl::GetUniformLocation(program_, "uLightDir");
     locAlpha_ = gl::GetUniformLocation(program_, "uAlpha");
+    locEmissive_ = gl::GetUniformLocation(program_, "uEmissive");
+    locFireCount_ = gl::GetUniformLocation(program_, "uFireCount");
+    locFirePos_ = gl::GetUniformLocation(program_, "uFirePos");
+    locFirePower_ = gl::GetUniformLocation(program_, "uFirePower");
 
     glowProgram_ = buildProgram(kGlowVertexShader, kGlowFragmentShader, error);
     if (!glowProgram_) return false;
@@ -238,7 +265,20 @@ void Renderer::beginScene(const Mat4& viewProj, Vec3 lightDir) {
     Vec3 l = normalize(lightDir);
     gl::Uniform3fv(locLightDir_, 1, &l.x);
     gl::Uniform1f(locAlpha_, 1.0f);
+    gl::Uniform1f(locEmissive_, 0.0f);
+    gl::Uniform1i(locFireCount_, -1);
 }
+
+void Renderer::setFirelight(const std::vector<Vec3>& positions, const std::vector<float>& power) {
+    const int n = static_cast<int>(std::min({positions.size(), power.size(), static_cast<size_t>(kMaxFires)}));
+    if (n > 0) {
+        gl::Uniform3fv(locFirePos_, n, &positions[0].x);
+        gl::Uniform1fv(locFirePower_, n, power.data());
+    }
+    gl::Uniform1i(locFireCount_, n);
+}
+
+void Renderer::setEmissive(float amount) { gl::Uniform1f(locEmissive_, amount); }
 
 void Renderer::setGhostPass(GhostPass pass, float alpha) {
     switch (pass) {

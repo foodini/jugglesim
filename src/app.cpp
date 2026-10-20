@@ -45,6 +45,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <functional>
 #include <map>
 #include <set>
@@ -2122,15 +2123,94 @@ void renderWalkGhost(Renderer& renderer, const Primitives& prims, const WalkGhos
 
 // `selected` is the selected juggler (-1 for none): drawn in gold (lighter than the others,
 // so it shows without color vision too), on a lighter disc on the floor.
+// Whether it's October (on this computer's clock).
+bool isOctober() {
+    const std::time_t now = std::time(nullptr);
+    const std::tm* local = std::localtime(&now);
+    return local && local->tm_mon == 9;
+}
+
+// A torch's flame (see BallState::flame): the wick's recent places, each risen a little more
+// the older it is and wavering, as a tapering glow in three layers (deep orange outside, a
+// near-white core), so a moving torch leaves a trail of fire and a still one burns upward.
+void appendFlame(std::vector<GlowVertex>& out, const BallState& b, double seconds, Vec3 cameraPos) {
+    const size_t n = b.flame.size();
+    if (n == 0) return;
+    const float seed = static_cast<float>(b.ball) * 1.7f;
+    const float t = static_cast<float>(seconds);
+    // Flicker: the flame's height breathes, unevenly.
+    const float tall = 0.85f + 0.12f * std::sin(t * 11.0f + seed) + 0.08f * std::sin(t * 23.0f + 2.1f * seed);
+    const int kPoints = static_cast<int>(std::max<size_t>(n, 2));
+    std::vector<Vec3> pts(static_cast<size_t>(kPoints));
+    std::vector<float> frac(static_cast<size_t>(kPoints));
+    for (int k = 0; k < kPoints; ++k) {
+        const size_t i = std::min(static_cast<size_t>(k), n - 1);
+        const float f = static_cast<float>(k) / static_cast<float>(kPoints - 1);  // 0 at the wick, 1 at the tip
+        const float age = (static_cast<float>(k) + (n == 1 ? 1.0f : 0.0f)) * kFlameSampleSeconds * (n == 1 ? 6.0f : 1.0f);
+        // Hot gas rises (and a bit faster as it goes), and wavers side to side.
+        const float rise = tall * (1.1f * age + 2.5f * age * age);
+        const Vec3 waver(std::sin(t * 13.0f + seed + k * 0.9f), 0.0f, std::cos(t * 11.0f + 1.3f * seed + k * 0.7f));
+        pts[static_cast<size_t>(k)] = b.flame[i] + Vec3(0.0f, rise, 0.0f) + waver * (0.012f + 0.05f * f * f);
+        frac[static_cast<size_t>(k)] = f;
+    }
+    // Each point's sideways direction (square to the flame and to the view), shared by the
+    // pieces either side of it so the strip has no seams.
+    std::vector<Vec3> across(static_cast<size_t>(kPoints));
+    for (int k = 0; k < kPoints; ++k) {
+        const Vec3 prev = pts[static_cast<size_t>(k > 0 ? k - 1 : k)], next = pts[static_cast<size_t>(k + 1 < kPoints ? k + 1 : k)];
+        Vec3 along = next - prev;
+        if (length(along) < 1e-5f) along = Vec3(0.0f, 1.0f, 0.0f);
+        const Vec3 c = cross(along, cameraPos - pts[static_cast<size_t>(k)]);
+        across[static_cast<size_t>(k)] = length(c) > 1e-6f ? normalize(c) : Vec3(1.0f, 0.0f, 0.0f);
+    }
+    auto layer = [&](Vec3 color, float alpha, float width, float reach) {
+        // A camera-facing strip, tapering to nothing at `reach` of the way along.
+        auto halfWidth = [&](float f) { return 0.5f * width * std::pow(std::max(0.0f, 1.0f - f), 0.7f); };
+        auto v = [&](Vec3 p, float a) { out.push_back({p.x, p.y, p.z, color.x, color.y, color.z, a}); };
+        for (int k = 0; k + 1 < kPoints; ++k) {
+            const float f0 = frac[static_cast<size_t>(k)] / reach, f1 = std::min(frac[static_cast<size_t>(k + 1)] / reach, 1.0f);
+            if (f0 >= 1.0f) break;
+            const Vec3 p0 = pts[static_cast<size_t>(k)], p1 = pts[static_cast<size_t>(k + 1)];
+            const Vec3 s0 = across[static_cast<size_t>(k)] * halfWidth(f0), s1 = across[static_cast<size_t>(k + 1)] * halfWidth(f1);
+            const float a0 = alpha * (1.0f - f0), a1 = alpha * (1.0f - f1);
+            v(p0 - s0, a0); v(p0 + s0, a0); v(p1 + s1, a1);
+            v(p0 - s0, a0); v(p1 + s1, a1); v(p1 - s1, a1);
+        }
+    };
+    // The wick itself: a soft bright ball.
+    {
+        const Vec3 c = pts[0] + Vec3(0.0f, 0.015f, 0.0f);
+        const Vec3 view = normalize(cameraPos - c);
+        const Vec3 r = normalize(cross(view, Vec3(0.0f, 1.0f, 0.0f)));
+        const Vec3 u = cross(r, view);
+        const int kSegments = 12;
+        const float radius = 0.055f * tall;
+        for (int i = 0; i < kSegments; ++i) {
+            const float a0 = static_cast<float>(i) / kSegments * 6.2831853f, a1 = static_cast<float>(i + 1) / kSegments * 6.2831853f;
+            const Vec3 q0 = c + (r * std::cos(a0) + u * std::sin(a0)) * radius, q1 = c + (r * std::cos(a1) + u * std::sin(a1)) * radius;
+            out.push_back({c.x, c.y, c.z, 1.0f, 0.75f, 0.35f, 0.75f});
+            out.push_back({q0.x, q0.y, q0.z, 1.0f, 0.45f, 0.10f, 0.0f});
+            out.push_back({q1.x, q1.y, q1.z, 1.0f, 0.45f, 0.10f, 0.0f});
+        }
+    }
+    layer(Vec3(1.0f, 0.34f, 0.06f), 0.45f, 0.11f, 1.0f);
+    layer(Vec3(1.0f, 0.62f, 0.18f), 0.55f, 0.065f, 0.85f);
+    layer(Vec3(1.0f, 0.92f, 0.70f), 0.80f, 0.030f, 0.45f);
+}
+
 void renderJugglerView(Renderer& renderer, const Primitives& prims, const PropMeshes& propMeshes,
                        const JugglerScene& scene, const CameraView& camera, int selected,
-                       ColorVisionMode colorVision, const std::vector<int>& styleOfBall, const GLRect& rect) {
+                       ColorVisionMode colorVision, const std::vector<int>& styleOfBall, const GLRect& rect,
+                       bool firelight) {
     if (rect.w <= 0 || rect.h <= 0) return;
 
     glViewport(rect.x, rect.y, rect.w, rect.h);
     glEnable(GL_SCISSOR_TEST);
     glScissor(rect.x, rect.y, rect.w, rect.h);
-    glClearColor(0.16f, 0.17f, 0.20f, 1.0f);
+    if (firelight)
+        glClearColor(0.025f, 0.027f, 0.04f, 1.0f);
+    else
+        glClearColor(0.16f, 0.17f, 0.20f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     glDisable(GL_SCISSOR_TEST);
 
@@ -2138,6 +2218,29 @@ void renderJugglerView(Renderer& renderer, const Primitives& prims, const PropMe
     const Mat4 viewProj = cameraViewProj(camera, aspect);
 
     renderer.beginScene(viewProj, {-0.4f, -1.0f, -0.6f});
+    std::vector<JugglerPose> poses;
+    for (const JugglerState& juggler : scene.jugglers) poses.push_back(posedJuggler(juggler, scene.prop));
+    // In October, by torchlight, the jugglers' heads are jack-o'-lanterns.
+    const bool pumpkins = firelight && isOctober();
+    // Torches, lit: a dark stage, each flame a flickering light (and each jack-o'-lantern a dim
+    // one).
+    if (firelight) {
+        std::vector<Vec3> fires;
+        std::vector<float> power;
+        const float t = static_cast<float>(scene.seconds);
+        for (size_t j = 0; pumpkins && j < poses.size() && static_cast<int>(fires.size()) < Renderer::kMaxFires; ++j) {
+            const JugglerPose& pose = poses[j];
+            fires.push_back(transformPoint(jugglerMatrix(scene.jugglers[j]), pose.head + normalize(pose.headForward) * 0.16f));
+            power.push_back(0.10f * (0.9f + 0.1f * std::sin(t * 19.0f + static_cast<float>(j) * 2.9f)));
+        }
+        for (const BallState& b : scene.balls) {
+            if (b.flame.empty() || static_cast<int>(fires.size()) >= Renderer::kMaxFires) continue;
+            const float seed = static_cast<float>(b.ball) * 1.7f;
+            fires.push_back(b.flame[0] + Vec3(0.0f, 0.08f, 0.0f));
+            power.push_back(0.55f * (0.88f + 0.08f * std::sin(t * 17.0f + seed) + 0.05f * std::sin(t * 31.0f + 2.3f * seed)));
+        }
+        renderer.setFirelight(fires, power);
+    }
 
     // Floor disc, under all the jugglers.
     Vec3 middle;
@@ -2161,7 +2264,8 @@ void renderJugglerView(Renderer& renderer, const Primitives& prims, const PropMe
         }
         JugglerStyle style;
         if (static_cast<int>(j) == selected) style.bodyColor = Vec3(0.94f, 0.85f, 0.56f);
-        drawJuggler(renderer, prims, posedJuggler(juggler, scene.prop), jugglerMatrix(juggler), style);
+        style.pumpkinHead = pumpkins;
+        drawJuggler(renderer, prims, poses[j], jugglerMatrix(juggler), style);
     }
 
     // Props, in the same colors (and, on rings, dash patterns) as the ladder.
@@ -2220,6 +2324,9 @@ void renderJugglerView(Renderer& renderer, const Primitives& prims, const PropMe
             if (age < flashSpan) blob(puff.center, 0.14f, Vec3(1.0f, 1.0f, 1.0f) * 0.6f + color * 0.4f, 1.0f * (1.0f - age / flashSpan));
         }
     }
+    // Flames.
+    for (const BallState& b : scene.balls)
+        if (!b.flame.empty()) appendFlame(glow, b, scene.seconds, camera.position);
     renderer.drawGlow(viewProj, glow);
 }
 
@@ -5857,8 +5964,10 @@ int runApp() {
         const int topPixels = static_cast<int>(std::lround(top * pixelsPerPointY));
         const GLRect jugglerRect{viewX, bottomPixels, framebufferWidth - viewX,
                                  framebufferHeight - topPixels - bottomPixels};
+        // (Torches light the stage, except while working on the choreography, which wants the
+        // ordinary light to see the floor and its marks by.)
         renderJugglerView(renderer, prims, propMeshes, scene, cameraView, selectedJuggler, settings.colorVision, styleOfBall,
-                          jugglerRect);
+                          jugglerRect, scene.prop == PropType::Torch && !choreographyMode);
         if (jugglerRect.w > 0 && jugglerRect.h > 0) {
             glViewport(jugglerRect.x, jugglerRect.y, jugglerRect.w, jugglerRect.h);
             renderer.drawOverlay(cameraViewProj(cameraView, static_cast<float>(jugglerRect.w) / static_cast<float>(jugglerRect.h)),

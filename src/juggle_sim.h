@@ -34,9 +34,11 @@ struct Choreography;
 
 // What's being juggled. (Per pattern for now; BallState carries it per prop, so mixed props
 // can come later.)
-enum class PropType { Ball, Club, Ring, Hoop, Count };
+enum class PropType { Ball, Club, Ring, Hoop, Torch, Count };
+// Clubs and torches are thrown, spun and caught the same way.
+inline bool clubLike(PropType prop) { return prop == PropType::Club || prop == PropType::Torch; }
 
-const char* propTypeName(PropType prop);  // "Balls", "Clubs", "Rings", "Hoops" (menu text)
+const char* propTypeName(PropType prop);  // "Balls", "Clubs", "Rings", "Hoops", "Torches" (menu text)
 const char* propTypeKey(PropType prop);   // "balls", ... (settings file)
 bool propTypeFromKey(const char* key, PropType* prop);
 
@@ -78,6 +80,14 @@ constexpr float kBallRadius = 0.034f;  // a typical 68 mm juggling ball
 constexpr float kClubLength = 0.515f;
 constexpr float kClubCenterOfMass = 0.215f;  // from the top
 constexpr float kClubGrip = 0.387f;          // from the top: midway between collar and knob
+// Torch dimensions (measured from a real one beside a club): about a centimeter shorter, its
+// center of mass about a centimeter nearer the knob, held about as far from the knob. The top
+// is the wick.
+constexpr float kTorchLength = 0.505f;
+constexpr float kTorchCenterOfMass = 0.215f;  // from the top (the wick end)
+constexpr float kTorchGrip = 0.377f;          // from the top
+constexpr float kTorchWickLength = 0.058f;
+constexpr float kTorchWickRadius = 0.020f;
 // Ring dimensions: a typical stage ring.
 constexpr float kRingOuterRadius = 0.16f;
 constexpr float kRingInnerRadius = 0.125f;
@@ -98,6 +108,9 @@ struct BallState {
     Vec3 center;
     Vec3 axis{0.0f, 1.0f, 0.0f};
     Vec3 spinAxis{1.0f, 0.0f, 0.0f};
+    // A torch: where the middle of its wick has been lately (world, newest first, about every
+    // kFlameSampleSeconds), for drawing the flame it leaves behind.
+    std::vector<Vec3> flame;
     bool inFlight = false;
     // The throw it's on, while in flight or riding a held 2 (value 0 otherwise): its value,
     // who threw it and who catches it.
@@ -176,8 +189,12 @@ struct Puff {
 constexpr double kPuffSeconds = 0.5;
 
 // Everything at a moment. Props, trails and puffs are in world coordinates.
+constexpr float kFlameSampleSeconds = 0.018f;
+constexpr int kFlameSamples = 10;
+
 struct JugglerScene {
     PropType prop = PropType::Ball;
+    double seconds = 0.0;  // the moment, in seconds (for things that flicker)
     std::vector<JugglerState> jugglers;
     std::vector<BallState> balls;
     std::vector<Trail> trails;
