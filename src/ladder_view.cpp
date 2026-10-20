@@ -863,13 +863,26 @@ LadderEditResult drawLadderDiagram(const JugglingLoop& loop, ColorVisionMode col
     }
     const bool inBody = mouse.y >= bodyTop;
 
-    // Scrubbing: click or drag in the beat-number column to move the playhead there.
+    // Scrubbing: click or drag in the beat-number column to move the playhead there. (Dragging
+    // past the top or bottom scrolls: kScrubScrollRate pixels a second for each pixel beyond the
+    // edge, up to kScrubScrollMax.)
+    constexpr float kScrubScrollRate = 6.0f, kScrubScrollMax = 2500.0f;
     const bool overGutter = canvasHovered && inBody && mouse.x < areaLeft && !chain.active && !edit.drawing;
     if (overGutter && leftClicked) edit.scrubbing = true;
     if (edit.scrubbing) {
         if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
             result.scrubbing = true;
             result.scrubBeat = static_cast<double>(firstBeat) + static_cast<double>((mouse.y - y0) / beatSpacing);
+            // Dragged off the top or bottom: the ladder scrolls that way, faster the further out
+            // the mouse is, and the playhead stays at the edge.
+            const float over = mouse.y < bodyTop ? mouse.y - bodyTop : (mouse.y > maxPt.y ? mouse.y - maxPt.y : 0.0f);
+            if (over != 0.0f) {
+                const float pixelsPerSecond = std::min(std::fabs(over) * kScrubScrollRate, kScrubScrollMax);
+                edit.firstBeat += (over < 0.0f ? -1.0f : 1.0f) * pixelsPerSecond * ImGui::GetIO().DeltaTime / beatSpacing;
+                edit.followPausedUntil = ImGui::GetTime() + 2.0;
+                const float edge = over < 0.0f ? bodyTop : maxPt.y;
+                result.scrubBeat = static_cast<double>(edit.firstBeat) + static_cast<double>((edge - y0) / beatSpacing);
+            }
             // A click (no drag yet) goes to the nearest whole beat; dragging moves smoothly.
             const float slop = ImGui::GetIO().MouseDragThreshold;
             if (ImGui::GetIO().MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] < slop * slop)

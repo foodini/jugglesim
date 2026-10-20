@@ -24,7 +24,8 @@ Next to the buttons is the current beat (beat 1 is the right hand's first throw,
 ladder). **Drag** it left or right to move through time, or **double-click** it to type the beat
 to go to; either pauses. On the ladder, **click a beat number** to go to exactly that beat
 (the nearest whole beat to the click), or **drag** in the beat numbers to move the playhead
-smoothly; this pauses too. The slow-motion speed is
+smoothly; this pauses too. Drag past the top or bottom of the ladder and it scrolls that way,
+faster the further out you go, with the playhead held at the edge. The slow-motion speed is
 remembered; dragging its slider turns slow motion on.
 
 Loading a pattern from the library, starting a new one, or pasting a whole pattern over the siteswap grid
