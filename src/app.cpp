@@ -2513,8 +2513,10 @@ int runApp() {
     PlayedLoop played;
     WalkPaths playPaths;
     JugglingLoop stagePlayLoop;
-    // The throws as they last worked (written out, not played): while they have an error, the
-    // walking (its grid rows, its dialogs) keeps to this, so it doesn't vanish as you type.
+    // The throws as they last worked (written out, not played; a sketch counts): while they have
+    // an error, the walking (its grid rows, its dialogs) keeps to this, so it doesn't vanish as
+    // you type. (Only while the throws have the same jugglers: one left from an earlier
+    // pattern isn't this one.)
     JugglingLoop lastGoodLoop;
     bool throwLoopBroken = false;
     bool throwsBroken = false;  // the throws have an error: the stage plays the last pattern that worked
@@ -2567,7 +2569,9 @@ int runApp() {
     auto shownLoop = [&]() -> JugglingLoop {
         if (sketching) return sketchLoop;
         if (patternValid) return patternLoop(pattern);
-        return lastGoodLoop;  // (the throws have an error: see lastGoodLoop)
+        // (The throws have an error: see lastGoodLoop.)
+        if (!lastGoodLoop.empty() && lastGoodLoop.jugglers == parsed.loop.jugglers) return lastGoodLoop;
+        return JugglingLoop();
     };
     // Spike marks are kept in meters for the distance they were placed at, and scale with it.
     // A spike mark's name ("0a"), or "?" for none.
@@ -3679,7 +3683,7 @@ int runApp() {
             const bool wasBroken = throwsBroken;
             throwsBroken = writtenLoop.empty() && !stagePlayLoop.empty();
             if (throwsBroken && !wasBroken) playback.playing = false;
-            if (!writtenLoop.empty() && !sketching) lastGoodLoop = writtenLoop;
+            if (!writtenLoop.empty()) lastGoodLoop = writtenLoop;
             if (!writtenLoop.empty() && (!throwLoopBroken || stagePlayLoop.jugglers != writtenLoop.jugglers))
                 stagePlayLoop = played.loop;
         }
