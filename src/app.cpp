@@ -3316,6 +3316,9 @@ int runApp() {
         // While the siteswap grid has the keyboard, keys are its (throws are letters too), so the
         // single-key shortcuts are off, as they are for a text box; Space, Ctrl+S and undo work.
         const bool gridHasKeys = siteswapGridHasKeyboard(siteswapGrid);
+        // (A text box being typed in elsewhere, as when naming a pattern to save: the grid keeps
+        // its focus flag under a dialog, but its keys aren't its.)
+        const bool typingElsewhere = io.WantTextInput || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
         if (gridHasKeys) io.WantTextInput = true;
         // Ctrl+S / Ctrl+Shift+S: Save / Save As (even while typing a siteswap).
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup)) {
@@ -3360,7 +3363,7 @@ int runApp() {
         if (!io.WantTextInput)
             for (const ImWchar c : io.InputQueueCharacters)
                 if (c == '?') showShortcuts = !showShortcuts;
-        if (gridHasKeys && !io.KeyCtrl && !loiter.open && ImGui::IsKeyPressed(ImGuiKey_Space, false))
+        if (gridHasKeys && !typingElsewhere && !io.KeyCtrl && !loiter.open && ImGui::IsKeyPressed(ImGuiKey_Space, false))
             playback.playing = !playback.playing;
         if (!io.WantTextInput && !io.KeyCtrl && !loiter.open) {
             if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) playback.playing = !playback.playing;

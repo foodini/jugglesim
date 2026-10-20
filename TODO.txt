@@ -35,7 +35,6 @@
 * allow click to select an SM so I can hit delete on one.
 * Delete/Add juggler
   * Deleting a juggler should turn all passes to them into selfs and recompute offsets.
-* When typing a save file name, hitting spacebar causes the sim to pause/unpause.
 * Different gravity settings; earth, moon, jupiter, neutron star, black hole, deimos.
 
   
