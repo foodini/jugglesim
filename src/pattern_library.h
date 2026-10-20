@@ -25,7 +25,7 @@ struct PatternSettings {
     bool hasTempo = false;
     double tempo = 150.0;  // beats per minute
     bool hasDwell = false;
-    double dwell = 1.4;  // beats
+    double dwell = 1.6;  // beats
     // Distance between passing jugglers (m); 0 = automatic. Only saved for passing patterns.
     bool hasDistance = false;
     double distance = 0.0;

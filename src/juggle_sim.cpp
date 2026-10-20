@@ -20,15 +20,18 @@ int modPositive(int a, int m) {
 
 
 // Hand geometry (juggler-local). Throws are made from the inside, catches on the outside.
-// Roughly elbow height, in front of the body, so the elbows stay comfortably bent. Higher
-// throws (heightFraction toward 1) are made and caught wider.
+// Roughly elbow height, in front of the body, so the elbows stay comfortably bent; catches a
+// little higher and further out in front (from slow-motion video of a 3-club cascade: thrown
+// about 1.16 m up and 35 cm out, caught about 1.27 m up and 48 cm out). Higher throws
+// (heightFraction toward 1) are made and caught wider, and higher: in a 5-club cascade the
+// catches come up to about shoulder height, the releases a little less.
 Vec3 throwPoint(bool right, float heightFraction) {
     const float x = 0.09f + 0.07f * heightFraction;
-    return Vec3(right ? -x : x, 1.12f, 0.36f);
+    return Vec3(right ? -x : x, 1.12f + 0.23f * heightFraction, 0.36f);
 }
 Vec3 catchPoint(bool right, float heightFraction) {
     const float x = 0.26f + 0.08f * heightFraction;
-    return Vec3(right ? -x : x, 1.18f, 0.36f);
+    return Vec3(right ? -x : x, 1.23f + 0.43f * heightFraction, 0.48f);
 }
 const Vec3 kBallOnPalm(0.0f, 0.0125f + kBallRadius, 0.0f);  // ball center relative to palm
 // A self 1 is a hand-across: the throwing hand carries the prop just past the middle and lets
@@ -83,7 +86,9 @@ constexpr float kTwistSmoothing = 0.6f;  // beats: the twist eases in and out ov
 constexpr float kMaxBodySpeed = 1.2f;      // m/s: average speed of the hips sinking or rising
 constexpr float kHipsBack = 0.35f;         // hips move back this much per meter of crouch
 constexpr float kLeanPerCrouch = 0.6f;     // radians of forward lean per meter of crouch
-constexpr float kFervorLean = 0.05f;       // radians
+// ...but a juggler watching high throws leans back a little (from video of a 5-club cascade:
+// knees soft, head tipped back, the upper body a touch behind the hips).
+constexpr float kFervorLean = -0.35f;      // radians (back) at full intensity
 constexpr float kMaxSway = 0.08f;          // m: torso sway toward the driving hand, at the top
 constexpr float kCrouchPerBodyDrive = 0.8f; // the lean lowers the shoulders too, so a bit less crouch
 constexpr float kSwayHipShare = 0.35f;     // how much of the sway is the hips moving
@@ -168,24 +173,42 @@ struct SpinFrame {
 //   release: as it leaves the hand;
 //   caught: as it arrives in the next hand (after its whole number of spins);
 //   cocked: the bottom of the scoop, ready to be flicked into the next throw.
-// A club is caught with its top pointing forward and up (about 33 degrees above horizontal),
-// hangs down from the wrist at the bottom of the scoop (top about 62 degrees below horizontal,
-// forward), and is flicked up so it leaves the hand pointing forward, about 15 degrees above
-// horizontal, already spinning (from slow-motion video of real club throws). A ring does the
-// same, more gently.
+// From slow-motion video of a 3- and 4-club cascade (240 fps, side on): a club hangs down from
+// the wrist at the bottom of the scoop (top about 52 degrees below horizontal, forward) and is
+// flicked up, leaving the hand already spinning; how far up depends on the spin (see
+// clubReleaseAngle), and so does the way a self arrives (clubSelfCaughtAngle). The release and
+// caught angles here are a single's.
+// A ring is held by its near side, out in front of the hand, like a hoop (from video of a
+// 3-ring cascade): caught high with the ring up and forward of the hand, carried down out in
+// front of it, and let go low with the ring forward and a little up.
 struct PropAngles {
     float release = 0.0f, caught = 0.0f, cocked = 0.0f;
 };
 PropAngles propAngles(PropType prop) {
     switch (prop) {
-        case PropType::Club: return {-1.31f, -1.00f, -2.65f};
-        case PropType::Ring: return {0.10f, -0.35f, -0.50f};
+        case PropType::Club: return {-0.98f, -0.96f, -2.48f};
+        case PropType::Ring: return {-1.20f, -0.79f, -1.75f};
         // A hoop is held by its near side, out in front of the hand (so it stays clear of the
         // juggler): caught pointing forward, hanging down and a little forward at the bottom of
         // the swoop, and let go above the hand, leaning a little forward.
         case PropType::Hoop: return {-0.40f, -1.57f, -2.82f};
         default: return {};
     }
+}
+
+// A club's release by its spins: a single leaves pointing about 34 degrees above horizontal, a
+// double nearly upright (about 70 degrees): the more spin, the longer the wrist flicks. (Triples
+// and up: upright, by extension.)
+float clubReleaseAngle(int spins) {
+    if (spins <= 1) return -0.98f;
+    if (spins == 2) return -0.35f;
+    return -0.09f;
+}
+// How a club self arrives, by its spins: a single about 35 degrees above horizontal, a double
+// about level (and more, no flatter).
+float clubSelfCaughtAngle(int spins) {
+    if (spins <= 1) return -0.96f;
+    return -1.52f;
 }
 
 // A carry shorter than this (seconds) winds the prop up less.
@@ -239,10 +262,21 @@ Vec3 dropbackByFace(bool right) { return Vec3(right ? -0.09f : 0.09f, 1.66f, 0.3
 Vec3 dropbackLowPoint(bool right) { return Vec3(right ? -0.12f : 0.12f, 0.92f, 0.33f); }
 Vec3 behindCatchPoint(bool right) { return Vec3(right ? -0.27f : 0.27f, 1.70f, 0.06f); }
 
-// Hoops are thrown from high up, the arm reaching up and forward above the head, after a low
-// swoop at about waist height (from video of a hoop juggler).
-Vec3 hoopThrowPoint(bool right) { return Vec3(right ? -0.15f : 0.15f, 1.90f, 0.30f); }
-Vec3 hoopLowPoint(bool right) { return Vec3(right ? -0.14f : 0.14f, 0.95f, 0.33f); }
+// Hoops are thrown with a long swing of the arm. A hoop going up (a self) is let go high, the
+// arm reaching up and forward above the head, after a low swoop at about waist height (from
+// video of a hoop juggler); one going out to someone (flatter) is let go lower, in front of
+// the chest, from an underhand swing that starts down beside the hip. The swing runs back
+// along the way the hoop leaves the hand, so the hand is already moving that way.
+// Rings (from video of a 3-ring cascade): caught high, about head height with the arm
+// reaching up and forward, and thrown low, about waist height with the arm well forward.
+Vec3 ringThrowPoint(bool right) { return Vec3(right ? -0.12f : 0.12f, 1.05f, 0.45f); }
+Vec3 ringCatchPoint(bool right) { return Vec3(right ? -0.26f : 0.26f, 1.58f, 0.48f); }
+
+Vec3 hoopThrowPointHigh(bool right) { return Vec3(right ? -0.22f : 0.22f, 1.90f, 0.30f); }
+Vec3 hoopThrowPointOut(bool right) { return Vec3(right ? -0.18f : 0.18f, 1.35f, 0.50f); }
+constexpr float kHoopSteep = 75.0f * kPi / 180.0f, kHoopFlat = 45.0f * kPi / 180.0f;  // launch angles
+constexpr float kHoopSwing = 0.95f;  // m: how far back along its launch the swing starts
+constexpr float kHoopLowestHand = 0.90f;  // m: and no lower than this
 // Dropbacks with hoops let go higher too.
 const Vec3 kHoopDropbackLift(0.0f, 0.20f, 0.0f);
 // The angle a club or ring leaves the hand at on a dropback (see PropAngles): about upright.
@@ -418,7 +452,9 @@ public:
         if (valueAt(j, b) == 1 && destAt(j, b) == j) return handAcrossThrowPoint(rightHand(j, b));
         if (isDropback(j, b)) return dropbackThrowPoint(j, b) + (prop() == PropType::Hoop ? kHoopDropbackLift : Vec3());
         if (prop() == PropType::Hoop && valueAt(j, b) > 0 && !isHeld(j, b))
-            return turned(hoopThrowPoint(rightHand(j, b)), throwTurn(j, b));
+            return turned(hoopThrowPoint(j, b), throwTurn(j, b));
+        if (prop() == PropType::Ring && valueAt(j, b) > 0 && !isHeld(j, b))
+            return turned(ringThrowPoint(rightHand(j, b)), throwTurn(j, b));
         return turned(throwPoint(rightHand(j, b), heightFraction(j, b)), throwTurn(j, b));
     }
     Vec3 catchPointAt(int j, int b) const {
@@ -430,6 +466,8 @@ public:
             if (!isDropback(src, from) || flips(src, from))
                 return turned(passCatchPoint(rightHand(j, b), incomingHeightFraction(j, b)), catchTurn(j, b));
         }
+        if (prop() == PropType::Ring && incomingAt(j, b) > 0 && !incomingHeld(j, b))
+            return turned(ringCatchPoint(rightHand(j, b)), catchTurn(j, b));
         return turned(catchPoint(rightHand(j, b), incomingHeightFraction(j, b)), catchTurn(j, b));
     }
 
@@ -467,7 +505,28 @@ public:
         return isDropback(j, b) || (prop() == PropType::Hoop && valueAt(j, b) > 0 && !isHeld(j, b));
     }
     Vec3 longDriveLowPoint(int j, int b) const {
-        return prop() == PropType::Hoop ? hoopLowPoint(rightHand(j, b)) : dropbackLowPoint(rightHand(j, b));
+        if (prop() != PropType::Hoop) return dropbackLowPoint(rightHand(j, b));
+        const Vec3 v = releaseVelocity(j, b);
+        const Vec3 dir = length(v) > 0.05f ? normalize(v) : Vec3(0.0f, 1.0f, 0.0f);
+        Vec3 low = throwPointAt(j, b) - dir * kHoopSwing;
+        low.y = std::max(low.y, kHoopLowestHand);
+        return low;
+    }
+    // A hoop's release (j-local, before turning toward a partner): high for a steep throw, out in
+    // front for a flat one (see hoopThrowPointHigh). How steep is estimated from where the hoop
+    // goes and how long it flies, from about the hands (the release itself depends on this).
+    Vec3 hoopThrowPoint(int j, int b) const {
+        const bool right = rightHand(j, b);
+        const int v = valueAt(j, b);
+        const int r = destAt(j, b);
+        const double catchTime = catchTimeFor(r, b + v);
+        const Vec3 from = placement(j, b).point(Vec3(0.0f, 1.4f, 0.3f));
+        const Vec3 to = placement(r, catchTime).point(catchPointAt(r, b + v));
+        const Vec3 v0 = drag_.launch(from, to, std::max(flightSeconds(j, b, v), 1e-3f));
+        const float steep = std::atan2(v0.y, std::hypot(v0.x, v0.z));
+        const float u = std::clamp((steep - kHoopFlat) / (kHoopSteep - kHoopFlat), 0.0f, 1.0f);
+        const float w = u * u * (3.0f - 2.0f * u);
+        return hoopThrowPointOut(right) * (1.0f - w) + hoopThrowPointHigh(right) * w;
     }
     // A dropback's release (j-local): in front of the throwing shoulder for a catching hand straight
     // back (or close behind), blending to in front of the face for one kDropbackAcross or more
@@ -544,15 +603,17 @@ public:
             default: return 0.0f;
         }
     }
-    // The plane the throw made on beat b spins in (thrower-local): clubs and rings both spin end
-    // over end, in the plane running front to back through the juggler (turned by
-    // kClubAxisBias), the top turning back toward the juggler.
+    // The plane the throw made on beat b spins in (thrower-local): clubs, rings and hoops all
+    // spin end over end, in the plane running front to back through the juggler (clubs and
+    // rings turned by kClubAxisBias; a hoop is too big to lean across toward the head), the top
+    // turning back toward the juggler.
     SpinFrame frameFor(int j, int b) const {
         const bool right = rightHand(j, b);
         SpinFrame f;
         if (prop() != PropType::Ball) {
-            const float side = std::sin(kClubAxisBias);
-            f.dir = turned(Vec3(right ? -side : side, 0.0f, -std::cos(kClubAxisBias)), throwTurn(j, b));
+            const float bias = prop() == PropType::Hoop ? 0.0f : kClubAxisBias;
+            const float side = std::sin(bias);
+            f.dir = turned(Vec3(right ? -side : side, 0.0f, -std::cos(bias)), throwTurn(j, b));
         }
         return f;
     }
@@ -587,6 +648,9 @@ public:
         const int v = valueAt(j, b);
         const int r = destAt(j, b);
         if (prop() == PropType::Ball || v <= 0 || isHeld(j, b) || (r == j && v < 3)) return a.caught;
+        // Selfs: as filmed (clubs by their spins; rings as caught high).
+        if (r == j && prop() == PropType::Club) return clubSelfCaughtAngle(spins(j, b, v));
+        if (r == j && prop() == PropType::Ring) return a.caught;
         ThrowGeometry& g = geometry(j, b);
         if (g.caughtSet) return g.caught;
         // How it's moving as it arrives (catcher-local): the flight from hand to hand.
@@ -618,6 +682,8 @@ public:
             if (prop() == PropType::Club) return kClubDropbackRelease;
             if (prop() == PropType::Ring || prop() == PropType::Hoop) return kRingDropbackRelease;
         }
+        const int v = valueAt(j, b);
+        if (prop() == PropType::Club && v > 0 && !isHeld(j, b)) return clubReleaseAngle(spins(j, b, v));
         return propAngles(prop()).release;
     }
     // The prop's spin frame as the catcher sees it (catcher-local), and the sign that turns

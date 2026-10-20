@@ -1660,8 +1660,8 @@ bool drawTweakablesPanel(JuggleParams& params, const JugglingLoop& loop, bool& c
                 if (distanceLocked) params.distance = distance;
             }
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-                ImGui::SetTooltip(distanceLocked ? "150 BPM, dwell 1.40 beats (the distance stays: the pattern has choreography)"
-                                                 : "150 BPM, dwell 1.40 beats, automatic distance");
+                ImGui::SetTooltip(distanceLocked ? "150 BPM, dwell 1.60 beats (the distance stays: the pattern has choreography)"
+                                                 : "150 BPM, dwell 1.60 beats, automatic distance");
 
             const float labelWidth =
                 std::max(em * 3.5f, ImGui::CalcTextSize(passing ? "Distance" : "Dwell").x +
@@ -3492,7 +3492,7 @@ int runApp() {
                 ImGui::Separator();
                 if (ImGui::MenuItem("Reset Tweakables")) resetTweakables(juggleParams);
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-                    ImGui::SetTooltip("Tempo 150 BPM, dwell 1.40 beats, automatic distance");
+                    ImGui::SetTooltip("Tempo 150 BPM, dwell 1.60 beats, automatic distance");
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Props")) {

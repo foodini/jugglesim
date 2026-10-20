@@ -42,7 +42,7 @@ bool propTypeFromKey(const char* key, PropType* prop);
 
 struct JuggleParams {
     double bpm = 150.0;
-    double dwellBeats = 1.4;  // 0 < dwell < 2
+    double dwellBeats = 1.6;  // 0 < dwell < 2
     PropType prop = PropType::Ball;
     double distance = 0.0;    // between passing jugglers (m, body to body); 0 = automatic
     // Where the jugglers stand over time (not owned; null or without spike marks: the default

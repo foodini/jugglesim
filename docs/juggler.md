@@ -372,9 +372,9 @@ in the top-right corner of the juggler pane ("Tweakables" is a working name):
   fine steps: 1 BPM and 0.05 beats, or 10 BPM and 0.1 beats with **Shift**. Hold a button down
   to keep stepping.
 - **Double-click** (or **Ctrl+click**) a slider to type an exact value; **Enter** sets it.
-- **Reset** (or *Playback > Reset Tweakables*) goes back to 150 BPM, a dwell of 1.4 and the
+- **Reset** (or *Playback > Reset Tweakables*) goes back to 150 BPM, a dwell of 1.6 and the
   automatic distance.
-- The arrow at the top left collapses the panel to a one-line readout ("150 BPM, dwell 1.40");
+- The arrow at the top left collapses the panel to a one-line readout ("150 BPM, dwell 1.60");
   click it again to bring the controls back. JuggleSim remembers which way you left it.
 - Changes can be undone (**Ctrl+Z**): each adjustment is one step, recorded once you've stopped
   changing it for a moment.
@@ -383,7 +383,7 @@ in the top-right corner of the juggler pane ("Tweakables" is a working name):
   420 (7 throws a second, about the fastest anyone throws accurately). The default is 150,
   which makes a 3 rise about half a meter above the hands.
 - **Dwell** is how long a hand holds a ball before throwing it, in beats. Each hand throws every
-  other beat, so dwell is out of 2: at 1.4 (the default) a hand holds each ball for 70% of its
+  other beat, so dwell is out of 2: at 1.6 (the default) a hand holds each ball for 80% of its
   cycle and is empty for the rest. Real cascades are often around 1.3 to 1.6.
 
 Short throws get a shorter dwell automatically, so they still spend some time in the air: a
@@ -411,22 +411,32 @@ ladder, and every flight leaves the same dashed trail.
   and the knob, and the club's center of mass (about 17 cm up from the hand) is what flies on
   its arc. Clubs spin end over end, the top turning back toward the juggler as the club
   leaves the hand (clockwise, seen from the juggler's left), with the spin axis turned about
-  7 degrees so each club leaves the hand pointing a little toward the other side. In the hand,
-  a club is caught square to its flight (the palm along the club; of the two ends, the top is
-  the higher one, so a pass coming down steeply arrives leaning back toward the catcher), hangs
-  from the wrist pointing down and forward
-  (about 60 degrees below horizontal) at the bottom of the scoop, and is flicked up so it
-  leaves the hand pointing forward, about 15 degrees above horizontal, already spinning. The
-  top, collar and knob are a darker shade of the club's color.
-- **Rings** are 32 cm across and held at the rim. They spin just like clubs, end over end
-  about the same axis, so from the front you see them nearly edge-on. Each ring is banded in
+  7 degrees so each club leaves the hand pointing a little toward the other side. The hand
+  work comes from slow-motion video of a 3-club cascade and of doubles (4s):
+  - A self is caught about chest high and well out in front, the club pointing forward and up:
+    about 35 degrees above horizontal for a single, about level for a double. A pass is caught
+    square to its flight (the palm along the club; of the two ends, the top is the higher one,
+    so a pass coming down steeply arrives leaning back toward the catcher).
+  - At the bottom of the scoop the club hangs from the wrist, pointing down and forward (about
+    50 degrees below horizontal).
+  - It's flicked up and leaves the hand already spinning: about 35 degrees above horizontal for
+    a single, nearly upright for a double (about 70 degrees), and upright for more spins.
+
+  The top, collar and knob are a darker shade of the club's color.
+- **Rings** are 32 cm across and held by the near side of the rim, out in front of the hand
+  (from video of a 3-ring cascade): caught high, about head height, the ring up and forward of
+  the hand; carried down out in front of it; and thrown from about waist height, the arm well
+  forward. They spin just like clubs, end over end about the same axis, so from the front you
+  see them nearly edge-on. Each ring is banded in
   its ball's dash pattern (dark where the ladder line has gaps), so you can see it spin and
   tell rings apart without color. A ring whose ladder line is solid gets two narrow dark
   bands.
 - **Hoops** are 60 cm across (through the middle of the tube) and drawn as a 4.5 cm tube so
   they stay visible edge-on. They're held by the near side, out in front of the hand: caught
   pointing forward, hanging down and forward at the bottom of a low swoop, and let go high above
-  the head. They spin and are banded just like rings, and they feel the air (see above).
+  the head; a flatter throw out to a partner is let go lower, in front of the chest, from an
+  underhand swing. They spin like rings (but square to the shoulders, so they never lean in
+  toward the head), are banded like rings, and feel the air (see above).
 - **Spins.** Each throw of a club, ring or hoop makes about a whole number of turns, as jugglers
   throw them whatever the tempo: half the throw's value, rounded down (a single on a 3, a double
   on a 4 or 5, a triple on a 6 or 7, and so on; passes the same, so a `4p` is a double), give or
@@ -456,11 +466,13 @@ ladder, and every flight leaves the same dashed trail.
     throw exactly (the hips can't drop faster than gravity): a fast run of high throws settles
     into a steady crouch with a small bob, and a single high throw in a pattern gets a bigger
     dip that starts a little ahead of it.
-  - **Wider throws.** The higher the throw, the further apart the hands throw and catch.
+  - **Wider and higher.** The higher the throw, the further apart the hands throw and catch,
+    and the higher: in a 5-club cascade the catches come up to about shoulder height.
   - **Sway.** The torso shimmies toward whichever hand is driving a throw, more for higher
     throws.
   - **Fervor.** The higher the pattern, and the more its throw heights vary, the more fervent
-    the juggler looks: lower stance, more bob and sway, elbows further out. A `3` looks
+    the juggler looks: lower stance, more bob and sway, elbows further out, and the upper body
+    leaning a little back to watch the throws (as in video of a 5-club cascade). A `3` looks
     relaxed; `97531` looks like work.
   - **The human limit.** A hand can accelerate a ball at about 60 m/s² over at most about
     60 cm (arms, knees and back together), which tops out at throws about 3.7 m above the
