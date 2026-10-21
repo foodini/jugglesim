@@ -61,6 +61,7 @@
   <ItemGroup>
     <ClCompile Include="src\choreography.cpp" />
     <ClCompile Include="src\color_vision.cpp" />
+    <ClCompile Include="src\document.cpp" />
     <ClCompile Include="src\draw_helpers.cpp" />
     <ClCompile Include="src\juggle_sim.cpp" />
     <ClCompile Include="src\ladder_edit.cpp" />
@@ -75,6 +76,7 @@
     <ClCompile Include="third_party\imgui\imgui_tables.cpp" />
     <ClCompile Include="third_party\imgui\imgui_widgets.cpp" />
     <ClCompile Include="tests\test_choreography.cpp" />
+    <ClCompile Include="tests\test_document.cpp" />
     <ClCompile Include="tests\test_grid.cpp" />
     <ClCompile Include="tests\test_library.cpp" />
     <ClCompile Include="tests\test_main.cpp" />

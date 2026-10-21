@@ -81,6 +81,7 @@
     <ClCompile Include="src\camera.cpp" />
     <ClCompile Include="src\choreography.cpp" />
     <ClCompile Include="src\color_vision.cpp" />
+    <ClCompile Include="src\document.cpp" />
     <ClCompile Include="src\draw_helpers.cpp" />
     <ClCompile Include="src\gl_funcs.cpp" />
     <ClCompile Include="src\juggle_sim.cpp" />
@@ -118,6 +119,7 @@
     <ClInclude Include="src\camera.h" />
     <ClInclude Include="src\choreography.h" />
     <ClInclude Include="src\color_vision.h" />
+    <ClInclude Include="src\document.h" />
     <ClInclude Include="src\draw_helpers.h" />
     <ClInclude Include="src\gl_funcs.h" />
     <ClInclude Include="src\juggle_sim.h" />

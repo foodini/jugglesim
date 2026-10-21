@@ -4,6 +4,7 @@
 
 #include "camera.h"
 #include "choreography.h"
+#include "document.h"
 #include "juggle_sim.h"
 #include "ladder_view.h"
 #include "loop_ops.h"
@@ -172,10 +173,6 @@ struct DocumentState {
     // while the jugglers carry on with the last complete pattern (`pattern`), dimmed.
     bool sketching = false;
     JugglingLoop sketchLoop;
-    // The pattern as last loaded, saved or started: File > New Pattern... and quitting offer to
-    // save first if what's being juggled has changed since: its siteswap or its choreography
-    // (tempo, dwell and distance don't count).
-    std::string savedPatternText;
     PatternHistory history;
     JuggleParams juggleParams;
     // Where the jugglers stand and walk: spike marks and keyframes (none: the default formation,
@@ -184,9 +181,9 @@ struct DocumentState {
     // The throwing loop (the siteswap grid's next column): whose throws each juggler takes up after
     // the period (-1: their own; see loop_ops.h). Saved with the pattern ("next=2,1").
     std::vector<int> throwNext;
-    // (For the save prompts: the choreography as last loaded, saved or started.)
-    std::string savedChoreography;
-    std::string savedThrowNext;
+    // The pattern as last loaded, saved or started: File > New Pattern... and quitting offer to
+    // save first if the one showing isn't it (see Document).
+    Document saved;
     // The choreography as ensureSpikeMarks made it (the default formation), while it's untouched;
     // once anything in it changes, the pattern's distance is fixed (see choreographyLocked).
     std::string untouchedChoreography;
@@ -201,29 +198,21 @@ struct DocumentState {
     std::string openPatternName;
 };
 
-// What the stage plays: the loops worked out from the pattern, as they last worked while the
-// pattern has an error; and the camera framing worked out for them.
+// What the stage plays: the pattern worked out, and as it last worked (played while the one being
+// edited has a problem); and the camera framing worked out for it.
 struct StageState {
-    // What the stage shows: the choreography, except while its walking loop doesn't work (a part
-    // taken twice, or by nobody), when it stays as it last was that did (and the juggler pane is
-    // tinted red), so where everyone is can still be seen while it's put right.
-    Choreography stageChoreography;
-    bool walkLoopBroken = false;
-    std::string walkLoopProblem;  // ...and why (shown under the grid while it lasts)
-    // ...the pattern played out with it this frame (and the walking loop's paths), and what the
-    // stage plays: the same, except while it doesn't work (a part taken twice, props landing
-    // together), when the stage keeps the last that did (tinted red), like the walking loop.
-    PlayedLoop played;
-    WalkPaths playPaths;
-    JugglingLoop stagePlayLoop;
-    // The throws as they last worked (written out, not played; a sketch counts): while they have
-    // an error, the walking (its grid rows, its dialogs) keeps to this, so it doesn't vanish as
-    // you type. (Only while the throws have the same jugglers: one left from an earlier
-    // pattern isn't this one.)
-    JugglingLoop lastGoodLoop;
-    bool throwLoopBroken = false;
-    bool throwsBroken = false;  // the throws have an error: the stage plays the last pattern that worked
-    std::string throwLoopProblem;
+    // The pattern being edited, worked out (see deriveDocument): for the document as of
+    // derivedFor (re-worked only when what it derives from changes).
+    Document derivedFor;
+    DerivedDocument derived;
+    bool derivedValid = false;
+    // The pattern as it last worked (no problems; a sketch counts), and what it derived to: what
+    // the stage plays. While the throws have an error, the walking (its grid rows, its dialogs)
+    // keeps to its throws too, so it doesn't vanish as you type.
+    Document lastGood;
+    DerivedDocument lastGoodDerived;
+    bool haveLastGood = false;
+    bool broken = false;  // the pattern being edited has a problem (the stage is on lastGood, tinted red)
     // Pattern extents depend only on the loop, timing and framing, so they're cached. They take
     // a while to work out for a long passing pattern (a few tenths of a second), so while the
     // pattern keeps changing (typing, rotating, dragging a tweakable) they wait until it has

@@ -18,6 +18,9 @@
     <ClCompile Include="tests\test_choreography.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\test_document.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\test_grid.cpp">
       <Filter>tests</Filter>
     </ClCompile>
@@ -37,6 +40,9 @@
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="src\color_vision.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\document.cpp">
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="src\draw_helpers.cpp">

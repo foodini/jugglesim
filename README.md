@@ -151,6 +151,7 @@ src/
   ladder_edit.h/.cpp  the edit chain behind ladder editing (pure logic, no drawing)
   loop_ops.h/.cpp     loop operations: ? sketches, beat insert/delete, paths and orbits, drawing
   color_vision.*      color-vision modes; per-ball color + marker shape + dash pattern
+  document.*          the pattern being edited as one value, and what's worked out from it (problems too)
   draw_helpers.*      markers, dashed curves, arrowheads for ImGui draw lists
   settings.*          user preferences in %APPDATA%\JuggleSim\settings.ini
 tests/

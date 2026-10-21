@@ -14,6 +14,7 @@
 
 #include "app_widgets.h"
 #include "app_state.h"
+#include "document.h"
 #include "camera.h"
 #include "panels.h"
 #include "stage_overlays.h"
@@ -105,7 +106,6 @@ int runApp() {
     doc.parsed = parseSiteswap(doc.siteswapText);
     doc.pattern = patternFromSiteswap(doc.parsed);
     doc.patternValid = doc.parsed.valid;
-    doc.savedPatternText = doc.siteswapText;
     doc.history.current = doc.siteswapText;
 
     doc.juggleParams.prop = settings.prop;
@@ -113,19 +113,15 @@ int runApp() {
     auto choreographyText = [&]() {
         return doc.choreography.active() ? choreographyToText(doc.choreography) : std::string();
     };
-    auto markSaved = [&]() {
-        doc.savedPatternText = doc.siteswapText;
-        doc.savedChoreography = choreographyText();
-        doc.savedThrowNext = throwNextText(doc.throwNext);
-    };
                                     // (not for selecting a juggler standing on it)
     // The loop the jugglers juggle (the sketch, or the pattern; empty if neither).
     auto shownLoop = [&]() -> JugglingLoop {
         if (doc.sketching) return doc.sketchLoop;
         if (doc.patternValid) return patternLoop(doc.pattern);
-        // (The throws have an error: see lastGoodLoop.)
-        if (!stage.lastGoodLoop.empty() && stage.lastGoodLoop.jugglers == doc.parsed.loop.jugglers)
-            return stage.lastGoodLoop;
+        // (The throws have an error: the pattern as it last worked, while it has the same jugglers.
+        // One left from an earlier pattern isn't this one.)
+        if (stage.haveLastGood && stage.lastGoodDerived.written.jugglers == doc.parsed.loop.jugglers)
+            return stage.lastGoodDerived.written;
         return JugglingLoop();
     };
     // Spike marks are kept in meters for the distance they were placed at, and scale with it.
@@ -402,6 +398,37 @@ int runApp() {
         }
         return s;
     };
+    // The pattern being edited, as one value (see document.h).
+    auto currentDocument = [&]() -> Document {
+        Document d;
+        d.siteswap = doc.siteswapText;
+        d.count = doc.patternCount;
+        d.throwNext = doc.throwNext;
+        if (doc.choreography.active()) d.choreography = doc.choreography;
+        d.prop = doc.juggleParams.prop;
+        d.tempo = doc.juggleParams.bpm;
+        d.dwell = doc.juggleParams.dwellBeats;
+        d.distance = doc.juggleParams.distance;
+        const PatternSettings s = settingsForSaving();
+        d.hasCamera = s.hasCamera;
+        if (s.hasCamera)
+            for (int i = 0; i < 5; ++i) d.camera[i] = s.camera[i];
+        return d;
+    };
+    // What's showing is what's saved (just loaded, saved or started).
+    auto markSaved = [&]() { doc.saved = currentDocument(); };
+    // Whether there's a pattern with changes since (so File > New Pattern... and quitting ask first).
+    auto hasUnsavedChanges = [&]() { return (doc.patternValid || doc.sketching) && currentDocument() != doc.saved; };
+    // The document worked out (see deriveDocument), again only if what it derives from has changed.
+    auto refreshDerived = [&]() {
+        const Document now = currentDocument();
+        if (!stage.derivedValid || !now.derivesSameAs(stage.derivedFor)) {
+            stage.derived = deriveDocument(now);
+            stage.derivedValid = true;
+        }
+        stage.derivedFor = now;
+    };
+
     // Applies the settings a library pattern (or an undo step) carries; leaves the rest alone.
     auto applyPatternSettings = [&](const PatternSettings& apply) {
         if (apply.hasProp && apply.prop != settings.prop) {
@@ -716,15 +743,14 @@ int runApp() {
 
     // Quitting: right away, or first asking whether to save the pattern if it has changed.
     auto requestQuit = [&]() {
-        if ((doc.patternValid || doc.sketching) &&
-            (doc.savedPatternText != doc.siteswapText || doc.savedChoreography != choreographyText() ||
-             doc.savedThrowNext != throwNextText(doc.throwNext))) {
+        if (hasUnsavedChanges()) {
             ui.promptForQuit = true;
             ui.savePromptRequested = true;
         } else {
             ui.done = true;
         }
     };
+    markSaved();
     while (!ui.done) {
         if (!platformPollEvents()) break;
         if (platformTakeCloseRequest()) ui.closePending = true;
@@ -868,9 +894,7 @@ int runApp() {
         if (ImGui::BeginMainMenuBar()) {
             if (ImGui::BeginMenu("File")) {
                 if (ImGui::MenuItem("New Pattern...")) {
-                    if ((doc.patternValid || doc.sketching) &&
-                        (doc.savedPatternText != doc.siteswapText || doc.savedChoreography != choreographyText() ||
-                         doc.savedThrowNext != throwNextText(doc.throwNext))) {
+                    if (hasUnsavedChanges()) {
                         ui.promptForQuit = false;
                         ui.savePromptRequested = true;
                     } else {
@@ -1124,31 +1148,7 @@ int runApp() {
         // whoever walks its target's path (the walking loop, as it last worked) when it lands.
         const JugglingLoop writtenLoop =
             doc.sketching ? doc.sketchLoop : (doc.patternValid ? patternLoop(doc.pattern) : JugglingLoop());
-        {
-            stage.playPaths = WalkPaths();
-            const Choreography& c = stage.walkLoopBroken ? stage.stageChoreography : doc.choreography;
-            if (c.active() && !writtenLoop.empty()) {
-                const WalkLoop w = walkLoop(c, writtenLoop.jugglers);
-                if (w.valid && w.phases > 1) {
-                    stage.playPaths.cycle = c.cycle > 0 ? c.cycle : choreographyCycle(writtenLoop, doc.juggleParams);
-                    stage.playPaths.path = w.role;
-                }
-            }
-            const ThrowLoopPlan plan = throwLoopPlan(doc.throwNext, writtenLoop.jugglers);
-            stage.played = playedLoop(writtenLoop, plan.valid ? plan : ThrowLoopPlan(), stage.playPaths);
-            stage.throwLoopBroken = !writtenLoop.empty() && (!plan.valid || !stage.played.ok);
-            stage.throwLoopProblem = !plan.valid ? plan.problem : stage.played.problem;
-            // (No pattern at all, the throws having an error: the stage keeps the last that worked.)
-            // (Pausing as it breaks: editing a throw, you're usually looking at a moment, to see where
-            // everyone is. Play again whenever you like.)
-            const bool wasBroken = stage.throwsBroken;
-            stage.throwsBroken = writtenLoop.empty() && !stage.stagePlayLoop.empty();
-            if (stage.throwsBroken && !wasBroken) playback.playing = false;
-            if (!writtenLoop.empty()) stage.lastGoodLoop = writtenLoop;
-            if (!writtenLoop.empty() &&
-                (!stage.throwLoopBroken || stage.stagePlayLoop.jugglers != writtenLoop.jugglers))
-                stage.stagePlayLoop = stage.played.loop;
-        }
+        refreshDerived();
 
         // Ladder diagram (top of left half).
         ImGui::SetNextWindowPos(ImVec2(0.0f, top));
@@ -1208,11 +1208,11 @@ int runApp() {
             ladderOptions.relativeTargets = doc.parsed.form.relative;
             ladderOptions.form = &doc.parsed.form;
             ladderOptions.countN = doc.patternCount;
-            ladderOptions.writtenPeriod = stage.played.expanded ? stage.played.period : 0;
+            ladderOptions.writtenPeriod = stage.derived.played.expanded ? stage.derived.played.period : 0;
             ladderOptions.dimLinked = settings.dimLinked;
             ladderOptions.followPlayhead = playback.playing;
             {
-                const JugglingLoop spinLoop = doc.patternValid && !doc.sketching ? stage.played.loop : JugglingLoop();
+                const JugglingLoop spinLoop = doc.patternValid && !doc.sketching ? stage.derived.played.loop : JugglingLoop();
                 if (spinLoop != ladderPane.spinCacheLoop || doc.juggleParams.bpm != ladderPane.spinCacheParams.bpm ||
                     doc.juggleParams.dwellBeats != ladderPane.spinCacheParams.dwellBeats ||
                     doc.juggleParams.prop != ladderPane.spinCacheParams.prop ||
@@ -1260,7 +1260,7 @@ int runApp() {
             }
             // (It shows the loop played out: what happens on each beat.)
             LadderEditResult edited =
-                drawLadderDiagram(stage.played.expanded ? stage.played.loop : writtenLoop, settings.colorVision,
+                drawLadderDiagram(stage.derived.played.expanded ? stage.derived.played.loop : writtenLoop, settings.colorVision,
                                   ladderPane.ladderEdit, playback.beat, ladderOptions);
             // Picking up a throw pauses the jugglers (don't confuse them mid-edit); drawing in a
             // sketch doesn't, so you can watch props pop in as you go.
@@ -1280,8 +1280,8 @@ int runApp() {
                 // An edit to the loop played out goes into the beats written out (if that's where it was).
                 JugglingLoop changed = edited.loop;
                 std::string why;
-                if (stage.played.expanded &&
-                    !writtenFromPlayed(stage.played, writtenLoop, edited.loop, stage.playPaths, &changed, &why)) {
+                if (stage.derived.played.expanded &&
+                    !writtenFromPlayed(stage.derived.played, writtenLoop, edited.loop, stage.derived.paths, &changed, &why)) {
                     gridPane.siteswapBox.note = "Can't: " + why;
                     gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
                     sound.plipWanted = true;
@@ -1358,24 +1358,24 @@ int runApp() {
                     throwView.bad.push_back(
                         static_cast<char>(std::find(plan.bad.begin(), plan.bad.end(), j) != plan.bad.end()));
                 }
-                if (stage.played.expanded) throwView.played = stage.played.loop;
-                throwView.part = stage.played.part;
-                throwView.clash = stage.played.clash;
+                if (stage.derived.played.expanded) throwView.played = stage.derived.played.loop;
+                throwView.part = stage.derived.played.part;
+                throwView.clash = stage.derived.played.clash;
             }
             ChoreoGridView choreoView = choreoGridView();
             // Who's on each row at the playhead (the rows are positions; see siteswap_grid.h).
             {
                 const int now = static_cast<int>(std::floor(playback.beat));
-                throwView.looping = stage.played.part.size() > 1;
+                throwView.looping = stage.derived.played.part.size() > 1;
                 for (int r = 0; r < writtenLoop.jugglers && throwView.looping; ++r) {
                     int who = r;
                     for (int j = 0; j < writtenLoop.jugglers; ++j)
-                        if (stage.played.partAt(j, now) == r) who = j;
+                        if (stage.derived.played.partAt(j, now) == r) who = j;
                     throwView.who.push_back(who == r ? -1 : who);
                 }
-                choreoView.looping = !stage.playPaths.trivial();
+                choreoView.looping = !stage.derived.paths.trivial();
                 for (int k = 0; k < static_cast<int>(choreoView.rows.size()) && choreoView.looping; ++k) {
-                    const int who = stage.playPaths.walker(k, now);
+                    const int who = stage.derived.paths.walker(k, now);
                     choreoView.who.push_back(who == k ? -1 : who);
                 }
             }
@@ -1390,7 +1390,7 @@ int runApp() {
                     doc.throwNext.resize(static_cast<size_t>(e.first) + 1, -1);
                 doc.throwNext[static_cast<size_t>(e.first)] = e.second;
                 const ThrowLoopPlan plan = throwLoopPlan(doc.throwNext, writtenLoop.jugglers);
-                if (!plan.valid || !playedLoop(writtenLoop, plan, stage.playPaths).ok) sound.plipWanted = true;
+                if (!plan.valid || !playedLoop(writtenLoop, plan, stage.derived.paths).ok) sound.plipWanted = true;
             }
             // The choreography's rows: keyframes typed, walk links, and the beat to show.
             // (Throws and walking changed together, a selection across both: one undo step.)
@@ -1501,16 +1501,16 @@ int runApp() {
             if (g.plip) sound.plipWanted = true;
             // Resting on a throw describes it and picks it out on the ladder.
             const Siteswap& shown = doc.parsed;
-            if (g.hoverJuggler >= 0 && stage.played.expanded && g.hoverJuggler < stage.played.loop.jugglers &&
+            if (g.hoverJuggler >= 0 && stage.derived.played.expanded && g.hoverJuggler < stage.derived.played.loop.jugglers &&
                 g.hoverColumn >= 0) {
                 // (The loop played out: the throw made then by whoever's on that row.)
-                const int beat = g.hoverColumn % stage.played.loop.period;
+                const int beat = g.hoverColumn % stage.derived.played.loop.period;
                 int who = g.hoverJuggler;
-                for (int j = 0; j < stage.played.loop.jugglers; ++j)
-                    if (stage.played.partAt(j, beat) == g.hoverJuggler) who = j;
-                gridPane.siteswapHoverThrow = who * stage.played.loop.period + beat;
-                std::string says = describeThrow(stage.played.loop, who, beat);
-                if (stage.played.part.size() > 1)
+                for (int j = 0; j < stage.derived.played.loop.jugglers; ++j)
+                    if (stage.derived.played.partAt(j, beat) == g.hoverJuggler) who = j;
+                gridPane.siteswapHoverThrow = who * stage.derived.played.loop.period + beat;
+                std::string says = describeThrow(stage.derived.played.loop, who, beat);
+                if (stage.derived.played.part.size() > 1)
                     says += "\n(T" + std::to_string(g.hoverJuggler + 1) + "'s throw, made by J" + std::to_string(who + 1) + ")";
                 ImGui::SetTooltip("%s", says.c_str());
             } else if (g.hoverJuggler >= 0 && !shown.loop.empty() && g.hoverJuggler < shown.loop.jugglers) {
@@ -1526,14 +1526,14 @@ int runApp() {
                                    gridPane.siteswapBox.note.c_str());
             else if (!gridPane.siteswapBox.info.empty() && ImGui::GetTime() < gridPane.siteswapBox.infoUntil)
                 ImGui::TextUnformatted(gridPane.siteswapBox.info.c_str());
-            else if (stage.throwLoopBroken)
+            else if (stage.derived.problem(DocumentProblemKind::ThrowingLoop))
                 ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(errorTextColor(settings.colorVision)),
                                    "The throwing loop doesn't work: %s (the stage shows it as it last worked).",
-                                   stage.throwLoopProblem.c_str());
-            else if (stage.walkLoopBroken)
+                                   stage.derived.problem(DocumentProblemKind::ThrowingLoop)->text.c_str());
+            else if (stage.derived.problem(DocumentProblemKind::WalkingLoop))
                 ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(errorTextColor(settings.colorVision)),
                                    "The walking loop doesn't work: %s (the stage shows it as it last worked).",
-                                   stage.walkLoopProblem.c_str());
+                                   stage.derived.problem(DocumentProblemKind::WalkingLoop)->text.c_str());
             else if (doc.patternValid && doc.pattern.jugglers > 1)
                 ImGui::TextDisabled("%d jugglers, %d objects, period %d", doc.pattern.jugglers, ballCount(doc.pattern),
                                     loopPeriodBeats(doc.pattern));
@@ -1560,14 +1560,11 @@ int runApp() {
         // --- The scene at this moment ---
         // The jugglers juggle the pattern, or the sketch as far as it goes (props pop in and
         // vanish where throws aren't decided yet), or, while drawing, what a click would make.
-        // (While the throws have an error, the pattern as it last worked, so the stage doesn't go blank.)
-        const bool showJugglers = doc.patternValid || doc.sketching || stage.throwsBroken;
+        // (While the pattern has a problem, the pattern as it last worked: see below.)
         const JugglingLoop loop =
             ladderPane.ladderPreview
                 ? ladderPane.ladderPreviewLoop
                 : (doc.sketching ? doc.sketchLoop : (doc.patternValid ? patternLoop(doc.pattern) : JugglingLoop()));
-        // ...playing the loop out (the throwing loop, as it last worked); or the ladder's preview.
-        const JugglingLoop stageLoop = ladderPane.ladderPreview ? loop : stage.stagePlayLoop;
         // Choreography fixes the distance between the jugglers once anything in it has changed
         // (a mark moved, added or deleted, a keyframe): it puts them where they stand, in meters.
         // Until then it's just the default formation, kept up with the distance.
@@ -1575,8 +1572,9 @@ int runApp() {
         // keyframes), so it doesn't change when the siteswap does. (It's not an unsaved change.)
         if (!ladderPane.ladderPreview && !loop.empty() && doc.choreography.active() && doc.choreography.cycle == 0) {
             const std::string before = choreographyText();
+            const Choreography beforeChoreography = doc.choreography;
             doc.choreography.cycle = choreographyCycle(loop, doc.juggleParams);
-            if (doc.savedChoreography == before) doc.savedChoreography = choreographyText();
+            if (doc.saved.choreography == beforeChoreography) doc.saved.choreography = doc.choreography;
             if (doc.untouchedChoreography == before) doc.untouchedChoreography = choreographyText();
         }
         const bool choreographyLocked = doc.choreography.active() && choreographyText() != doc.untouchedChoreography;
@@ -1592,23 +1590,33 @@ int runApp() {
                 ensureSpikeMarks();
             }
         }
+        // What the stage plays: the pattern as it last worked (all of it: throws, throwing loop and
+        // walking loop together). While the one being edited has a problem the stage stays on
+        // that, tinted red, and pauses as it breaks: editing, you're usually looking at a moment,
+        // to see where everyone is. Play again whenever you like.
+        refreshDerived();
+        if (stage.derived.ok()) {
+            if (!stage.haveLastGood || !stage.lastGood.derivesSameAs(stage.derivedFor)) {
+                stage.lastGood = stage.derivedFor;
+                stage.lastGoodDerived = stage.derived;
+            }
+            stage.haveLastGood = true;
+        } else if (!stage.broken) {
+            playback.playing = false;
+        }
+        stage.broken = !stage.derived.ok();
+        // ...playing it out; or the ladder's preview.
+        const JugglingLoop stageLoop = ladderPane.ladderPreview ? loop : stage.lastGoodDerived.played.loop;
+        const bool showJugglers = !stageLoop.empty();
         const bool loopComplete = !stageLoop.empty() && openThrowCount(stageLoop) == 0;
         if (stageView.selectedJuggler >= std::max(loop.jugglers, doc.pattern.jugglers) ||
             std::max(loop.jugglers, doc.pattern.jugglers) < 2) {
             stageView.selectedJuggler = -1;
             stageView.frameSelected = false;
         }
-        {
-            const JugglingLoop shown = shownLoop();
-            const WalkLoop w =
-                doc.choreography.active() && !shown.empty() ? walkLoop(doc.choreography, shown.jugglers) : WalkLoop();
-            stage.walkLoopBroken = !w.valid;
-            stage.walkLoopProblem = w.problem;
-            if (!stage.walkLoopBroken) stage.stageChoreography = doc.choreography;
-        }
         // What the stage is evaluated with: the choreography as it last worked.
         JuggleParams stageParams = doc.juggleParams;
-        stageParams.choreography = &stage.stageChoreography;
+        stageParams.choreography = &stage.lastGood.choreography;
         JugglerScene scene;
         std::vector<int> styleOfBall;  // with "color by orbit": each prop's orbit
         if (showJugglers) {
@@ -1707,7 +1715,7 @@ int runApp() {
         const bool showPaths = stageView.choreographyMode && doc.choreography.active() && !pathLoop.empty();
         const int pathLength =
             showPaths ? std::max(1, choreographyCycle(pathLoop, doc.juggleParams)) : 0;    // (written out)
-        const int pathCycle = choreographyFullCycle(stage.stageChoreography, pathLength);  // (the walking loop too)
+        const int pathCycle = choreographyFullCycle(stage.lastGood.choreography, pathLength);  // (the walking loop too)
         // With rotated repeats, only the beats written out are edited: the rest are them turned.
         // Whether `beat` falls in a rotated repeat (and if so, a note saying so).
         auto inRotatedRepeat = [&](long beat) {
@@ -1724,7 +1732,7 @@ int runApp() {
             gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
             return true;
         };
-        const ChoreographyPaths paths = showPaths ? choreographyPaths(stage.stageChoreography, pathLoop.jugglers,
+        const ChoreographyPaths paths = showPaths ? choreographyPaths(stage.lastGood.choreography, pathLoop.jugglers,
                                                                       pathLength, choreographyScale(pathLoop))
                                                   : ChoreographyPaths();
         int hoveredPathPoint = -1;
@@ -3064,8 +3072,9 @@ int runApp() {
             ImGui::PushTextWrapPos(em * 34.0f);
             ImGui::Text("Save %s%s to My Patterns before %s?",
                         openPatternIndex() >= 0 ? ("\"" + doc.openPatternName + "\"").c_str() : doc.siteswapText,
-                        doc.savedChoreography != choreographyText() ? " (and its choreography)"
-                        : doc.savedThrowNext != throwNextText(doc.throwNext) ? " (and its throwing loop)" : "",
+                        doc.saved.choreography != currentDocument().choreography ? " (and its choreography)"
+                        : doc.saved.throwNext != doc.throwNext                ? " (and its throwing loop)"
+                                                                              : "",
                         ui.promptForQuit ? "quitting" : "starting a new pattern");
             ImGui::PopTextWrapPos();
             ImGui::Spacing();
@@ -3320,8 +3329,8 @@ int runApp() {
                 buildOrbitReticle(overlay, center, orbitingNow);
             }
         }
-        // The walking loop doesn't work: the stage is as it last was that did, tinted red round the edge.
-        if (stage.walkLoopBroken || stage.throwLoopBroken || stage.throwsBroken) {
+        // The pattern has a problem: the stage is as it last was that worked, tinted red round the edge.
+        if (stage.broken) {
             ImDrawList* bg = ImGui::GetBackgroundDrawList();
             const ImVec2 b(viewMin.x + viewSize.x, viewMin.y + viewSize.y);
             bg->AddRectFilled(viewMin, b, IM_COL32(200, 40, 30, 22));
@@ -3330,11 +3339,13 @@ int runApp() {
                 bg->AddRect(ImVec2(viewMin.x + inset, viewMin.y + inset), ImVec2(b.x - inset, b.y - inset),
                             IM_COL32(220, 50, 40, 150 - i * 24), 0.0f, 0, 3.0f);
             }
+            const bool throwing = stage.derived.problem(DocumentProblemKind::ThrowingLoop) != nullptr;
+            const bool walking = stage.derived.problem(DocumentProblemKind::WalkingLoop) != nullptr;
             const char* says =
-                stage.throwsBroken ? "The throws have an error (see the grid): this is the pattern as it last worked"
-                : stage.throwLoopBroken ? (stage.walkLoopBroken ? "Walking and throwing loops: see the grid"
-                                                                : "Throwing loop: see the grid")
-                                        : "Walking loop: see the grid";
+                stage.derived.problem(DocumentProblemKind::Throws)
+                    ? "The throws have an error (see the grid): this is the pattern as it last worked"
+                : throwing ? (walking ? "Walking and throwing loops: see the grid" : "Throwing loop: see the grid")
+                           : "Walking loop: see the grid";
             bg->AddText(ImVec2(viewMin.x + 24.0f, b.y - ImGui::GetTextLineHeight() - 20.0f), IM_COL32(255, 140, 120, 255), says);
         }
         drawJugglerLabels(ImGui::GetBackgroundDrawList(), scene, stageView.lastViewProj, viewMin, viewSize,
@@ -3368,10 +3379,7 @@ int runApp() {
         // The window's title: the open pattern (its name if it's one of mine, else its
         // siteswap), with a * while it has changes that aren't saved.
         {
-            const bool unsaved =
-                (doc.patternValid || doc.sketching) &&
-                (doc.savedPatternText != doc.siteswapText || doc.savedChoreography != choreographyText() ||
-                 doc.savedThrowNext != throwNextText(doc.throwNext));
+            const bool unsaved = hasUnsavedChanges();
             const std::string shown = openPatternIndex() >= 0 ? doc.openPatternName : std::string(doc.siteswapText);
             const std::string title =
                 shown.empty() ? std::string("JuggleSim") : shown + (unsaved ? "*" : "") + " \xe2\x80\x94 JuggleSim";
