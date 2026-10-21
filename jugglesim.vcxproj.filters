@@ -45,6 +45,9 @@
     <ClInclude Include="src\stage_render.h">
       <Filter>src</Filter>
     </ClInclude>
+    <ClInclude Include="src\app_state.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClCompile Include="src\app.cpp">
       <Filter>src</Filter>
     </ClCompile>

@@ -121,6 +121,7 @@ build.bat             command-line build on Windows (see above)
 mac.mk, build_mac.sh  the macOS build (see above)
 src/
   app.h/.cpp          the app itself: panes, menus, editing, playback, drawing (every platform)
+  app_state.h         everything the app keeps between frames (App), grouped by what it's for
   app_widgets.*       small UI pieces: transport buttons, throw descriptions, the shortcuts sheet
   camera.*            the 3D view's camera: automatic framing, orbit/zoom, free camera, projection
   stage_overlays.*    over and on the 3D view: spike marks, paths, floor grid, labels, picking

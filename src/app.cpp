@@ -13,6 +13,7 @@
 #include "app.h"
 
 #include "app_widgets.h"
+#include "app_state.h"
 #include "camera.h"
 #include "panels.h"
 #include "stage_overlays.h"
@@ -57,73 +58,20 @@
 #include <string>
 #include <vector>
 
-namespace {
-
-// Undo/redo history of the pattern, kept as siteswap text (which also records the loop
-// period: 531 and 531531 are different entries). One step per closed edit chain, period
-// change, siteswap committed in the text box, or pattern loaded from the library. Steps can
-// also carry the settings (props, tempo, dwell, distance) from before and after: loading from
-// the library changes both, and changing a setting by itself is a step of its own once the
-// user has stopped adjusting it for a moment.
-struct HistoryStep {
-    std::string before, after;
-    bool settingsChanged = false;
-    PatternSettings settingsBefore, settingsAfter;
-};
-struct PatternHistory {
-    std::vector<HistoryStep> undo;
-    std::vector<HistoryStep> redo;
-    std::string current;  // text of the pattern being shown
-
-    // Call when the pattern has changed to `next` by a user action.
-    void record(const std::string& next) {
-        if (next == current) return;
-        HistoryStep step;
-        step.before = current;
-        step.after = next;
-        push(step);
-    }
-    // Call when a library pattern has been loaded (settings: all of them, before and after).
-    void recordWithSettings(const std::string& next, const PatternSettings& before,
-                            const PatternSettings& after) {
-        if (next == current && before == after) return;
-        HistoryStep step;
-        step.before = current;
-        step.after = next;
-        step.settingsChanged = before != after;
-        step.settingsBefore = before;
-        step.settingsAfter = after;
-        push(step);
-    }
-    void push(const HistoryStep& step) {
-        undo.push_back(step);
-        if (undo.size() > 1000) undo.erase(undo.begin());
-        redo.clear();
-        current = step.after;
-    }
-};
-
-// Playback clock. beat is fractional (beat 0 = the right hand's first throw) and may be
-// negative after stepping back; the pattern repeats forever in both directions.
-struct Playback {
-    bool playing = true;
-    double beat = 0.0;
-    bool slow = false;          // slow motion (at AppSettings::slowRate)
-};
-constexpr double kStepBeats = 1.0 / 12.0;  // one arrow-key press; Shift steps a whole beat
-
-// What the line under the siteswap grid says for a while: a problem (why something couldn't be
-// done), or a note that isn't one ("Saved ...").
-struct SiteswapBox {
-    std::string note;            // why the last edit didn't happen
-    double noteUntil = 0.0;      // (shown until then)
-    std::string info;            // a note that isn't a problem ("Saved ..."), shown in plain text
-    double infoUntil = 0.0;      // (shown until then)
-};
-
-}  // namespace
-
 int runApp() {
+    App app;
+    Graphics& gfx = app.gfx;
+    DocumentState& doc = app.doc;
+    StageState& stage = app.stage;
+    StageView& stageView = app.stageView;
+    LadderPane& ladderPane = app.ladderPane;
+    GridPane& gridPane = app.gridPane;
+    LibraryState& library = app.library;
+    UiState& ui = app.ui;
+    SoundState& sound = app.sound;
+    AppSettings& settings = app.settings;
+    Playback& playback = app.playback;
+
     std::string missing;
     if (!gl::load(&missing)) {
         const std::string msg = "Missing OpenGL functions (driver too old?):\n" + missing;
@@ -138,213 +86,96 @@ int runApp() {
     // Fonts: the classic pixel font for the UI (the first one added is the default), and the
     // scalable default font for larger text (the pattern's name over the juggler pane).
     io.Fonts->AddFontDefaultBitmap();
-    ImFont* titleFont = io.Fonts->AddFontDefaultVector();
+    gfx.titleFont = io.Fonts->AddFontDefaultVector();
     constexpr float kTitleFontSize = 20.0f;
 
     ImGui_ImplOpenGL3_Init();  // (picks the right GLSL version for the platform)
 
-    Renderer renderer;
     std::string error;
-    if (!renderer.init(&error)) {
+    if (!gfx.renderer.init(&error)) {
         platformShowError("JuggleSim: shader error", error.c_str());
         ImGui_ImplOpenGL3_Shutdown();
         return 1;
     }
-    Primitives prims;
-    prims.create();
-    PropMeshes propMeshes;
-    propMeshes.create();
+    gfx.prims.create();
+    gfx.propMeshes.create();
 
-    AppSettings settings = loadSettings();
+    settings = loadSettings();
 
-    // The pattern (throw events) is the source of truth for juggling. The siteswap text box
-    // generates it when the user types, and is rewritten from it when the pattern changes some
-    // other way (e.g. the toolbar's period control). While the text is invalid, the last valid
-    // pattern is kept but not shown.
-    char siteswapText[4096] = "531";  // (room for 6 jugglers x 100 beats or so)
-    SiteswapBox siteswapBox;
-    SiteswapGridState siteswapGrid;  // the siteswap grid along the bottom (cursor, typing, dialogs)
-    int patternCount = 0;            // its count directive ("4-count"), 0: none
-    Playback playback;
-    int siteswapHoverThrow = -1;  // the throw under the mouse in the text box (for the ladder)
-    Siteswap parsed = parseSiteswap(siteswapText);
-    Pattern pattern = patternFromSiteswap(parsed);
-    bool patternValid = parsed.valid;
-    // A sketch (a pattern with throws not decided yet, "?") is shown and edited on the ladder,
-    // while the jugglers carry on with the last complete pattern (`pattern`), dimmed.
-    bool sketching = false;
-    JugglingLoop sketchLoop;
-    // While drawing with the rubber band over a spot it can land in, the jugglers show what
-    // clicking there would make.
-    bool ladderPreview = false;
-    JugglingLoop ladderPreviewLoop;
-    // The pattern as last loaded, saved or started: File > New Pattern... and quitting offer to
-    // save first if what's being juggled has changed since: its siteswap or its choreography
-    // (tempo, dwell and distance don't count).
-    std::string savedPatternText = siteswapText;
-    std::string windowTitle;  // as last set (it's set only when it changes)
-    bool savePromptRequested = false;
-    bool promptForQuit = false;  // that prompt is for quitting (not for File > New Pattern...)
-    bool newAfterSave = false;   // Save... was chosen in that prompt: start the new pattern once saved
-    bool quitAfterSave = false;  // ...or quit once saved
-    LadderEditState ladderEdit;  // drag-editing and pan/zoom state for the ladder
-    PatternHistory history;
-    history.current = siteswapText;
+    doc.parsed = parseSiteswap(doc.siteswapText);
+    doc.pattern = patternFromSiteswap(doc.parsed);
+    doc.patternValid = doc.parsed.valid;
+    doc.savedPatternText = doc.siteswapText;
+    doc.history.current = doc.siteswapText;
 
-    JuggleParams juggleParams;
-    juggleParams.prop = settings.prop;
-    // Where the jugglers stand and walk: spike marks and keyframes (none: the default formation,
-    // standing still). See choreography.h.
-    Choreography choreography;
-    // What the stage shows: the choreography, except while its walking loop doesn't work (a part
-    // taken twice, or by nobody), when it stays as it last was that did (and the juggler pane is
-    // tinted red), so where everyone is can still be seen while it's put right.
-    Choreography stageChoreography;
-    bool walkLoopBroken = false;
-    std::string walkLoopProblem;  // ...and why (shown under the grid while it lasts)
-    // The throwing loop (the siteswap grid's next column): whose throws each juggler takes up after
-    // the period (-1: their own; see loop_ops.h). Saved with the pattern ("next=2,1").
-    std::vector<int> throwNext;
-    // ...the pattern played out with it this frame (and the walking loop's paths), and what the
-    // stage plays: the same, except while it doesn't work (a part taken twice, props landing
-    // together), when the stage keeps the last that did (tinted red), like the walking loop.
-    PlayedLoop played;
-    WalkPaths playPaths;
-    JugglingLoop stagePlayLoop;
-    // The throws as they last worked (written out, not played; a sketch counts): while they have
-    // an error, the walking (its grid rows, its dialogs) keeps to this, so it doesn't vanish as
-    // you type. (Only while the throws have the same jugglers: one left from an earlier
-    // pattern isn't this one.)
-    JugglingLoop lastGoodLoop;
-    bool throwLoopBroken = false;
-    bool throwsBroken = false;  // the throws have an error: the stage plays the last pattern that worked
-    std::string throwLoopProblem;
-    juggleParams.choreography = &choreography;  // (the stage's evaluation uses stageParams, below)
-    // (For the save prompts: the choreography as last loaded, saved or started.)
-    std::string savedChoreography;
-    auto choreographyText = [&]() { return choreography.active() ? choreographyToText(choreography) : std::string(); };
-    std::string savedThrowNext;
+    doc.juggleParams.prop = settings.prop;
+    doc.juggleParams.choreography = &doc.choreography;  // (the stage's evaluation uses stageParams, below)
+    auto choreographyText = [&]() {
+        return doc.choreography.active() ? choreographyToText(doc.choreography) : std::string();
+    };
     auto markSaved = [&]() {
-        savedPatternText = siteswapText;
-        savedChoreography = choreographyText();
-        savedThrowNext = throwNextText(throwNext);
+        doc.savedPatternText = doc.siteswapText;
+        doc.savedChoreography = choreographyText();
+        doc.savedThrowNext = throwNextText(doc.throwNext);
     };
-    bool choreographyMode = false;  // View > Choreography (M): spike marks shown and editable
-    // The loiter popup: after a juggler is put somewhere (dropped, or a mark clicked), how many
-    // beats they stay there (a second keyframe that many beats later, on the same spot).
-    struct LoiterPopup {
-        bool openRequested = false;
-        bool open = false;       // (as of the last frame drawn)
-        int juggler = -1;
-        Keyframe arrival;        // the keyframe just made
-        long onBeat = 0;         // the beat it was made on (as counted, not just in the cycle)
-        ImVec2 at;               // where (screen)
-        char text[8] = "";
-        std::string error;       // a length that doesn't fit, flashed
-        double errorUntil = 0.0;
-    };
-    LoiterPopup loiter;
-    // The plip (see sound.h): wanted this frame; and the notes already plipped for.
-    bool plipWanted = false;
-    // The metronome (A): the beat it last ticked for, and the tick wanted this frame (0: none, 1:
-    // a beat, 2: a count's first beat).
-    long metronomeBeat = 0;
-    int tickWanted = 0;
-    double lastNoteUntil = 0.0, lastLoiterErrorUntil = 0.0;
-    int markDrag = -1;              // the spike mark being dragged, or -1
-    int jugglerDrag = -1;           // the juggler being dragged to a new spot (a keyframe), or -1
-    int viewPress = -1;             // the mouse button pressed in the juggler view (0 left, 1 right, 2 middle)
-    float jugglerDragYaw = 0.0f;    // ...facing as they were when the drag started
-    bool markTurning = false;       // ...by its arrow (turning it) rather than its middle
-    bool markForKeyframe = false;   // ...and if it turns out to be a click, it's for a keyframe there
                                     // (not for selecting a juggler standing on it)
-    int markMenuMark = -1;          // the floor's right-click menu: on this mark, or -1...
-    int floorMenuJuggler = -1;      // ...and on this juggler, or -1
-    Vec3 markMenuPoint;             // ...at this floor point
-    CameraView lastCamera{};        // the 3D view as last drawn (for finding the floor under the mouse)
-    float lastAspect = 1.0f;
     // The loop the jugglers juggle (the sketch, or the pattern; empty if neither).
     auto shownLoop = [&]() -> JugglingLoop {
-        if (sketching) return sketchLoop;
-        if (patternValid) return patternLoop(pattern);
+        if (doc.sketching) return doc.sketchLoop;
+        if (doc.patternValid) return patternLoop(doc.pattern);
         // (The throws have an error: see lastGoodLoop.)
-        if (!lastGoodLoop.empty() && lastGoodLoop.jugglers == parsed.loop.jugglers) return lastGoodLoop;
+        if (!stage.lastGoodLoop.empty() && stage.lastGoodLoop.jugglers == doc.parsed.loop.jugglers)
+            return stage.lastGoodLoop;
         return JugglingLoop();
     };
     // Spike marks are kept in meters for the distance they were placed at, and scale with it.
     // A spike mark's name ("0a"), or "?" for none.
     auto markNameOf = [&](int m) {
-        return m >= 0 && m < static_cast<int>(choreography.marks.size()) ? choreography.marks[static_cast<size_t>(m)].name
-                                                                          : std::string("?");
+        return m >= 0 && m < static_cast<int>(doc.choreography.marks.size())
+                   ? doc.choreography.marks[static_cast<size_t>(m)].name
+                   : std::string("?");
     };
     auto choreographyScale = [&](const JugglingLoop& loop) {
-        if (choreography.reference <= 0.0 || loop.empty()) return 1.0f;
-        return static_cast<float>(passingDistance(loop, juggleParams) / choreography.reference);
+        if (doc.choreography.reference <= 0.0 || loop.empty()) return 1.0f;
+        return static_cast<float>(passingDistance(loop, doc.juggleParams) / doc.choreography.reference);
     };
     // Starts a choreography if there isn't one: a spike mark where each juggler stands now
     // (the default formation), facing as they do.
-    // The choreography as ensureSpikeMarks made it (the default formation), while it's untouched;
-    // once anything in it changes, the pattern's distance is fixed (see choreographyLocked).
-    std::string untouchedChoreography;
-    // The choreography's floor grid last put in the settings: one loaded (a pattern, undo) that
-    // differs is put in place.
-    std::string choreographyGridShown;
     auto ensureSpikeMarks = [&]() {
-        if (choreography.active()) return;
+        if (doc.choreography.active()) return;
         const JugglingLoop loop = shownLoop();
         if (loop.empty()) return;
         Choreography c;
-        c.reference = passingDistance(loop, juggleParams);
+        c.reference = passingDistance(loop, doc.juggleParams);
         c.cycle = loop.period;  // its own length from now on (editing the siteswap doesn't change it)
         c.grid = floorGridText(settings);  // (made on the grid in use)
-        choreographyGridShown = c.grid;
+        doc.choreographyGridShown = c.grid;
         for (int j = 0; j < loop.jugglers; ++j) {
             Vec3 position;
             float yaw = 0.0f;
-            jugglerPlacement(loop, juggleParams, j, &position, &yaw);
+            jugglerPlacement(loop, doc.juggleParams, j, &position, &yaw);
             SpikeMark m;
             m.x = position.x;
             m.z = position.z;
             m.yaw = yaw;
             addSpikeMark(&c, m);
         }
-        choreography = c;
-        untouchedChoreography = choreographyToText(choreography);
+        doc.choreography = c;
+        doc.untouchedChoreography = choreographyToText(doc.choreography);
     };
-    // Picking one of several spike marks in the same place: after a juggler is put there, their
-    // arrows light up and a click on one (or its number) says which.
-    struct MarkChoice {
-        bool active = false;
-        int juggler = -1;
-        Keyframe pending;        // the keyframe made (on one of them for now)
-        std::vector<int> marks;  // the marks to choose from
-        ImVec2 at;               // where (screen), for the loiter popup after
-    };
-    MarkChoice markChoice;
-    // Spike marks selected: a click on one selects it (and no juggler), Shift+click adds one or
-    // takes it away; dragging any of them moves them all, keeping their shape. Esc, or a click on
-    // empty floor or a juggler, clears it. (Keyframes come from dragging a juggler onto a mark.)
-    std::vector<int> selectedMarks;
-    std::vector<std::pair<float, float>> markDragStart;  // ...where each was when the drag began (unscaled)
-    bool markPressWasSelected = false;                   // ...whether the one pressed already was
-    std::vector<int> selectedMarksSaid;                  // (the selection the status line last described)
-    // Groups of marks (Choreography::groups): the one just selected by its key or chip (while the
-    // selection is still exactly it: its lines show), and the chip the mouse rests on (-1: none).
-    int selectedGroup = -1;
-    int groupChipHovered = -1;
     // What of the groups the floor shows this frame: all of them (badges and lines) while Ctrl is
     // held; else the lines of the group under the mouse in the panel, or of the one selected.
     auto markGroupView = [&]() {
         MarkGroupView v;
-        if (!choreographyMode || !choreography.active()) return v;
+        if (!stageView.choreographyMode || !doc.choreography.active()) return v;
         if (ImGui::GetIO().KeyCtrl) {
-            v.slots = choreography.groupsUsed();
+            v.slots = doc.choreography.groupsUsed();
             for (int g = 0; g < v.slots; ++g)
-                if (!choreography.group(g).empty()) v.lines.push_back(g);
-        } else if (groupChipHovered >= 0) {
-            v.lines.push_back(groupChipHovered);
-        } else if (selectedGroup >= 0 && !choreography.group(selectedGroup).empty()) {
-            v.lines.push_back(selectedGroup);
+                if (!doc.choreography.group(g).empty()) v.lines.push_back(g);
+        } else if (stageView.groupChipHovered >= 0) {
+            v.lines.push_back(stageView.groupChipHovered);
+        } else if (stageView.selectedGroup >= 0 && !doc.choreography.group(stageView.selectedGroup).empty()) {
+            v.lines.push_back(stageView.selectedGroup);
         }
         return v;
     };
@@ -352,8 +183,8 @@ int runApp() {
         std::string list;
         for (size_t i = 0; i < marks.size(); ++i)
             list += (i == 0 ? "" : (i + 1 == marks.size() ? " and " : ", ")) +
-                    (marks[i] >= 0 && marks[i] < static_cast<int>(choreography.marks.size())
-                         ? choreography.marks[static_cast<size_t>(marks[i])].name
+                    (marks[i] >= 0 && marks[i] < static_cast<int>(doc.choreography.marks.size())
+                         ? doc.choreography.marks[static_cast<size_t>(marks[i])].name
                          : std::string("?"));
         return list;
     };
@@ -362,124 +193,99 @@ int runApp() {
         if (g < 0 || g >= Choreography::kMarkGroups) return;
         std::sort(marks.begin(), marks.end());
         marks.erase(std::unique(marks.begin(), marks.end()), marks.end());
-        if (static_cast<int>(choreography.groups.size()) <= g) choreography.groups.resize(static_cast<size_t>(g) + 1);
-        choreography.groups[static_cast<size_t>(g)] = marks;
-        while (!choreography.groups.empty() && choreography.groups.back().empty()) choreography.groups.pop_back();
+        if (static_cast<int>(doc.choreography.groups.size()) <= g)
+            doc.choreography.groups.resize(static_cast<size_t>(g) + 1);
+        doc.choreography.groups[static_cast<size_t>(g)] = marks;
+        while (!doc.choreography.groups.empty() && doc.choreography.groups.back().empty())
+            doc.choreography.groups.pop_back();
         const char key = markGroupKey(g);
-        siteswapBox.info = marks.empty() ? std::string("Group ") + key + " emptied."
+        gridPane.siteswapBox.info = marks.empty() ? std::string("Group ") + key + " emptied."
                                          : std::string("Group ") + key + ": " + (marks.size() == 1 ? "mark " : "marks ") +
                                                markListText(marks) + ". Press " + key + " to select them again, Shift+" + key +
                                                " to add them to a selection; hold Ctrl to see the groups.";
-        siteswapBox.infoUntil = ImGui::GetTime() + 5.0;
-        selectedGroup = marks.empty() ? -1 : g;
+        gridPane.siteswapBox.infoUntil = ImGui::GetTime() + 5.0;
+        stageView.selectedGroup = marks.empty() ? -1 : g;
     };
-    // Renaming a spike mark (its menu's Rename...): two characters, 0-9 and a-z, unique.
-    struct RenameMark {
-        int mark = -1;
-        bool requested = false;  // open the dialog this frame
-        char text[3] = {0, 0, 0};
-        std::string error;
-    };
-    RenameMark renameMark;
-    // The loop column's builder (right-click a walking row's loop cell): whose part, and the turn.
-    struct LoopBuilder {
-        int juggler = -1;
-        bool requested = false;
-        Continuation k;
-    };
-    LoopBuilder loopBuilder;
-    bool pressTakenByChoice = false;  // the current press in the juggler view picked a mark
     // The spike marks whose rings contain a floor point (world).
     auto marksAround = [&](float x, float z, float scale) {
         std::vector<int> found;
-        for (int m = 0; m < static_cast<int>(choreography.marks.size()); ++m) {
-            const SpikeMark& sm = choreography.marks[static_cast<size_t>(m)];
+        for (int m = 0; m < static_cast<int>(doc.choreography.marks.size()); ++m) {
+            const SpikeMark& sm = doc.choreography.marks[static_cast<size_t>(m)];
             if (std::hypot(x - sm.x * scale, z - sm.z * scale) <= kMarkRadius * scale) found.push_back(m);
         }
         return found;
     };
     auto openLoiterPopup = [&](int juggler, const Keyframe& arrival, ImVec2 at) {
-        loiter.openRequested = true;
-        loiter.juggler = juggler;
-        loiter.arrival = arrival;
-        loiter.onBeat = std::lround(playback.beat);
-        loiter.at = at;
-        loiter.text[0] = '\0';
-        loiter.error.clear();
-        loiter.errorUntil = 0.0;
+        ui.loiter.openRequested = true;
+        ui.loiter.juggler = juggler;
+        ui.loiter.arrival = arrival;
+        ui.loiter.onBeat = std::lround(playback.beat);
+        ui.loiter.at = at;
+        ui.loiter.text[0] = '\0';
+        ui.loiter.error.clear();
+        ui.loiter.errorUntil = 0.0;
     };
-    // The Walk Like... window: one juggler's walk link (see WalkLink), edited live.
-    struct WalkLikeWindow {
-        bool open = false;
-        int juggler = -1;
-        int confirmLeader = -1;  // asking whether to link to this leader (deleting their keyframes)
-        bool confirmRequested = false;
-        // The choice under the mouse (a leader, an offset, a turn): the link it would make, shown
-        // on the stage as a ghost of the juggler (see WalkGhost) until the mouse moves off.
-        bool previewing = false;
-        WalkLink preview;
-    };
-    WalkLikeWindow walkLike;
     auto openWalkLike = [&](int juggler) {
         ensureSpikeMarks();
-        walkLike.open = true;
-        walkLike.juggler = juggler;
-        walkLike.confirmLeader = -1;
+        ui.walkLike.open = true;
+        ui.walkLike.juggler = juggler;
+        ui.walkLike.confirmLeader = -1;
     };
     // Unlinks a juggler who walks like another: their walking written out as their own keyframes,
     // so nothing moves (only the beats written out: the rotated repeats follow from them), on the
     // marks there, or new marks where the turn puts them somewhere there isn't one.
     auto unlinkWalk = [&](int j) {
         const JugglingLoop loop = shownLoop();
-        const int cycle = loop.empty() ? 0 : choreographyCycle(loop, juggleParams);
-        if (cycle <= 0 || !choreography.link(j).active()) return;
-        std::vector<Keyframe> baked = effectiveKeyframes(choreography, j, cycle);
+        const int cycle = loop.empty() ? 0 : choreographyCycle(loop, doc.juggleParams);
+        if (cycle <= 0 || !doc.choreography.link(j).active()) return;
+        std::vector<Keyframe> baked = effectiveKeyframes(doc.choreography, j, cycle);
         baked.erase(std::remove_if(baked.begin(), baked.end(), [&](const Keyframe& k) { return k.beat >= cycle; }), baked.end());
         for (Keyframe& k : baked)
-            if (k.mark < 0) k.mark = markForSpot(&choreography, k.x, k.z, k.yaw);
-        setWalkLink(&choreography, j, WalkLink());
-        if (static_cast<int>(choreography.keys.size()) <= j) choreography.keys.resize(static_cast<size_t>(j) + 1);
-        choreography.keys[static_cast<size_t>(j)] = baked;
+            if (k.mark < 0) k.mark = markForSpot(&doc.choreography, k.x, k.z, k.yaw);
+        setWalkLink(&doc.choreography, j, WalkLink());
+        if (static_cast<int>(doc.choreography.keys.size()) <= j)
+            doc.choreography.keys.resize(static_cast<size_t>(j) + 1);
+        doc.choreography.keys[static_cast<size_t>(j)] = baked;
     };
     // The choreography's rows for the siteswap grid (see ChoreoGridView): per juggler, the mark
     // they arrive on each beat, loiters, and copies (walk links, rotated repeats) dim.
     auto choreoGridView = [&]() {
         ChoreoGridView view;
         const JugglingLoop loop = shownLoop();
-        if (!choreography.active() || loop.empty()) return view;
-        const int written = choreographyCycle(loop, juggleParams);
+        if (!doc.choreography.active() || loop.empty()) return view;
+        const int written = choreographyCycle(loop, doc.juggleParams);
         const int n = loop.jugglers;
-        const WalkLoop w = walkLoop(choreography, n);
+        const WalkLoop w = walkLoop(doc.choreography, n);
         const int full = written * w.phases;
         if (written <= 0 || full <= 0) return view;
         view.active = true;
         view.written = written;
         view.full = full;
         view.loopProblem = w.valid ? std::string() : w.problem;
-        for (const SpikeMark& m : choreography.marks) view.markNames.push_back(m.name);
+        for (const SpikeMark& m : doc.choreography.marks) view.markNames.push_back(m.name);
         view.rows.resize(static_cast<size_t>(n));
         // A juggler's own keyframes in the beats written out (and their loiters).
         auto ownCells = [&](int j) {
             std::vector<ChoreoGridCell> cells(static_cast<size_t>(written));
-            if (!choreography.hasKeys(j)) return cells;
-            const std::vector<Keyframe>& keys = choreography.keys[static_cast<size_t>(j)];
+            if (!doc.choreography.hasKeys(j)) return cells;
+            const std::vector<Keyframe>& keys = doc.choreography.keys[static_cast<size_t>(j)];
             for (const Keyframe& k : keys) {
                 if (k.beat < 0 || k.beat >= written) continue;
                 ChoreoGridCell& cell = cells[static_cast<size_t>(k.beat)];
-                cell.text = k.mark >= 0 && k.mark < static_cast<int>(choreography.marks.size())
-                                ? choreography.marks[static_cast<size_t>(k.mark)].name
+                cell.text = k.mark >= 0 && k.mark < static_cast<int>(doc.choreography.marks.size())
+                                ? doc.choreography.marks[static_cast<size_t>(k.mark)].name
                                 : std::string("?");
                 if (k.longTurn) cell.text += "~";
             }
             // Loiters: between two keyframes on the same spot (round the end only when the loop
             // brings them back to their own part, unturned).
-            const bool wraps = choreography.continuation(j).isDefault(j);
+            const bool wraps = doc.choreography.continuation(j).isDefault(j);
             for (size_t i = 0; i < keys.size(); ++i) {
                 const bool last = i + 1 == keys.size();
                 if (last && !wraps) break;
                 const Keyframe& a = keys[i];
                 const Keyframe& b = keys[last ? 0 : i + 1];
-                if (keys.size() < 2 || !sameKeyframeSpot(choreography, a, b)) continue;
+                if (keys.size() < 2 || !sameKeyframeSpot(doc.choreography, a, b)) continue;
                 const int end = last ? b.beat + written : b.beat;
                 for (int beat = a.beat + 1; beat < end; ++beat) cells[static_cast<size_t>(beat % written)].stay = true;
             }
@@ -494,8 +300,8 @@ int runApp() {
             if (state[static_cast<size_t>(j)] != 0) return row.cells;  // (done, or round in a circle)
             state[static_cast<size_t>(j)] = 1;
             row.cells.assign(static_cast<size_t>(full), ChoreoGridCell());
-            const WalkLink l = choreography.link(j);
-            if (l.active() && l.leader >= 0 && l.leader < n && !choreography.dependsOn(l.leader, j)) {
+            const WalkLink l = doc.choreography.link(j);
+            if (l.active() && l.leader >= 0 && l.leader < n && !doc.choreography.dependsOn(l.leader, j)) {
                 const std::vector<ChoreoGridCell> lead = rowOf(l.leader);
                 for (int beat = 0; beat < full && !lead.empty(); ++beat) {
                     row.cells[static_cast<size_t>(beat)] = lead[static_cast<size_t>(((beat + l.offset) % full + full) % full)];
@@ -519,7 +325,7 @@ int runApp() {
         for (int j = 0; j < n; ++j) {
             rowOf(j);
             ChoreoGridRow& row = view.rows[static_cast<size_t>(j)];
-            row.loop = continuationText(choreography.continuation(j), j);
+            row.loop = continuationText(doc.choreography.continuation(j), j);
             row.loopBad = std::find(w.bad.begin(), w.bad.end(), j) != w.bad.end();
         }
         return view;
@@ -532,18 +338,19 @@ int runApp() {
     auto setContinuation = [&](int j, const Continuation& k) {
         const JugglingLoop loop = shownLoop();
         const int n = std::max(loop.empty() ? 0 : loop.jugglers, j + 1);
-        if (static_cast<int>(choreography.next.size()) < n || !choreography.repeat.none()) {
+        if (static_cast<int>(doc.choreography.next.size()) < n || !doc.choreography.repeat.none()) {
             std::vector<Continuation> all(static_cast<size_t>(n));
-            for (int i = 0; i < n; ++i) all[static_cast<size_t>(i)] = choreography.continuation(i);
-            choreography.next = all;
-            choreography.repeat = Turn();
+            for (int i = 0; i < n; ++i) all[static_cast<size_t>(i)] = doc.choreography.continuation(i);
+            doc.choreography.next = all;
+            doc.choreography.repeat = Turn();
         }
-        if (choreography.cycle == 0 && !loop.empty()) choreography.cycle = choreographyCycle(loop, juggleParams);
-        choreography.next[static_cast<size_t>(j)] = k;
-        const WalkLoop w = walkLoop(choreography, n);
+        if (doc.choreography.cycle == 0 && !loop.empty())
+            doc.choreography.cycle = choreographyCycle(loop, doc.juggleParams);
+        doc.choreography.next[static_cast<size_t>(j)] = k;
+        const WalkLoop w = walkLoop(doc.choreography, n);
         if (!w.valid) {
-            siteswapBox.note = "The walking loop doesn't work: " + w.problem + ".";
-            siteswapBox.noteUntil = ImGui::GetTime() + 8.0;
+            gridPane.siteswapBox.note = "The walking loop doesn't work: " + w.problem + ".";
+            gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 8.0;
         }
     };
     // A beat of everyone's walking inserted before beat `beat` (or deleted): the keyframes after it
@@ -551,48 +358,47 @@ int runApp() {
     auto walkingBeat = [&](int beat, bool insert) {
         const JugglingLoop loop = shownLoop();
         if (loop.empty()) return;
-        const int written = choreographyCycle(loop, juggleParams);
+        const int written = choreographyCycle(loop, doc.juggleParams);
         if (!insert && written <= 1) return;
-        for (std::vector<Keyframe>& keys : choreography.keys) {
+        for (std::vector<Keyframe>& keys : doc.choreography.keys) {
             if (!insert)
                 keys.erase(std::remove_if(keys.begin(), keys.end(), [&](const Keyframe& k) { return k.beat == beat; }), keys.end());
             for (Keyframe& k : keys)
                 if (k.beat >= beat + (insert ? 0 : 1)) k.beat += insert ? 1 : -1;
         }
-        choreography.cycle = std::clamp(written + (insert ? 1 : -1), 1, kMaxChoreographyLength);
+        doc.choreography.cycle = std::clamp(written + (insert ? 1 : -1), 1, kMaxChoreographyLength);
     };
     auto toggleChoreographyMode = [&]() {
-        choreographyMode = !(choreographyMode && choreography.active());
-        if (choreographyMode) ensureSpikeMarks();
-        markDrag = -1;
+        stageView.choreographyMode = !(stageView.choreographyMode && doc.choreography.active());
+        if (stageView.choreographyMode) ensureSpikeMarks();
+        stageView.markDrag = -1;
     };
 
-    CameraControl camera;  // the juggler view's camera (a pattern can bring a free camera along)
     // The settings a library pattern can carry, as they are now (all of them).
     auto currentPatternSettings = [&]() -> PatternSettings {
         PatternSettings current;
         current.hasProp = current.hasTempo = current.hasDwell = current.hasDistance = current.hasChoreography = true;
         current.hasCount = true;
-        current.count = patternCount;
+        current.count = doc.patternCount;
         current.hasThrowNext = true;
-        current.throwNext = throwNextText(throwNext);
-        current.choreography = choreography.active() ? choreographyToText(choreography) : std::string();
-        current.prop = juggleParams.prop;
-        current.tempo = juggleParams.bpm;
-        current.dwell = juggleParams.dwellBeats;
-        current.distance = juggleParams.distance;
+        current.throwNext = throwNextText(doc.throwNext);
+        current.choreography = doc.choreography.active() ? choreographyToText(doc.choreography) : std::string();
+        current.prop = doc.juggleParams.prop;
+        current.tempo = doc.juggleParams.bpm;
+        current.dwell = doc.juggleParams.dwellBeats;
+        current.distance = doc.juggleParams.distance;
         return current;
     };
     // ...and for saving: with the camera too, if the user has placed it.
     auto settingsForSaving = [&]() -> PatternSettings {
         PatternSettings s = currentPatternSettings();
-        if (camera.free) {
+        if (stageView.camera.free) {
             s.hasCamera = true;
-            s.camera[0] = camera.freePos.x;
-            s.camera[1] = camera.freePos.y;
-            s.camera[2] = camera.freePos.z;
-            s.camera[3] = camera.freeYaw * 180.0 / kPi;
-            s.camera[4] = camera.freePitch * 180.0 / kPi;
+            s.camera[0] = stageView.camera.freePos.x;
+            s.camera[1] = stageView.camera.freePos.y;
+            s.camera[2] = stageView.camera.freePos.z;
+            s.camera[3] = stageView.camera.freeYaw * 180.0 / kPi;
+            s.camera[4] = stageView.camera.freePitch * 180.0 / kPi;
         }
         return s;
     };
@@ -602,29 +408,30 @@ int runApp() {
             settings.prop = apply.prop;  // the Props menu choice is remembered between runs
             saveSettings(settings);
         }
-        juggleParams.prop = settings.prop;
-        if (apply.hasTempo) juggleParams.bpm = apply.tempo;
-        if (apply.hasDwell) juggleParams.dwellBeats = apply.dwell;
-        if (apply.hasDistance) juggleParams.distance = apply.distance;
-        if (apply.hasCount) patternCount = apply.count;
-        if (apply.hasThrowNext && !readThrowNext(apply.throwNext, &throwNext)) throwNext.clear();
+        doc.juggleParams.prop = settings.prop;
+        if (apply.hasTempo) doc.juggleParams.bpm = apply.tempo;
+        if (apply.hasDwell) doc.juggleParams.dwellBeats = apply.dwell;
+        if (apply.hasDistance) doc.juggleParams.distance = apply.distance;
+        if (apply.hasCount) doc.patternCount = apply.count;
+        if (apply.hasThrowNext && !readThrowNext(apply.throwNext, &doc.throwNext)) doc.throwNext.clear();
         if (apply.hasCamera) {
-            camera.free = true;
-            camera.topView = false;
-            camera.topBlend = 0.0f;
-            camera.freePos = Vec3(static_cast<float>(apply.camera[0]), static_cast<float>(apply.camera[1]),
+            stageView.camera.free = true;
+            stageView.camera.topView = false;
+            stageView.camera.topBlend = 0.0f;
+            stageView.camera.freePos = Vec3(static_cast<float>(apply.camera[0]), static_cast<float>(apply.camera[1]),
                                   static_cast<float>(apply.camera[2]));
-            camera.freeYaw = static_cast<float>(apply.camera[3] * kPi / 180.0);
-            camera.freePitch = std::clamp(static_cast<float>(apply.camera[4] * kPi / 180.0), -kMaxFreePitch, kMaxFreePitch);
+            stageView.camera.freeYaw = static_cast<float>(apply.camera[3] * kPi / 180.0);
+            stageView.camera.freePitch =
+                std::clamp(static_cast<float>(apply.camera[4] * kPi / 180.0), -kMaxFreePitch, kMaxFreePitch);
         }
         if (apply.hasChoreography) {
             Choreography c;
             if (apply.choreography.empty() || !choreographyFromText(apply.choreography, &c)) c = Choreography();
-            choreography = c;
-            selectedMarks.clear();
+            doc.choreography = c;
+            stageView.selectedMarks.clear();
             // The jugglers stand where it says, in meters at the distance it was made for.
-            if (c.active() && c.reference > 0.0) juggleParams.distance = c.reference;
-            markDrag = -1;
+            if (c.active() && c.reference > 0.0) doc.juggleParams.distance = c.reference;
+            stageView.markDrag = -1;
         }
     };
 
@@ -633,49 +440,49 @@ int runApp() {
     // the change is recorded. Anything else that records a step records a pending settings
     // change first, so the steps stay in order.
     constexpr double kSettingsSettleSeconds = 0.6;
-    PatternSettings recordedSettings = currentPatternSettings();
-    PatternSettings lastSeenSettings = recordedSettings;
-    double settingsChangedAt = 0.0;
+    doc.recordedSettings = currentPatternSettings();
+    doc.lastSeenSettings = doc.recordedSettings;
     auto recordSettingsChange = [&]() {
         const PatternSettings now = currentPatternSettings();
-        if (now != recordedSettings) history.recordWithSettings(history.current, recordedSettings, now);
-        recordedSettings = lastSeenSettings = now;
+        if (now != doc.recordedSettings) doc.history.recordWithSettings(doc.history.current, doc.recordedSettings, now);
+        doc.recordedSettings = doc.lastSeenSettings = now;
     };
     auto pollSettingsChange = [&]() {
         const PatternSettings now = currentPatternSettings();
-        if (now != lastSeenSettings) {
-            lastSeenSettings = now;
-            settingsChangedAt = ImGui::GetTime();
+        if (now != doc.lastSeenSettings) {
+            doc.lastSeenSettings = now;
+            doc.settingsChangedAt = ImGui::GetTime();
         }
         // (Held while the loiter popup is open: the arrival and the loiter are one undo step.)
-        if (ImGui::IsAnyItemActive() || loiter.open || loiter.openRequested) settingsChangedAt = ImGui::GetTime();
-        if (now != recordedSettings && ImGui::GetTime() - settingsChangedAt >= kSettingsSettleSeconds)
+        if (ImGui::IsAnyItemActive() || ui.loiter.open || ui.loiter.openRequested)
+            doc.settingsChangedAt = ImGui::GetTime();
+        if (now != doc.recordedSettings && ImGui::GetTime() - doc.settingsChangedAt >= kSettingsSettleSeconds)
             recordSettingsChange();
     };
     // After undo/redo or a library load: what's showing is what's recorded.
-    auto settingsRecorded = [&]() { recordedSettings = lastSeenSettings = currentPatternSettings(); };
+    auto settingsRecorded = [&]() { doc.recordedSettings = doc.lastSeenSettings = currentPatternSettings(); };
     auto recordPattern = [&](const std::string& text) {
         recordSettingsChange();
-        history.record(text);
+        doc.history.record(text);
     };
     // A throw being typed into the siteswap grid is shown as it's typed, and becomes an undo step
     // once it's finished; but a change made some other way (the ladder, undo, the library) can
     // come first. Each of those calls this, so what was typed is a step of its own and undoing the
     // change goes back to it.
     auto commitTyping = [&]() {
-        if (history.current != siteswapText) recordPattern(siteswapText);
-        siteswapGrid.editing = false;
+        if (doc.history.current != doc.siteswapText) recordPattern(doc.siteswapText);
+        gridPane.siteswapGrid.editing = false;
     };
 
     // Replaces the pattern with the one written in `text` (used by undo/redo).
     auto showPatternText = [&](const std::string& text) {
-        cancelLadderEdit(ladderEdit);
-        std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
-        parsed = parseSiteswap(siteswapText);
-        patternValid = parsed.valid;
-        sketching = parsed.sketch;
-        if (parsed.valid) pattern = patternFromSiteswap(parsed);
-        if (parsed.sketch) sketchLoop = parsed.loop;
+        cancelLadderEdit(ladderPane.ladderEdit);
+        std::snprintf(doc.siteswapText, sizeof(doc.siteswapText), "%s", text.c_str());
+        doc.parsed = parseSiteswap(doc.siteswapText);
+        doc.patternValid = doc.parsed.valid;
+        doc.sketching = doc.parsed.sketch;
+        if (doc.parsed.valid) doc.pattern = patternFromSiteswap(doc.parsed);
+        if (doc.parsed.sketch) doc.sketchLoop = doc.parsed.loop;
     };
     // Makes a loop from the ladder the pattern (an edit, a throw drawn or deleted, beats added or
     // deleted): a complete one written at its shortest period, a sketch as it is. One undo step.
@@ -685,70 +492,71 @@ int runApp() {
         commitTyping();
         JugglingLoop l = changed;
         std::string why;
-        if (!projectEdit(parsed.form, parsed.loop, changed, &l, &why)) {
-            siteswapBox.note = "Can't: " + why;
-            siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+        if (!projectEdit(doc.parsed.form, doc.parsed.loop, changed, &l, &why)) {
+            gridPane.siteswapBox.note = "Can't: " + why;
+            gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
             return;
         }
         GridCount gridCount;
-        gridCount.n = patternCount;
+        gridCount.n = doc.patternCount;
         if (openThrowCount(l) == 0) l = loopWithPeriod(l, countPeriodFor(loopShortestPeriod(l), gridCount));
         std::string text;
         // Written the way the pattern was typed: targets as they were, links as links.
-        if (!loopToText(l, &text, &parsed.form)) return;
+        if (!loopToText(l, &text, &doc.parsed.form)) return;
         // A count directive: the 3s between its beats stay as they are.
         SiteswapGrid gridBefore, gridAfter;
-        if (gridCount.active() && gridFromText(siteswapText, &gridBefore) && gridFromText(text, &gridAfter) &&
+        if (gridCount.active() && gridFromText(doc.siteswapText, &gridBefore) && gridFromText(text, &gridAfter) &&
             !countAllowsChange(gridBefore, gridAfter, gridCount, &why)) {
-            siteswapBox.note = "Can't: " + why + ".";
-            siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+            gridPane.siteswapBox.note = "Can't: " + why + ".";
+            gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
             return;
         }
         const Siteswap check = parseSiteswap(text);
         if (!check.valid && !check.sketch) return;  // shouldn't happen; keep what we have
-        std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
-        parsed = check;
-        patternValid = check.valid;
-        sketching = check.sketch;
-        if (check.valid) pattern = patternFromSiteswap(check);
-        if (check.sketch) sketchLoop = check.loop;
+        std::snprintf(doc.siteswapText, sizeof(doc.siteswapText), "%s", text.c_str());
+        doc.parsed = check;
+        doc.patternValid = check.valid;
+        doc.sketching = check.sketch;
+        if (check.valid) doc.pattern = patternFromSiteswap(check);
+        if (check.sketch) doc.sketchLoop = check.loop;
         recordPattern(text);
     };
     // Makes juggler j a copy of juggler `to` from to's beat `start` on ("Same as", from the ladder
     // or the grid), or writes a linked juggler's throws out again. One undo step.
     auto relink = [&](int j, int to, int start, bool unlink) {
         PatternForm newForm;
-        JugglingLoop newLoop = parsed.loop;
+        JugglingLoop newLoop = doc.parsed.loop;
         std::string why, text;
         bool ok = true;
         if (!unlink)
-            ok = linkJuggler(parsed.form, parsed.loop, j, to, start, &newForm, &newLoop, &why, true);
+            ok = linkJuggler(doc.parsed.form, doc.parsed.loop, j, to, start, &newForm, &newLoop, &why, true);
         else
-            newForm = unlinkJuggler(parsed.form, j);
-        if (ok && !parsed.loop.empty() && loopToText(newLoop, &text, &newForm)) {
+            newForm = unlinkJuggler(doc.parsed.form, j);
+        if (ok && !doc.parsed.loop.empty() && loopToText(newLoop, &text, &newForm)) {
             commitTyping();
-            cancelLadderEdit(ladderEdit);
+            cancelLadderEdit(ladderPane.ladderEdit);
             showPatternText(text);
             recordPattern(text);
         } else {
-            siteswapBox.note = "Can't: " + (why.empty() ? std::string("the pattern has to be readable first") : why);
-            siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+            gridPane.siteswapBox.note =
+                "Can't: " + (why.empty() ? std::string("the pattern has to be readable first") : why);
+            gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
         }
     };
     auto linkJugglers = [&](int j, int to, int start) { relink(j, to, start, false); };
     auto unlinkJugglers = [&](int j) { relink(j, 0, 0, true); };
     auto undo = [&]() {
-        if (ladderEdit.chain.active) {  // an open chain is just cancelled, like Esc
-            cancelLadderEdit(ladderEdit);
+        if (ladderPane.ladderEdit.chain.active) {  // an open chain is just cancelled, like Esc
+            cancelLadderEdit(ladderPane.ladderEdit);
             return;
         }
         commitTyping();  // a throw being typed is the step to undo
         recordSettingsChange();  // a change still settling is the one to undo
-        if (history.undo.empty()) return;
-        const HistoryStep step = history.undo.back();
-        history.undo.pop_back();
-        history.redo.push_back(step);
-        history.current = step.before;
+        if (doc.history.undo.empty()) return;
+        const HistoryStep step = doc.history.undo.back();
+        doc.history.undo.pop_back();
+        doc.history.redo.push_back(step);
+        doc.history.current = step.before;
         if (step.before != step.after) showPatternText(step.before);
         if (step.settingsChanged) applyPatternSettings(step.settingsBefore);
         settingsRecorded();
@@ -756,67 +564,50 @@ int runApp() {
     auto redo = [&]() {
         commitTyping();
         recordSettingsChange();  // a change still settling is a new step, which ends redo
-        if (history.redo.empty()) return;
-        cancelLadderEdit(ladderEdit);
-        const HistoryStep step = history.redo.back();
-        history.redo.pop_back();
-        history.undo.push_back(step);
-        history.current = step.after;
+        if (doc.history.redo.empty()) return;
+        cancelLadderEdit(ladderPane.ladderEdit);
+        const HistoryStep step = doc.history.redo.back();
+        doc.history.redo.pop_back();
+        doc.history.undo.push_back(step);
+        doc.history.current = step.after;
         if (step.before != step.after) showPatternText(step.after);
         if (step.settingsChanged) applyPatternSettings(step.settingsAfter);
         settingsRecorded();
     };
-    // The pattern library: built-in patterns, the user's own (saved, renamed and deleted from
-    // the File menu), and the recently loaded ones.
-    const std::vector<LibraryPattern> builtInPatterns = parsePatternLibrary(platformBuiltInPatternText());
-    std::vector<LibraryPattern> myPatterns = loadUserPatterns();
-    std::vector<RecentPattern> recentPatterns = loadRecentPatterns();
-    for (size_t i = 0; i < recentPatterns.size();) {  // My Patterns deleted (e.g. by editing the file) go
-        bool onDisk = !recentPatterns[i].mine;
-        for (const LibraryPattern& saved : myPatterns)
-            if (saved.displayName() == recentPatterns[i].pattern.displayName()) onDisk = true;
+    library.builtInPatterns = parsePatternLibrary(platformBuiltInPatternText());
+    library.myPatterns = loadUserPatterns();
+    library.recentPatterns = loadRecentPatterns();
+    for (size_t i = 0; i < library.recentPatterns.size();) {  // My Patterns deleted (e.g. by editing the file) go
+        bool onDisk = !library.recentPatterns[i].mine;
+        for (const LibraryPattern& saved : library.myPatterns)
+            if (saved.displayName() == library.recentPatterns[i].pattern.displayName()) onDisk = true;
         if (onDisk)
             ++i;
         else
-            recentPatterns.erase(recentPatterns.begin() + static_cast<std::ptrdiff_t>(i));
+            library.recentPatterns.erase(library.recentPatterns.begin() + static_cast<std::ptrdiff_t>(i));
     }
-    PatternMenuState juggleSimMenuState, myMenuState;
 
     // Loads a pattern from the library: its siteswap, and whatever settings it carries. One
     // undo step, which also puts the settings back. It goes to the top of Recent.
-    // The one of My Patterns that's open (its name as shown), so File > Save can save over it;
-    // empty if what's showing isn't one of them (new, typed, or from JuggleSim's patterns).
-    std::string openPatternName;
     auto loadLibraryPattern = [&](const LibraryPattern& chosen, bool mine) {
         commitTyping();
         playback.beat = 0.0;  // a new pattern starts at beat 1
         recordSettingsChange();
         const PatternSettings before = currentPatternSettings();
         showPatternText(chosen.siteswap);
-        choreography = Choreography();  // unless the pattern brings its own
-        patternCount = 0;               // ...and no count directive, unless it brings one
-        throwNext.clear();              // ...and no throwing loop, unless it brings one
-        camera.free = false;            // ...and the automatic framing, unless it brings a camera
+        doc.choreography = Choreography();  // unless the pattern brings its own
+        doc.patternCount = 0;               // ...and no count directive, unless it brings one
+        doc.throwNext.clear();              // ...and no throwing loop, unless it brings one
+        stageView.camera.free = false;            // ...and the automatic framing, unless it brings a camera
         applyPatternSettings(chosen.settings);
-        history.recordWithSettings(siteswapText, before, currentPatternSettings());
+        doc.history.recordWithSettings(doc.siteswapText, before, currentPatternSettings());
         settingsRecorded();
         markSaved();
-        addRecentPattern(&recentPatterns, chosen, mine);
-        saveRecentPatterns(recentPatterns);  // not worth bothering the user if this fails
-        openPatternName = mine ? chosen.displayName() : std::string();
+        addRecentPattern(&library.recentPatterns, chosen, mine);
+        saveRecentPatterns(library.recentPatterns);  // not worth bothering the user if this fails
+        doc.openPatternName = mine ? chosen.displayName() : std::string();
     };
 
-    SavePatternDialog saveDialog;
-    // File > New Pattern...: a blank sketch (every throw "?") for some jugglers and period.
-    struct NewPatternDialog {
-        bool openRequested = false;
-        int jugglers = 2;
-        int period = 6;
-        int count = 0;  // a count directive (0: none): blanks only on its beats, 3s between
-        int walking = 0;  // the choreography's length, its own period (0: no choreography yet)
-    } newPatternDialog;
-    ManagePatternsWindow manageWindow;
-    std::string fileError;  // shown in a message box when set
     // Names of known patterns by their siteswap (written at the shortest period, so "51" and a
     // typed "5151" both find the Shower). The user's own names win over the built-in ones.
     auto canonicalSiteswap = [](const Pattern& p) {
@@ -824,46 +615,46 @@ int runApp() {
         if (!patternToSiteswap(withPeriod(p, shortestPeriodBeats(p)), &text)) text.clear();
         return text;
     };
-    std::map<std::string, std::string> patternNames;
     auto rebuildPatternNames = [&]() {
-        patternNames.clear();
-        const std::vector<LibraryPattern>* lists[] = {&builtInPatterns, &myPatterns};
+        library.patternNames.clear();
+        const std::vector<LibraryPattern>* lists[] = {&library.builtInPatterns, &library.myPatterns};
         for (const std::vector<LibraryPattern>* list : lists) {
             for (const LibraryPattern& p : *list) {
                 if (p.name.empty()) continue;
                 const Siteswap known = parseSiteswap(p.siteswap);
                 if (!known.valid) continue;
                 const std::string key = canonicalSiteswap(patternFromSiteswap(known));
-                if (!key.empty()) patternNames[key] = p.name;
+                if (!key.empty()) library.patternNames[key] = p.name;
             }
         }
     };
     rebuildPatternNames();
     auto saveMyPatterns = [&]() {
         rebuildPatternNames();
-        if (!saveUserPatterns(myPatterns))
-            fileError = "Couldn't write your patterns to " + userDataPath(L"my_patterns.txt").u8string() +
+        if (!saveUserPatterns(library.myPatterns))
+            ui.fileError = "Couldn't write your patterns to " + userDataPath(L"my_patterns.txt").u8string() +
                         ". The change is kept until JuggleSim closes.";
     };
 
     auto openPatternIndex = [&]() -> int {
-        if (openPatternName.empty()) return -1;
-        for (size_t i = 0; i < myPatterns.size(); ++i)
-            if (myPatterns[i].displayName() == openPatternName) return static_cast<int>(i);
+        if (doc.openPatternName.empty()) return -1;
+        for (size_t i = 0; i < library.myPatterns.size(); ++i)
+            if (library.myPatterns[i].displayName() == doc.openPatternName) return static_cast<int>(i);
         return -1;
     };
     // Saves what's showing to My Patterns as `name`: over the pattern of that name if there is
     // one (replace), else as a new one. It's then the open pattern.
     auto storeMyPattern = [&](const std::string& name, bool replace) {
         LibraryPattern saved;
-        saved.siteswap = siteswapText;
+        saved.siteswap = doc.siteswapText;
         saved.name = name;
         saved.settings = settingsForSaving();
-        saved.settings.hasDistance = (sketching ? sketchLoop.jugglers : pattern.jugglers) > 1;  // passing only
+        saved.settings.hasDistance =
+            (doc.sketching ? doc.sketchLoop.jugglers : doc.pattern.jugglers) > 1;  // passing only
         classifyPattern(&saved);
         bool replaced = false;
         if (replace) {
-            for (LibraryPattern& existing : myPatterns) {
+            for (LibraryPattern& existing : library.myPatterns) {
                 if (existing.displayName() == saved.displayName()) {
                     saved.otherSettings = existing.otherSettings;  // (settings from a newer JuggleSim)
                     existing = saved;
@@ -872,87 +663,43 @@ int runApp() {
                 }
             }
         }
-        if (!replaced) myPatterns.push_back(saved);
+        if (!replaced) library.myPatterns.push_back(saved);
         saveMyPatterns();
         markSaved();
-        openPatternName = saved.displayName();
-        addRecentPattern(&recentPatterns, saved, true);  // to the top, replacing any older copy
-        saveRecentPatterns(recentPatterns);
+        doc.openPatternName = saved.displayName();
+        addRecentPattern(&library.recentPatterns, saved, true);  // to the top, replacing any older copy
+        saveRecentPatterns(library.recentPatterns);
     };
-    // File > Save (Ctrl+S): over the open pattern, or (if none) asking for a name as Save As does.
-    bool saveRequested = false, saveAsRequested = false;
 
-    TweakablesPanelState tweakablesPanel;
-    double spaceMouseQuietUntil = 0.0;     // ignore the mouse wheel until then (the 3D mouse is moving)
-    double spaceMouseWheelBlocked = -10.0;  // when wheel input was last ignored for that
-    int pendingChoreographyLength = 0;     // asking whether to shorten the choreography to this
-    std::set<std::string> dismissedWarnings;  // (keys of) warnings the user has dismissed
-    ChoreographyPanelState choreographyPanel;
-    bool showImGuiDemo = false;
-    bool showShortcuts = false;
-    bool showSpaceMouseDiagnostics = false;  // Help > 3D Mouse Diagnostics  // the keyboard shortcuts sheet (? or Help > Keyboard Shortcuts)
-    // Each throw's spin, for the ladder's tooltips (recomputed when the pattern or timing changes).
-    std::vector<ThrowSpin> spinCache;
-    JugglingLoop spinCacheLoop;
-    JuggleParams spinCacheParams{-1.0, -1.0};
-    bool showColorPreview = false;
-    int pathPress = -1;  // a press on a choreography path's point (its index), to go there on release
-    std::vector<GlowVertex> overlayTriangles;  // this frame's floor overlays (see OverlayBuilder)
-    std::vector<float> jugglerLabelCenters;  // the juggler labels' screen x last frame (see drawJugglerLabels)
-    // Orbiting a free camera: about this center, fixed for the length of each orbit (the
-    // reticle shows it; the rest of the time it's worked out afresh, and shown faintly).
-    Vec3 orbitCenter;
-    bool cameraOrbiting = false;   // the mouse is orbiting the camera
-    bool cameraPanning = false;    // ...or panning it
-    bool viewPan = false;          // the press in the juggler view pans (middle, or Shift+right)
-    bool viewOrbitLeft = false;    // ...a left press that orbits (Alt/Option held: for a trackpad)
-    float panDepth = 3.0f;         // panning: how far away the floor under the mouse was
-    double spaceOrbitUntil = 0.0;  // the 3D mouse is orbiting (until this time)
     // T: the top view (automatically framed), or back to automatic framing.
     auto toggleTopView = [&]() {
-        if (camera.free) {
-            camera.free = false;
-            camera.topView = true;
+        if (stageView.camera.free) {
+            stageView.camera.free = false;
+            stageView.camera.topView = true;
         } else {
-            camera.topView = !camera.topView;
+            stageView.camera.topView = !stageView.camera.topView;
         }
     };
-    // Selection in the 3D view (passing patterns): the selected juggler, or -1. With
-    // frameSelected the camera frames just that juggler.
-    int selectedJuggler = -1;
-    bool frameSelected = false;
     // Selects group g's marks (`add`: adds them to the selection), and no juggler.
     auto selectMarkGroup = [&](int g, bool add) {
-        const std::vector<int>& members = choreography.group(g);
+        const std::vector<int>& members = doc.choreography.group(g);
         const char key = markGroupKey(g);
         if (members.empty()) {
-            siteswapBox.info = std::string("Group ") + key + " is empty: select spike marks (click, Shift+click) and press Ctrl+" +
-                               key + " to make it.";
-            siteswapBox.infoUntil = ImGui::GetTime() + 5.0;
+            gridPane.siteswapBox.info = std::string("Group ") + key +
+                                        " is empty: select spike marks (click, Shift+click) and press Ctrl+" + key +
+                                        " to make it.";
+            gridPane.siteswapBox.infoUntil = ImGui::GetTime() + 5.0;
             return;
         }
-        if (!add) selectedMarks.clear();
+        if (!add) stageView.selectedMarks.clear();
         for (const int m : members)
-            if (std::find(selectedMarks.begin(), selectedMarks.end(), m) == selectedMarks.end()) selectedMarks.push_back(m);
-        selectedJuggler = -1;
-        frameSelected = false;
-        selectedGroup = add ? -1 : g;
+            if (std::find(stageView.selectedMarks.begin(), stageView.selectedMarks.end(), m) ==
+                stageView.selectedMarks.end())
+                stageView.selectedMarks.push_back(m);
+        stageView.selectedJuggler = -1;
+        stageView.frameSelected = false;
+        stageView.selectedGroup = add ? -1 : g;
     };
-    Mat4 lastViewProj = Mat4::identity();  // the 3D view's camera as last drawn (for picking)
-    // Pattern extents depend only on the loop, timing and framing, so they're cached. They take
-    // a while to work out for a long passing pattern (a few tenths of a second), so while the
-    // pattern keeps changing (typing, rotating, dragging a tweakable) they wait until it has
-    // settled for a moment; the camera glides to the new framing anyway.
-    JugglingLoop extentsLoop;
-    JuggleParams extentsParams{-1.0, -1.0};
-    std::string extentsChoreography;  // (text form)
-    int extentsJuggler = -2;
-    SceneExtents extents;
-    bool haveExtents = false;
-    JugglingLoop extentsSeenLoop;  // what the extents are wanted for, as of the last frame...
-    JuggleParams extentsSeenParams{-1.0, -1.0};
-    std::string extentsSeenChoreography;
-    double extentsSeenSince = 0.0;  // ...and since when
     constexpr double kExtentsSettleSeconds = 0.3;
 
     auto stepPlayback = [&](double beats) {
@@ -963,30 +710,30 @@ int runApp() {
     // Back to beat 1, with the ladder back to its default view (beat 1 at the top), playing or not.
     auto goToStart = [&]() {
         playback.beat = 0.0;
-        resetLadderView(ladderEdit);
-        ladderEdit.followPausedUntil = 0.0;
+        resetLadderView(ladderPane.ladderEdit);
+        ladderPane.ladderEdit.followPausedUntil = 0.0;
     };
 
-    bool done = false;
-    bool closePending = false;  // the window's close box was clicked (handled once it's showing)
     // Quitting: right away, or first asking whether to save the pattern if it has changed.
     auto requestQuit = [&]() {
-        if ((patternValid || sketching) && (savedPatternText != siteswapText || savedChoreography != choreographyText() || savedThrowNext != throwNextText(throwNext))) {
-            promptForQuit = true;
-            savePromptRequested = true;
+        if ((doc.patternValid || doc.sketching) &&
+            (doc.savedPatternText != doc.siteswapText || doc.savedChoreography != choreographyText() ||
+             doc.savedThrowNext != throwNextText(doc.throwNext))) {
+            ui.promptForQuit = true;
+            ui.savePromptRequested = true;
         } else {
-            done = true;
+            ui.done = true;
         }
     };
-    while (!done) {
+    while (!ui.done) {
         if (!platformPollEvents()) break;
-        if (platformTakeCloseRequest()) closePending = true;
+        if (platformTakeCloseRequest()) ui.closePending = true;
         if (platformIsMinimized()) {
             platformSleepMilliseconds(10);
             continue;
         }
-        if (closePending) {
-            closePending = false;
+        if (ui.closePending) {
+            ui.closePending = false;
             requestQuit();
         }
 
@@ -996,24 +743,24 @@ int runApp() {
 
         // --- Playback clock ---
         if (playback.playing)
-            playback.beat += static_cast<double>(io.DeltaTime) * juggleParams.bpm / 60.0 *
+            playback.beat += static_cast<double>(io.DeltaTime) * doc.juggleParams.bpm / 60.0 *
                              (playback.slow ? static_cast<double>(settings.slowRate) : 1.0);
         // The metronome: a tick as each beat starts while playing (not while scrubbing, stepping
         // or paused), a stronger one on the first beat of each count (or of the pattern, without
         // a count directive).
         {
             const long beatNow = static_cast<long>(std::floor(playback.beat));
-            if (playback.playing && settings.metronome && beatNow != metronomeBeat) {
-                const long every = patternCount >= 2 ? patternCount : std::max(1, parsed.loop.period);
-                tickWanted = ((beatNow % every) + every) % every == 0 ? 2 : 1;
+            if (playback.playing && settings.metronome && beatNow != sound.metronomeBeat) {
+                const long every = doc.patternCount >= 2 ? doc.patternCount : std::max(1, doc.parsed.loop.period);
+                sound.tickWanted = ((beatNow % every) + every) % every == 0 ? 2 : 1;
             }
-            metronomeBeat = beatNow;
+            sound.metronomeBeat = beatNow;
         }
 
         // --- Keyboard shortcuts (not while typing: the text box has its own undo, etc.) ---
         // While the siteswap grid has the keyboard, keys are its (throws are letters too), so the
         // single-key shortcuts are off, as they are for a text box; Space, Ctrl+S and undo work.
-        const bool gridHasKeys = siteswapGridHasKeyboard(siteswapGrid);
+        const bool gridHasKeys = siteswapGridHasKeyboard(gridPane.siteswapGrid);
         // (A text box being typed in elsewhere, as when naming a pattern to save: the grid keeps
         // its focus flag under a dialog, but its keys aren't its.)
         const bool typingElsewhere = io.WantTextInput || ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
@@ -1021,23 +768,25 @@ int runApp() {
         // Ctrl+S / Ctrl+Shift+S: Save / Save As (even while typing a siteswap).
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopup)) {
             commitTyping();
-            (io.KeyShift ? saveAsRequested : saveRequested) = true;
+            (io.KeyShift ? ui.saveAsRequested : ui.saveRequested) = true;
         }
         if ((!io.WantTextInput || gridHasKeys) && io.KeyCtrl) {
             if (ImGui::IsKeyPressed(ImGuiKey_Z) && !io.KeyShift) undo();
             else if (ImGui::IsKeyPressed(ImGuiKey_Y) || (ImGui::IsKeyPressed(ImGuiKey_Z) && io.KeyShift)) redo();
-            if (choreographyMode && choreography.active()) {
+            if (stageView.choreographyMode && doc.choreography.active()) {
                 // Choreography: Ctrl+1 ... Ctrl+9, Ctrl+0 make the selected spike marks a group
                 // (nothing selected: empty it).
                 for (int g = 0; g < Choreography::kMarkGroups; ++g)
                     if (ImGui::IsKeyPressed(g == 9 ? ImGuiKey_0 : static_cast<ImGuiKey>(ImGuiKey_1 + g), false))
-                        setMarkGroup(g, selectedMarks);
+                        setMarkGroup(g, stageView.selectedMarks);
             } else {
                 // Ctrl+1 to Ctrl+6: collapse or expand that juggler's ladder strip.
-                const int jugglers = sketching ? sketchLoop.jugglers : (patternValid ? pattern.jugglers : 0);
+                const int jugglers =
+                    doc.sketching ? doc.sketchLoop.jugglers : (doc.patternValid ? doc.pattern.jugglers : 0);
                 for (int j = 0; j < std::min(jugglers, kMaxJugglers); ++j)
                     if (jugglers > 1 && ImGui::IsKeyPressed(static_cast<ImGuiKey>(ImGuiKey_1 + j), false))
-                        ladderEdit.collapsed[static_cast<size_t>(j)] = !ladderEdit.collapsed[static_cast<size_t>(j)];
+                        ladderPane.ladderEdit.collapsed[static_cast<size_t>(j)] =
+                            !ladderPane.ladderEdit.collapsed[static_cast<size_t>(j)];
             }
         }
         // The 3D mouse (SpaceMouse) always moves the juggler camera, whatever has the keyboard;
@@ -1051,19 +800,21 @@ int runApp() {
             bool moving = false;
             for (int i = 0; i < 3; ++i)
                 moving = moving || std::fabs(spaceMouse.move[i]) > 0.06f || std::fabs(spaceMouse.turn[i]) > 0.06f;
-            if (spaceMouse.present && moving) spaceMouseQuietUntil = ImGui::GetTime() + 0.3;
-            if (ImGui::GetTime() < spaceMouseQuietUntil) {
-                if (io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f) spaceMouseWheelBlocked = ImGui::GetTime();
+            if (spaceMouse.present && moving) stageView.spaceMouseQuietUntil = ImGui::GetTime() + 0.3;
+            if (ImGui::GetTime() < stageView.spaceMouseQuietUntil) {
+                if (io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f)
+                    stageView.spaceMouseWheelBlocked = ImGui::GetTime();
                 io.MouseWheel = io.MouseWheelH = 0.0f;
             }
         }
         // ?: the keyboard shortcuts (typed as a character, so it's Shift+/ on most keyboards).
         if (!io.WantTextInput)
             for (const ImWchar c : io.InputQueueCharacters)
-                if (c == '?') showShortcuts = !showShortcuts;
-        if (gridHasKeys && !typingElsewhere && !io.KeyCtrl && !loiter.open && ImGui::IsKeyPressed(ImGuiKey_Space, false))
+                if (c == '?') ui.showShortcuts = !ui.showShortcuts;
+        if (gridHasKeys && !typingElsewhere && !io.KeyCtrl && !ui.loiter.open &&
+            ImGui::IsKeyPressed(ImGuiKey_Space, false))
             playback.playing = !playback.playing;
-        if (!io.WantTextInput && !io.KeyCtrl && !loiter.open) {
+        if (!io.WantTextInput && !io.KeyCtrl && !ui.loiter.open) {
             if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) playback.playing = !playback.playing;
             if (ImGui::IsKeyPressed(ImGuiKey_B, false)) goToStart();
             if (ImGui::IsKeyPressed(ImGuiKey_S, false)) playback.slow = !playback.slow;
@@ -1072,7 +823,7 @@ int runApp() {
                 saveSettings(settings);
             }
             // Choreography: 1 ... 9, 0 select a group of spike marks (Shift: add it).
-            if (choreographyMode && choreography.active() && !markChoice.active)
+            if (stageView.choreographyMode && doc.choreography.active() && !stageView.markChoice.active)
                 for (int g = 0; g < Choreography::kMarkGroups; ++g)
                     if (ImGui::IsKeyPressed(g == 9 ? ImGuiKey_0 : static_cast<ImGuiKey>(ImGuiKey_1 + g), false))
                         selectMarkGroup(g, io.KeyShift);
@@ -1080,8 +831,8 @@ int runApp() {
             if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) stepPlayback(io.KeyShift ? -1.0 : -kStepBeats);
             // F: frame the selected juggler, or everyone if no one is selected.
             if (ImGui::IsKeyPressed(ImGuiKey_F, false)) {
-                frameSelected = selectedJuggler >= 0;
-                camera.free = false;
+                stageView.frameSelected = stageView.selectedJuggler >= 0;
+                stageView.camera.free = false;
             }
             if (ImGui::IsKeyPressed(ImGuiKey_O, false)) {
                 settings.colorByOrbit = !settings.colorByOrbit;
@@ -1089,13 +840,14 @@ int runApp() {
             }
             // C: collapse all the jugglers' ladder strips (or expand them, if all are collapsed).
             // L: dim linked jugglers' throws on the ladder (or not).
-            if (ImGui::IsKeyPressed(ImGuiKey_L, false) && parsed.form.hasLinks()) {
+            if (ImGui::IsKeyPressed(ImGuiKey_L, false) && doc.parsed.form.hasLinks()) {
                 settings.dimLinked = !settings.dimLinked;
                 saveSettings(settings);
             }
             if (ImGui::IsKeyPressed(ImGuiKey_C, false)) {
-                const int jugglers = sketching ? sketchLoop.jugglers : (patternValid ? pattern.jugglers : 0);
-                if (jugglers > 1) toggleCollapseAll(ladderEdit, jugglers);
+                const int jugglers =
+                    doc.sketching ? doc.sketchLoop.jugglers : (doc.patternValid ? doc.pattern.jugglers : 0);
+                if (jugglers > 1) toggleCollapseAll(ladderPane.ladderEdit, jugglers);
             }
             if (ImGui::IsKeyPressed(ImGuiKey_V, false)) {
                 settings.showThrowValues = !settings.showThrowValues;
@@ -1116,20 +868,21 @@ int runApp() {
         if (ImGui::BeginMainMenuBar()) {
             if (ImGui::BeginMenu("File")) {
                 if (ImGui::MenuItem("New Pattern...")) {
-                    if ((patternValid || sketching) &&
-                        (savedPatternText != siteswapText || savedChoreography != choreographyText() || savedThrowNext != throwNextText(throwNext))) {
-                        promptForQuit = false;
-                        savePromptRequested = true;
+                    if ((doc.patternValid || doc.sketching) &&
+                        (doc.savedPatternText != doc.siteswapText || doc.savedChoreography != choreographyText() ||
+                         doc.savedThrowNext != throwNextText(doc.throwNext))) {
+                        ui.promptForQuit = false;
+                        ui.savePromptRequested = true;
                     } else {
-                        newPatternDialog.openRequested = true;
+                        ui.newPatternDialog.openRequested = true;
                     }
                 }
                 ImGui::Separator();
                 // (A chosen pattern is copied before loading it: loading changes the Recent list
                 // the choice may point into.)
                 if (ImGui::BeginMenu("JuggleSim Patterns")) {
-                    const PatternChoice choice =
-                        drawJuggleSimPatternsMenu(builtInPatterns, juggleSimMenuState, settings.colorVision);
+                    const PatternChoice choice = drawJuggleSimPatternsMenu(
+                        library.builtInPatterns, library.juggleSimMenuState, settings.colorVision);
                     if (choice.pattern) {
                         const LibraryPattern chosen = *choice.pattern;
                         loadLibraryPattern(chosen, choice.mine);
@@ -1137,12 +890,12 @@ int runApp() {
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu("My Patterns")) {
-                    const PatternChoice choice =
-                        drawMyPatternsMenu(myPatterns, recentPatterns, myMenuState, settings.colorVision);
+                    const PatternChoice choice = drawMyPatternsMenu(library.myPatterns, library.recentPatterns,
+                                                                    library.myMenuState, settings.colorVision);
                     if (choice.pattern) {
                         LibraryPattern chosen = *choice.pattern;
                         if (choice.mine) {  // from Recent: the saved version, if it's still there
-                            for (const LibraryPattern& saved : myPatterns) {
+                            for (const LibraryPattern& saved : library.myPatterns) {
                                 if (saved.displayName() == chosen.displayName()) {
                                     chosen = saved;
                                     break;
@@ -1156,27 +909,28 @@ int runApp() {
                 ImGui::Separator();
                 {
                     const bool open = openPatternIndex() >= 0;
-                    const std::string saveLabel = open ? "Save \"" + shortMenuText(openPatternName) + "\"" : std::string("Save...");
-                    if (ImGui::MenuItem(saveLabel.c_str(), "Ctrl+S", false, patternValid || sketching))
-                        saveRequested = true;
+                    const std::string saveLabel =
+                        open ? "Save \"" + shortMenuText(doc.openPatternName) + "\"" : std::string("Save...");
+                    if (ImGui::MenuItem(saveLabel.c_str(), "Ctrl+S", false, doc.patternValid || doc.sketching))
+                        ui.saveRequested = true;
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
                         ImGui::SetTooltip(open ? "Save the changes to this pattern in My Patterns."
                                                : "Save to My Patterns (it isn't one of them yet, so this asks for a name).");
-                    if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S", false, patternValid || sketching))
-                        saveAsRequested = true;
+                    if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S", false, doc.patternValid || doc.sketching))
+                        ui.saveAsRequested = true;
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
                         ImGui::SetTooltip("Save to My Patterns under a new name (or over another one).");
                 }
-                ImGui::MenuItem("Manage My Patterns...", nullptr, &manageWindow.open);
+                ImGui::MenuItem("Manage My Patterns...", nullptr, &library.manageWindow.open);
                 ImGui::Separator();
                 if (ImGui::MenuItem("Exit")) requestQuit();
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Edit")) {
                 if (ImGui::MenuItem("Undo", "Ctrl+Z", false,
-                                    !history.undo.empty() || ladderEdit.chain.active))
+                                    !doc.history.undo.empty() || ladderPane.ladderEdit.chain.active))
                     undo();
-                if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !history.redo.empty())) redo();
+                if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !doc.history.redo.empty())) redo();
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Playback")) {
@@ -1195,7 +949,7 @@ int runApp() {
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
                     ImGui::SetTooltip("A tick on every beat while playing, a stronger one on the first beat of each count.");
                 ImGui::Separator();
-                if (ImGui::MenuItem("Reset Tweakables")) resetTweakables(juggleParams);
+                if (ImGui::MenuItem("Reset Tweakables")) resetTweakables(doc.juggleParams);
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
                     ImGui::SetTooltip("Tempo 150 BPM, dwell 1.60 beats, automatic distance");
                 ImGui::EndMenu();
@@ -1206,15 +960,16 @@ int runApp() {
                     if (ImGui::MenuItem(propTypeName(prop), nullptr, settings.prop == prop) &&
                         settings.prop != prop) {
                         settings.prop = prop;
-                        juggleParams.prop = prop;
+                        doc.juggleParams.prop = prop;
                         saveSettings(settings);
                     }
                 }
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("View")) {
-                if (ImGui::MenuItem("Reset Ladder View", "Home over ladder", false, !ladderViewIsDefault(ladderEdit)))
-                    resetLadderView(ladderEdit);
+                if (ImGui::MenuItem("Reset Ladder View", "Home over ladder", false,
+                                    !ladderViewIsDefault(ladderPane.ladderEdit)))
+                    resetLadderView(ladderPane.ladderEdit);
                 if (ImGui::MenuItem("Throw Values", "V", settings.showThrowValues)) {
                     settings.showThrowValues = !settings.showThrowValues;
                     saveSettings(settings);
@@ -1224,22 +979,23 @@ int runApp() {
                     saveSettings(settings);
                 }
                 if (ImGui::MenuItem("Reset Camera", "Home over juggler")) {
-                    resetCamera(camera);
-                    frameSelected = false;
+                    resetCamera(stageView.camera);
+                    stageView.frameSelected = false;
                 }
-                if (ImGui::MenuItem("Frame All", nullptr, false, frameSelected || camera.free)) {
-                    frameSelected = false;
-                    camera.free = false;
+                if (ImGui::MenuItem("Frame All", nullptr, false, stageView.frameSelected || stageView.camera.free)) {
+                    stageView.frameSelected = false;
+                    stageView.camera.free = false;
                 }
-                if (ImGui::MenuItem("Frame Selected", "F", false, selectedJuggler >= 0)) {
-                    frameSelected = true;
-                    camera.free = false;
+                if (ImGui::MenuItem("Frame Selected", "F", false, stageView.selectedJuggler >= 0)) {
+                    stageView.frameSelected = true;
+                    stageView.camera.free = false;
                 }
-                if (ImGui::MenuItem("Top View", "T", camera.topView)) toggleTopView();
+                if (ImGui::MenuItem("Top View", "T", stageView.camera.topView)) toggleTopView();
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
                     ImGui::SetTooltip("Look straight down at the floor (for placing spike marks and jugglers).");
                 ImGui::Separator();
-                if (ImGui::MenuItem("Choreography", "M", choreographyMode && choreography.active())) toggleChoreographyMode();
+                if (ImGui::MenuItem("Choreography", "M", stageView.choreographyMode && doc.choreography.active()))
+                    toggleChoreographyMode();
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
                     ImGui::SetTooltip("Shows the spike marks on the floor, to move, turn and put jugglers on.\n"
                                       "Pause on a beat, then drag a juggler to where they should be then (onto a\n"
@@ -1251,16 +1007,17 @@ int runApp() {
                 }
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
                     ImGui::SetTooltip("On the ladder: \"M3\" beside each keyframe on a spike mark.");
-                if (ImGui::MenuItem("Path Beat Numbers", nullptr, settings.pathBeatNumbers, choreographyMode)) {
+                if (ImGui::MenuItem("Path Beat Numbers", nullptr, settings.pathBeatNumbers,
+                                    stageView.choreographyMode)) {
                     settings.pathBeatNumbers = !settings.pathBeatNumbers;
                     saveSettings(settings);
                 }
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
                     ImGui::SetTooltip("Choreography: number every beat along the jugglers' paths.\n"
                                       "Off: only the point under the mouse is numbered.");
-                if (ImGui::MenuItem("Clear Choreography", nullptr, false, choreography.active())) {
-                    choreography = Choreography();
-                    choreographyMode = false;
+                if (ImGui::MenuItem("Clear Choreography", nullptr, false, doc.choreography.active())) {
+                    doc.choreography = Choreography();
+                    stageView.choreographyMode = false;
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Color by Orbit", "O", settings.colorByOrbit)) {
@@ -1271,15 +1028,16 @@ int runApp() {
                     ImGui::SetTooltip("One color per orbit (the throws a group of props travel round)\n"
                                       "instead of one per prop. Sketches are always colored by path.");
                 {
-                    const int jugglers = sketching ? sketchLoop.jugglers : (patternValid ? pattern.jugglers : 0);
-                    const bool expand = allStripsCollapsed(ladderEdit, jugglers);
+                    const int jugglers =
+                        doc.sketching ? doc.sketchLoop.jugglers : (doc.patternValid ? doc.pattern.jugglers : 0);
+                    const bool expand = allStripsCollapsed(ladderPane.ladderEdit, jugglers);
                     if (ImGui::MenuItem(expand ? "Expand All Jugglers" : "Collapse All Jugglers", "C", false, jugglers > 1))
-                        toggleCollapseAll(ladderEdit, jugglers);
+                        toggleCollapseAll(ladderPane.ladderEdit, jugglers);
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
                         ImGui::SetTooltip("Narrows every juggler's strip on the ladder (their throws still show),\n"
                                           "or widens them all again if they're all narrow.");
                 }
-                if (ImGui::MenuItem("Dim Linked Jugglers", "L", settings.dimLinked, parsed.form.hasLinks())) {
+                if (ImGui::MenuItem("Dim Linked Jugglers", "L", settings.dimLinked, doc.parsed.form.hasLinks())) {
                     settings.dimLinked = !settings.dimLinked;
                     saveSettings(settings);
                 }
@@ -1297,7 +1055,7 @@ int runApp() {
                         }
                     }
                     ImGui::Separator();
-                    ImGui::MenuItem("Preview all modes...", nullptr, &showColorPreview);
+                    ImGui::MenuItem("Preview all modes...", nullptr, &ui.showColorPreview);
                     ImGui::EndMenu();
                 }
                 if (ImGui::MenuItem("Sounds", nullptr, settings.sounds)) {
@@ -1307,7 +1065,7 @@ int runApp() {
                 if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
                     ImGui::SetTooltip("A short plip when something you just did is refused, or breaks the pattern.");
                 ImGui::Separator();
-                ImGui::MenuItem("ImGui demo window", nullptr, &showImGuiDemo);
+                ImGui::MenuItem("ImGui demo window", nullptr, &ui.showImGuiDemo);
                 ImGui::EndMenu();
             }
             if (spaceMouse.present && ImGui::BeginMenu("3D Mouse")) {
@@ -1322,8 +1080,8 @@ int runApp() {
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Help")) {
-                ImGui::MenuItem("Keyboard Shortcuts", "?", &showShortcuts);
-                ImGui::MenuItem("3D Mouse Diagnostics", nullptr, &showSpaceMouseDiagnostics, spaceMouse.present);
+                ImGui::MenuItem("Keyboard Shortcuts", "?", &ui.showShortcuts);
+                ImGui::MenuItem("3D Mouse Diagnostics", nullptr, &ui.showSpaceMouseDiagnostics, spaceMouse.present);
                 ImGui::EndMenu();
             }
             menuHeight = ImGui::GetWindowSize().y;
@@ -1340,22 +1098,23 @@ int runApp() {
         const float minPaneWidth = std::min(ImGui::GetFontSize() * 16.0f, W * 0.5f);
         const float leftWidth = std::floor(std::clamp(W * settings.ladderFraction, minPaneWidth, W - minPaneWidth));
         // A choreography that comes with its floor grid (loaded, or undone to) puts it in place.
-        if (choreography.active() && !choreography.grid.empty() && choreography.grid != choreographyGridShown) {
-            if (readFloorGridText(choreography.grid, &settings)) saveSettings(settings);
-            choreographyGridShown = choreography.grid;
+        if (doc.choreography.active() && !doc.choreography.grid.empty() &&
+            doc.choreography.grid != doc.choreographyGridShown) {
+            if (readFloorGridText(doc.choreography.grid, &settings)) saveSettings(settings);
+            doc.choreographyGridShown = doc.choreography.grid;
         }
         // The siteswap entry is a pane of its own along the bottom, the full width of the window
         // (long passing patterns need the room); the ladder and juggler panes sit above it.
         int gridRows = 1;
         {
             SiteswapGrid shownGrid;
-            if (gridFromText(siteswapText, &shownGrid)) gridRows = std::max(1, shownGrid.jugglers());
+            if (gridFromText(doc.siteswapText, &shownGrid)) gridRows = std::max(1, shownGrid.jugglers());
         }
         // (The walking rows: one per juggler, as the throws last worked while they have an error.)
         const JugglingLoop choreoRowsLoop = shownLoop();
         const int choreoGridRows = choreoRowsLoop.empty() ? gridRows : choreoRowsLoop.jugglers;
         const float entryHeight =
-            siteswapGridHeight(gridRows, choreography.active() ? choreoGridRows : 0) + style.WindowPadding.y * 2.0f;
+            siteswapGridHeight(gridRows, doc.choreography.active() ? choreoGridRows : 0) + style.WindowPadding.y * 2.0f;
         const float bodyBottom = H - entryHeight;
         const ImGuiWindowFlags paneFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
                                            ImGuiWindowFlags_NoSavedSettings |
@@ -1363,76 +1122,80 @@ int runApp() {
 
         // The throwing loop played out (see loop_ops.h): what's thrown, beat by beat, a pass going to
         // whoever walks its target's path (the walking loop, as it last worked) when it lands.
-        const JugglingLoop writtenLoop = sketching ? sketchLoop : (patternValid ? patternLoop(pattern) : JugglingLoop());
+        const JugglingLoop writtenLoop =
+            doc.sketching ? doc.sketchLoop : (doc.patternValid ? patternLoop(doc.pattern) : JugglingLoop());
         {
-            playPaths = WalkPaths();
-            const Choreography& c = walkLoopBroken ? stageChoreography : choreography;
+            stage.playPaths = WalkPaths();
+            const Choreography& c = stage.walkLoopBroken ? stage.stageChoreography : doc.choreography;
             if (c.active() && !writtenLoop.empty()) {
                 const WalkLoop w = walkLoop(c, writtenLoop.jugglers);
                 if (w.valid && w.phases > 1) {
-                    playPaths.cycle = c.cycle > 0 ? c.cycle : choreographyCycle(writtenLoop, juggleParams);
-                    playPaths.path = w.role;
+                    stage.playPaths.cycle = c.cycle > 0 ? c.cycle : choreographyCycle(writtenLoop, doc.juggleParams);
+                    stage.playPaths.path = w.role;
                 }
             }
-            const ThrowLoopPlan plan = throwLoopPlan(throwNext, writtenLoop.jugglers);
-            played = playedLoop(writtenLoop, plan.valid ? plan : ThrowLoopPlan(), playPaths);
-            throwLoopBroken = !writtenLoop.empty() && (!plan.valid || !played.ok);
-            throwLoopProblem = !plan.valid ? plan.problem : played.problem;
+            const ThrowLoopPlan plan = throwLoopPlan(doc.throwNext, writtenLoop.jugglers);
+            stage.played = playedLoop(writtenLoop, plan.valid ? plan : ThrowLoopPlan(), stage.playPaths);
+            stage.throwLoopBroken = !writtenLoop.empty() && (!plan.valid || !stage.played.ok);
+            stage.throwLoopProblem = !plan.valid ? plan.problem : stage.played.problem;
             // (No pattern at all, the throws having an error: the stage keeps the last that worked.)
             // (Pausing as it breaks: editing a throw, you're usually looking at a moment, to see where
             // everyone is. Play again whenever you like.)
-            const bool wasBroken = throwsBroken;
-            throwsBroken = writtenLoop.empty() && !stagePlayLoop.empty();
-            if (throwsBroken && !wasBroken) playback.playing = false;
-            if (!writtenLoop.empty()) lastGoodLoop = writtenLoop;
-            if (!writtenLoop.empty() && (!throwLoopBroken || stagePlayLoop.jugglers != writtenLoop.jugglers))
-                stagePlayLoop = played.loop;
+            const bool wasBroken = stage.throwsBroken;
+            stage.throwsBroken = writtenLoop.empty() && !stage.stagePlayLoop.empty();
+            if (stage.throwsBroken && !wasBroken) playback.playing = false;
+            if (!writtenLoop.empty()) stage.lastGoodLoop = writtenLoop;
+            if (!writtenLoop.empty() &&
+                (!stage.throwLoopBroken || stage.stagePlayLoop.jugglers != writtenLoop.jugglers))
+                stage.stagePlayLoop = stage.played.loop;
         }
 
         // Ladder diagram (top of left half).
         ImGui::SetNextWindowPos(ImVec2(0.0f, top));
         ImGui::SetNextWindowSize(ImVec2(leftWidth, bodyBottom - top));
         // The ladder handles the mouse wheel itself (pan/zoom), so the pane mustn't scroll.
-        ladderPreview = false;
+        ladderPane.ladderPreview = false;
         if (ImGui::Begin("Ladder", nullptr, paneFlags | ImGuiWindowFlags_NoScrollWithMouse)) {
             // What the ladder shows and edits: the sketch, or the pattern.
-            const JugglingLoop ladderLoop = sketching ? sketchLoop : (patternValid ? patternLoop(pattern) : JugglingLoop());
+            const JugglingLoop ladderLoop =
+                doc.sketching ? doc.sketchLoop : (doc.patternValid ? patternLoop(doc.pattern) : JugglingLoop());
             const LadderToolbarRequest request =
-                drawLadderToolbar(ladderLoop, ladderEdit, settings.showThrowValues, settings.colorByOrbit,
-                                  parsed.form.hasLinks(), settings.dimLinked);
+                drawLadderToolbar(ladderLoop, ladderPane.ladderEdit, settings.showThrowValues, settings.colorByOrbit,
+                                  doc.parsed.form.hasLinks(), settings.dimLinked);
             if (request.toggleOrbits) {
                 settings.colorByOrbit = !settings.colorByOrbit;
                 saveSettings(settings);
             }
-            if (request.toggleCollapseAll) toggleCollapseAll(ladderEdit, ladderLoop.jugglers);
+            if (request.toggleCollapseAll) toggleCollapseAll(ladderPane.ladderEdit, ladderLoop.jugglers);
             if (request.toggleDimLinked) {
                 settings.dimLinked = !settings.dimLinked;
                 saveSettings(settings);
             }
-            if (request.resetView) resetLadderView(ladderEdit);
+            if (request.resetView) resetLadderView(ladderPane.ladderEdit);
             if (request.toggleValues) {
                 settings.showThrowValues = !settings.showThrowValues;
                 saveSettings(settings);
             }
-            if (request.newPeriodBeats > 0 && patternCount >= 2 && request.newPeriodBeats % patternCount != 0) {
-                siteswapBox.note = "Can't: this is a " + std::to_string(patternCount) + "-count, so the period goes up and down " +
-                                   std::to_string(patternCount) + " beats at a time.";
-                siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+            if (request.newPeriodBeats > 0 && doc.patternCount >= 2 && request.newPeriodBeats % doc.patternCount != 0) {
+                gridPane.siteswapBox.note = "Can't: this is a " + std::to_string(doc.patternCount) +
+                                            "-count, so the period goes up and down " +
+                                            std::to_string(doc.patternCount) + " beats at a time.";
+                gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
             } else if (request.newPeriodBeats > 0) {
-                cancelLadderEdit(ladderEdit);
+                cancelLadderEdit(ladderPane.ladderEdit);
                 commitTyping();
                 const JugglingLoop longer = loopWithPeriod(ladderLoop, request.newPeriodBeats);
                 // (Written as it is: a period chosen on purpose isn't shortened again.)
                 std::string text;
-                if (loopToText(longer, &text, &parsed.form)) {
+                if (loopToText(longer, &text, &doc.parsed.form)) {
                     const Siteswap check = parseSiteswap(text);
                     if (check.valid || check.sketch) {
-                        std::snprintf(siteswapText, sizeof(siteswapText), "%s", text.c_str());
-                        parsed = check;
-                        patternValid = check.valid;
-                        sketching = check.sketch;
-                        if (check.valid) pattern = patternFromSiteswap(check);
-                        if (check.sketch) sketchLoop = check.loop;
+                        std::snprintf(doc.siteswapText, sizeof(doc.siteswapText), "%s", text.c_str());
+                        doc.parsed = check;
+                        doc.patternValid = check.valid;
+                        doc.sketching = check.sketch;
+                        if (check.valid) doc.pattern = patternFromSiteswap(check);
+                        if (check.sketch) doc.sketchLoop = check.loop;
                         recordPattern(text);
                     }
                 }
@@ -1440,107 +1203,114 @@ int runApp() {
             LadderViewOptions ladderOptions;
             ladderOptions.showValues = settings.showThrowValues;
             ladderOptions.colorByOrbit = settings.colorByOrbit;
-            ladderOptions.selectedJuggler = selectedJuggler;
-            ladderOptions.highlightThrow = siteswapHoverThrow;
-            ladderOptions.relativeTargets = parsed.form.relative;
-            ladderOptions.form = &parsed.form;
-            ladderOptions.countN = patternCount;
-            ladderOptions.writtenPeriod = played.expanded ? played.period : 0;
+            ladderOptions.selectedJuggler = stageView.selectedJuggler;
+            ladderOptions.highlightThrow = gridPane.siteswapHoverThrow;
+            ladderOptions.relativeTargets = doc.parsed.form.relative;
+            ladderOptions.form = &doc.parsed.form;
+            ladderOptions.countN = doc.patternCount;
+            ladderOptions.writtenPeriod = stage.played.expanded ? stage.played.period : 0;
             ladderOptions.dimLinked = settings.dimLinked;
             ladderOptions.followPlayhead = playback.playing;
             {
-                const JugglingLoop spinLoop = patternValid && !sketching ? played.loop : JugglingLoop();
-                if (spinLoop != spinCacheLoop || juggleParams.bpm != spinCacheParams.bpm ||
-                    juggleParams.dwellBeats != spinCacheParams.dwellBeats || juggleParams.prop != spinCacheParams.prop ||
-                    juggleParams.distance != spinCacheParams.distance) {
-                    spinCache = throwSpins(spinLoop, juggleParams);
-                    spinCacheLoop = spinLoop;
-                    spinCacheParams = juggleParams;
+                const JugglingLoop spinLoop = doc.patternValid && !doc.sketching ? stage.played.loop : JugglingLoop();
+                if (spinLoop != ladderPane.spinCacheLoop || doc.juggleParams.bpm != ladderPane.spinCacheParams.bpm ||
+                    doc.juggleParams.dwellBeats != ladderPane.spinCacheParams.dwellBeats ||
+                    doc.juggleParams.prop != ladderPane.spinCacheParams.prop ||
+                    doc.juggleParams.distance != ladderPane.spinCacheParams.distance) {
+                    ladderPane.spinCache = throwSpins(spinLoop, doc.juggleParams);
+                    ladderPane.spinCacheLoop = spinLoop;
+                    ladderPane.spinCacheParams = doc.juggleParams;
                 }
-                ladderOptions.spins = &spinCache;
+                ladderOptions.spins = &ladderPane.spinCache;
             }
             {
                 const JugglingLoop ladderLoop = shownLoop();
-                const int written = choreographyCycle(ladderLoop, juggleParams);  // (the beats written out)
-                ladderOptions.keyframeCycle = choreographyFullCycle(choreography, written);
+                const int written = choreographyCycle(ladderLoop, doc.juggleParams);  // (the beats written out)
+                ladderOptions.keyframeCycle = choreographyFullCycle(doc.choreography, written);
                 ladderOptions.showKeyframeMarks = settings.showKeyframeMarks;
-                ladderOptions.walkLinks = choreographyMode && ladderLoop.jugglers > 1;
+                ladderOptions.walkLinks = stageView.choreographyMode && ladderLoop.jugglers > 1;
                 const int cycle = ladderOptions.keyframeCycle;
                 ladderOptions.walkLabels.assign(static_cast<size_t>(std::max(0, ladderLoop.jugglers)), std::string());
                 for (int j = 0; j < ladderLoop.jugglers; ++j)
-                    ladderOptions.walkLabels[static_cast<size_t>(j)] = walkLinkLabel(choreography.link(j));
+                    ladderOptions.walkLabels[static_cast<size_t>(j)] = walkLinkLabel(doc.choreography.link(j));
                 for (size_t j = 0; j < static_cast<size_t>(std::max(0, ladderLoop.jugglers)); ++j) {
-                    const std::vector<Keyframe> keys = effectiveKeyframes(choreography, static_cast<int>(j), written);
-                    const bool linked = choreography.link(static_cast<int>(j)).active();
+                    const std::vector<Keyframe> keys =
+                        effectiveKeyframes(doc.choreography, static_cast<int>(j), written);
+                    const bool linked = doc.choreography.link(static_cast<int>(j)).active();
                     for (size_t i = 0; i < keys.size(); ++i) {
                         const Keyframe& k = keys[i];
                         LadderKeyframe lk;
                         lk.juggler = static_cast<int>(j);
                         lk.beat = k.beat;
-                        const bool onMark = k.mark >= 0 && k.mark < static_cast<int>(choreography.marks.size());
-                        lk.where = onMark ? "on spike mark " + choreography.marks[static_cast<size_t>(k.mark)].name : "a turned spot";
+                        const bool onMark = k.mark >= 0 && k.mark < static_cast<int>(doc.choreography.marks.size());
+                        lk.where = onMark ? "on spike mark " + doc.choreography.marks[static_cast<size_t>(k.mark)].name
+                                          : "a turned spot";
                         lk.longTurn = k.longTurn;
                         lk.mark = onMark ? k.mark : -1;
-                        if (onMark) lk.markName = choreography.marks[static_cast<size_t>(k.mark)].name;
+                        if (onMark) lk.markName = doc.choreography.marks[static_cast<size_t>(k.mark)].name;
                         lk.derived = linked || k.beat >= written;  // (a link's, or a rotated repeat's: locked)
                         if (cycle > 0) {
                             const Keyframe& next = keys[(i + 1) % keys.size()];
                             const int gap = keys.size() == 1 ? cycle : ((next.beat - k.beat) % cycle + cycle) % cycle;
-                            if (gap > 0 && sameKeyframeSpot(choreography, k, next)) lk.stayBeats = gap;
+                            if (gap > 0 && sameKeyframeSpot(doc.choreography, k, next)) lk.stayBeats = gap;
                         }
                         ladderOptions.keyframes.push_back(lk);
                     }
                 }
             }
             // (It shows the loop played out: what happens on each beat.)
-            LadderEditResult edited = drawLadderDiagram(played.expanded ? played.loop : writtenLoop, settings.colorVision,
-                                                        ladderEdit, playback.beat, ladderOptions);
+            LadderEditResult edited =
+                drawLadderDiagram(stage.played.expanded ? stage.played.loop : writtenLoop, settings.colorVision,
+                                  ladderPane.ladderEdit, playback.beat, ladderOptions);
             // Picking up a throw pauses the jugglers (don't confuse them mid-edit); drawing in a
             // sketch doesn't, so you can watch props pop in as you go.
             if (edited.startedChain) playback.playing = false;
             if (!edited.note.empty()) {
-                siteswapBox.note = edited.note;
-                siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+                gridPane.siteswapBox.note = edited.note;
+                gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
             }
-            ladderPreview = edited.hasPreview;
-            if (ladderPreview) ladderPreviewLoop = edited.preview;
+            ladderPane.ladderPreview = edited.hasPreview;
+            if (ladderPane.ladderPreview) ladderPane.ladderPreviewLoop = edited.preview;
             if (edited.selectJuggler != kNoSelectionChange) {
-                selectedJuggler = edited.selectJuggler;
-                if (selectedJuggler < 0) frameSelected = false;
+                stageView.selectedJuggler = edited.selectJuggler;
+                if (stageView.selectedJuggler < 0) stageView.frameSelected = false;
             }
             if (edited.committed) {
-                const bool wasWorking = parsed.valid || parsed.sketch;
+                const bool wasWorking = doc.parsed.valid || doc.parsed.sketch;
                 // An edit to the loop played out goes into the beats written out (if that's where it was).
                 JugglingLoop changed = edited.loop;
                 std::string why;
-                if (played.expanded && !writtenFromPlayed(played, writtenLoop, edited.loop, playPaths, &changed, &why)) {
-                    siteswapBox.note = "Can't: " + why;
-                    siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
-                    plipWanted = true;
+                if (stage.played.expanded &&
+                    !writtenFromPlayed(stage.played, writtenLoop, edited.loop, stage.playPaths, &changed, &why)) {
+                    gridPane.siteswapBox.note = "Can't: " + why;
+                    gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+                    sound.plipWanted = true;
                 } else {
                     applyLoop(changed);
-                    if (wasWorking && !parsed.valid && !parsed.sketch) plipWanted = true;  // (it broke it)
+                    if (wasWorking && !doc.parsed.valid && !doc.parsed.sketch)
+                        sound.plipWanted = true;  // (it broke it)
                 }
             }
             if (edited.goToStart) goToStart();
             if (edited.walkLikeJuggler >= 0) openWalkLike(edited.walkLikeJuggler);
             if (edited.deleteKeyframeJuggler >= 0)
-                removeKeyframe(&choreography, edited.deleteKeyframeJuggler, edited.deleteKeyframeBeat);
+                removeKeyframe(&doc.choreography, edited.deleteKeyframeJuggler, edited.deleteKeyframeBeat);
             // A keyframe's own changes: turning the long way round, or moved to another beat.
             auto keyframeAt = [&](int j, int beat) -> Keyframe* {
-                if (j < 0 || j >= static_cast<int>(choreography.keys.size())) return nullptr;
-                for (Keyframe& k : choreography.keys[static_cast<size_t>(j)])
+                if (j < 0 || j >= static_cast<int>(doc.choreography.keys.size())) return nullptr;
+                for (Keyframe& k : doc.choreography.keys[static_cast<size_t>(j)])
                     if (k.beat == beat) return &k;
                 return nullptr;
             };
             if (Keyframe* k = keyframeAt(edited.longTurnKeyframeJuggler, edited.longTurnKeyframeBeat)) k->longTurn = !k->longTurn;
             // With rotated repeats, keyframes stay in the beats written out.
-            const int writtenBeats = choreographyCycle(shownLoop(), juggleParams);
+            const int writtenBeats = choreographyCycle(shownLoop(), doc.juggleParams);
             auto pastWritten = [&](int beat) {
-                if (choreography.repeats() == 1 || beat < writtenBeats) return false;
-                siteswapBox.note = "Can't: beat " + std::to_string(beat + 1) + " is in the walking loop's copies (only beats 1-" +
-                                   std::to_string(writtenBeats) + " are written out; the C rows' next column says what comes after).";
-                siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+                if (doc.choreography.repeats() == 1 || beat < writtenBeats) return false;
+                gridPane.siteswapBox.note =
+                    "Can't: beat " + std::to_string(beat + 1) + " is in the walking loop's copies (only beats 1-" +
+                    std::to_string(writtenBeats) + " are written out; the C rows' next column says what comes after).";
+                gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
                 return true;
             };
             if (edited.moveKeyframeJuggler >= 0 && pastWritten(edited.moveKeyframeTo)) edited.moveKeyframeJuggler = -1;
@@ -1548,8 +1318,8 @@ int runApp() {
             if (Keyframe* k = keyframeAt(edited.moveKeyframeJuggler, edited.moveKeyframeFrom)) {
                 Keyframe moved = *k;
                 moved.beat = edited.moveKeyframeTo;
-                removeKeyframe(&choreography, edited.moveKeyframeJuggler, edited.moveKeyframeFrom);
-                setKeyframe(&choreography, edited.moveKeyframeJuggler, moved);  // (replacing one already there)
+                removeKeyframe(&doc.choreography, edited.moveKeyframeJuggler, edited.moveKeyframeFrom);
+                setKeyframe(&doc.choreography, edited.moveKeyframeJuggler, moved);  // (replacing one already there)
             }
             // Ctrl+dragged: a loiter, the keyframe copied to another beat. If the copy comes first,
             // the juggler arrives there (and any long way round goes with the arrival).
@@ -1558,7 +1328,7 @@ int runApp() {
                 copy.beat = edited.loiterTo;
                 copy.longTurn = edited.loiterBefore && k->longTurn;
                 if (edited.loiterBefore) k->longTurn = false;
-                setKeyframe(&choreography, edited.loiterJuggler, copy);
+                setKeyframe(&doc.choreography, edited.loiterJuggler, copy);
             }
             // Scrubbing in the beat numbers: the playhead follows the mouse, and playback stays
             // paused afterwards.
@@ -1575,49 +1345,52 @@ int runApp() {
         // The siteswap grid (along the bottom, full width).
         ImGui::SetNextWindowPos(ImVec2(0.0f, bodyBottom));
         ImGui::SetNextWindowSize(ImVec2(W, entryHeight));
-        siteswapHoverThrow = -1;
+        gridPane.siteswapHoverThrow = -1;
         if (ImGui::Begin("Siteswap entry", nullptr, paneFlags | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
             ThrowLoopGridView throwView;
             throwView.active = writtenLoop.jugglers > 1;
             {
-                const ThrowLoopPlan plan = throwLoopPlan(throwNext, writtenLoop.jugglers);
+                const ThrowLoopPlan plan = throwLoopPlan(doc.throwNext, writtenLoop.jugglers);
                 for (int j = 0; j < writtenLoop.jugglers; ++j) {
-                    const int k = j < static_cast<int>(throwNext.size()) ? throwNext[static_cast<size_t>(j)] : -1;
+                    const int k =
+                        j < static_cast<int>(doc.throwNext.size()) ? doc.throwNext[static_cast<size_t>(j)] : -1;
                     throwView.next.push_back(k >= 0 && k != j ? std::to_string(k + 1) : std::string());
                     throwView.bad.push_back(
                         static_cast<char>(std::find(plan.bad.begin(), plan.bad.end(), j) != plan.bad.end()));
                 }
-                if (played.expanded) throwView.played = played.loop;
-                throwView.part = played.part;
-                throwView.clash = played.clash;
+                if (stage.played.expanded) throwView.played = stage.played.loop;
+                throwView.part = stage.played.part;
+                throwView.clash = stage.played.clash;
             }
             ChoreoGridView choreoView = choreoGridView();
             // Who's on each row at the playhead (the rows are positions; see siteswap_grid.h).
             {
                 const int now = static_cast<int>(std::floor(playback.beat));
-                throwView.looping = played.part.size() > 1;
+                throwView.looping = stage.played.part.size() > 1;
                 for (int r = 0; r < writtenLoop.jugglers && throwView.looping; ++r) {
                     int who = r;
                     for (int j = 0; j < writtenLoop.jugglers; ++j)
-                        if (played.partAt(j, now) == r) who = j;
+                        if (stage.played.partAt(j, now) == r) who = j;
                     throwView.who.push_back(who == r ? -1 : who);
                 }
-                choreoView.looping = !playPaths.trivial();
+                choreoView.looping = !stage.playPaths.trivial();
                 for (int k = 0; k < static_cast<int>(choreoView.rows.size()) && choreoView.looping; ++k) {
-                    const int who = playPaths.walker(k, now);
+                    const int who = stage.playPaths.walker(k, now);
                     choreoView.who.push_back(who == k ? -1 : who);
                 }
             }
-            const SiteswapGridResult g = drawSiteswapGrid(siteswapGrid, siteswapText, parsed, patternCount,
-                                                          settings.colorVision, playback.beat, choreoView, throwView);
+            const SiteswapGridResult g =
+                drawSiteswapGrid(gridPane.siteswapGrid, doc.siteswapText, doc.parsed, doc.patternCount,
+                                 settings.colorVision, playback.beat, choreoView, throwView);
             // The throws' next column: whose throws a juggler takes up after the period. (A change
             // that leaves it not working plips.)
             for (const std::pair<int, int>& e : g.throwNextEdits) {
                 if (e.first < 0 || e.first >= kMaxJugglers) continue;
-                if (static_cast<int>(throwNext.size()) <= e.first) throwNext.resize(static_cast<size_t>(e.first) + 1, -1);
-                throwNext[static_cast<size_t>(e.first)] = e.second;
-                const ThrowLoopPlan plan = throwLoopPlan(throwNext, writtenLoop.jugglers);
-                if (!plan.valid || !playedLoop(writtenLoop, plan, playPaths).ok) plipWanted = true;
+                if (static_cast<int>(doc.throwNext.size()) <= e.first)
+                    doc.throwNext.resize(static_cast<size_t>(e.first) + 1, -1);
+                doc.throwNext[static_cast<size_t>(e.first)] = e.second;
+                const ThrowLoopPlan plan = throwLoopPlan(doc.throwNext, writtenLoop.jugglers);
+                if (!plan.valid || !playedLoop(writtenLoop, plan, stage.playPaths).ok) sound.plipWanted = true;
             }
             // The choreography's rows: keyframes typed, walk links, and the beat to show.
             // (Throws and walking changed together, a selection across both: one undo step.)
@@ -1633,140 +1406,145 @@ int runApp() {
                 if (e.kind == ChoreoEdit::Kind::Set) {
                     Keyframe k;
                     k.beat = e.beat;
-                    k.mark = findMarkNamed(choreography, e.mark);
+                    k.mark = findMarkNamed(doc.choreography, e.mark);
                     if (k.mark < 0) continue;
                     if (e.longTurn >= 0)
                         k.longTurn = e.longTurn != 0;
-                    else if (choreography.hasKeys(e.juggler))
-                        for (const Keyframe& old : choreography.keys[static_cast<size_t>(e.juggler)])
+                    else if (doc.choreography.hasKeys(e.juggler))
+                        for (const Keyframe& old : doc.choreography.keys[static_cast<size_t>(e.juggler)])
                             if (old.beat == e.beat) k.longTurn = old.longTurn;
-                    setKeyframe(&choreography, e.juggler, k);
+                    setKeyframe(&doc.choreography, e.juggler, k);
                 } else if (e.kind == ChoreoEdit::Kind::Rotate) {
                     // A beat (or more) later, round the beats written out.
-                    const int written = std::max(1, choreographyCycle(shownLoop(), juggleParams));
-                    if (choreography.hasKeys(e.juggler)) {
-                        std::vector<Keyframe> keys = choreography.keys[static_cast<size_t>(e.juggler)];
-                        choreography.keys[static_cast<size_t>(e.juggler)].clear();
+                    const int written = std::max(1, choreographyCycle(shownLoop(), doc.juggleParams));
+                    if (doc.choreography.hasKeys(e.juggler)) {
+                        std::vector<Keyframe> keys = doc.choreography.keys[static_cast<size_t>(e.juggler)];
+                        doc.choreography.keys[static_cast<size_t>(e.juggler)].clear();
                         for (Keyframe& k : keys) {
                             k.beat = ((k.beat + e.beat) % written + written) % written;
-                            setKeyframe(&choreography, e.juggler, k);
+                            setKeyframe(&doc.choreography, e.juggler, k);
                         }
                     }
                 } else if (e.kind == ChoreoEdit::Kind::Clear) {
-                    removeKeyframe(&choreography, e.juggler, e.beat);
+                    removeKeyframe(&doc.choreography, e.juggler, e.beat);
                 } else if (e.kind == ChoreoEdit::Kind::Loop) {
                     Continuation k;
                     if (!readContinuation(e.mark, &k)) {
-                        siteswapBox.note = "\"" + e.mark + "\" isn't a row to go on to: a C row's number, then maybe a turn "
-                                           "(2, 2r+1/4, r1/2).";
-                        siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+                        gridPane.siteswapBox.note = "\"" + e.mark +
+                                                    "\" isn't a row to go on to: a C row's number, then maybe a turn "
+                                                    "(2, 2r+1/4, r1/2).";
+                        gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
                     } else {
                         setContinuation(e.juggler, k);
                     }
                 } else if (e.kind == ChoreoEdit::Kind::InsertBeat || e.kind == ChoreoEdit::Kind::DeleteBeat) {
                     for (int i = 0; i < std::max(1, e.count); ++i) walkingBeat(e.beat, e.kind == ChoreoEdit::Kind::InsertBeat);
-                } else if (choreography.hasKeys(e.juggler)) {
-                    for (Keyframe& k : choreography.keys[static_cast<size_t>(e.juggler)])
+                } else if (doc.choreography.hasKeys(e.juggler)) {
+                    for (Keyframe& k : doc.choreography.keys[static_cast<size_t>(e.juggler)])
                         if (k.beat == e.beat) k.longTurn = !k.longTurn;
                 }
             }
             if (g.walkLinkJuggler >= 0 && g.walkLinkLeader >= 0) {
-                if (choreography.dependsOn(g.walkLinkLeader, g.walkLinkJuggler)) {
-                    siteswapBox.note = "Can't: J" + std::to_string(g.walkLinkLeader + 1) + " already walks like J" +
-                                       std::to_string(g.walkLinkJuggler + 1) + " (perhaps through others).";
-                    siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+                if (doc.choreography.dependsOn(g.walkLinkLeader, g.walkLinkJuggler)) {
+                    gridPane.siteswapBox.note = "Can't: J" + std::to_string(g.walkLinkLeader + 1) +
+                                                " already walks like J" + std::to_string(g.walkLinkJuggler + 1) +
+                                                " (perhaps through others).";
+                    gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
                 } else {
-                    WalkLink l = choreography.link(g.walkLinkJuggler);
+                    WalkLink l = doc.choreography.link(g.walkLinkJuggler);
                     l.leader = g.walkLinkLeader;
                     l.offset = g.walkLinkOffset;
-                    setWalkLink(&choreography, g.walkLinkJuggler, l);
+                    setWalkLink(&doc.choreography, g.walkLinkJuggler, l);
                 }
             }
             if (g.walkUnlinkJuggler >= 0) unlinkWalk(g.walkUnlinkJuggler);
             if (g.walkLikeJuggler >= 0) openWalkLike(g.walkLikeJuggler);
             if (g.loopBuilderJuggler >= 0) {
-                loopBuilder.juggler = g.loopBuilderJuggler;
-                loopBuilder.k = choreography.continuation(g.loopBuilderJuggler);
-                loopBuilder.requested = true;
+                stageView.loopBuilder.juggler = g.loopBuilderJuggler;
+                stageView.loopBuilder.k = doc.choreography.continuation(g.loopBuilderJuggler);
+                stageView.loopBuilder.requested = true;
             }
             if (g.scrubBeat >= 0.0) {
                 playback.playing = false;
                 playback.beat = g.scrubBeat;
             }
             if (g.selectJuggler >= 0 && g.selectJuggler < shownLoop().jugglers && shownLoop().jugglers > 1)
-                selectedJuggler = g.selectJuggler;
+                stageView.selectedJuggler = g.selectJuggler;
             if (g.newCount >= 0) {
                 // A new count directive (and the throws moved to fit it, if asked): one undo step.
                 commitTyping();
                 recordSettingsChange();
                 const PatternSettings before = currentPatternSettings();
-                patternCount = g.newCount;
+                doc.patternCount = g.newCount;
                 if (g.changed) showPatternText(g.text);
-                history.recordWithSettings(g.changed ? g.text : history.current, before, currentPatternSettings());
+                doc.history.recordWithSettings(g.changed ? g.text : doc.history.current, before,
+                                               currentPatternSettings());
                 settingsRecorded();
             } else if (together) {
-                if (g.commitText != siteswapText) showPatternText(g.commitText);
-                history.recordWithSettings(g.commitText, settingsBeforeBoth, currentPatternSettings());
+                if (g.commitText != doc.siteswapText) showPatternText(g.commitText);
+                doc.history.recordWithSettings(g.commitText, settingsBeforeBoth, currentPatternSettings());
                 settingsRecorded();
             } else {
                 if (g.commit) {
-                    if (g.commitText != siteswapText) showPatternText(g.commitText);
+                    if (g.commitText != doc.siteswapText) showPatternText(g.commitText);
                     recordPattern(g.commitText);
                 }
-                if (g.changed && g.text != siteswapText) showPatternText(g.text);
+                if (g.changed && g.text != doc.siteswapText) showPatternText(g.text);
             }
             if (g.restart) playback.beat = 0.0;
             if (g.linkJuggler >= 0) linkJugglers(g.linkJuggler, g.linkTo, g.linkStart);
             if (g.unlinkJuggler >= 0) unlinkJugglers(g.unlinkJuggler);
             if (!g.note.empty()) {
-                siteswapBox.note = g.note;
-                siteswapBox.noteUntil = ImGui::GetTime() + 5.0;
+                gridPane.siteswapBox.note = g.note;
+                gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 5.0;
             }
-            if (g.plip) plipWanted = true;
+            if (g.plip) sound.plipWanted = true;
             // Resting on a throw describes it and picks it out on the ladder.
-            const Siteswap& shown = parsed;
-            if (g.hoverJuggler >= 0 && played.expanded && g.hoverJuggler < played.loop.jugglers && g.hoverColumn >= 0) {
+            const Siteswap& shown = doc.parsed;
+            if (g.hoverJuggler >= 0 && stage.played.expanded && g.hoverJuggler < stage.played.loop.jugglers &&
+                g.hoverColumn >= 0) {
                 // (The loop played out: the throw made then by whoever's on that row.)
-                const int beat = g.hoverColumn % played.loop.period;
+                const int beat = g.hoverColumn % stage.played.loop.period;
                 int who = g.hoverJuggler;
-                for (int j = 0; j < played.loop.jugglers; ++j)
-                    if (played.partAt(j, beat) == g.hoverJuggler) who = j;
-                siteswapHoverThrow = who * played.loop.period + beat;
-                std::string says = describeThrow(played.loop, who, beat);
-                if (played.part.size() > 1)
+                for (int j = 0; j < stage.played.loop.jugglers; ++j)
+                    if (stage.played.partAt(j, beat) == g.hoverJuggler) who = j;
+                gridPane.siteswapHoverThrow = who * stage.played.loop.period + beat;
+                std::string says = describeThrow(stage.played.loop, who, beat);
+                if (stage.played.part.size() > 1)
                     says += "\n(T" + std::to_string(g.hoverJuggler + 1) + "'s throw, made by J" + std::to_string(who + 1) + ")";
                 ImGui::SetTooltip("%s", says.c_str());
             } else if (g.hoverJuggler >= 0 && !shown.loop.empty() && g.hoverJuggler < shown.loop.jugglers) {
                 const int beat = g.hoverBeat % shown.loop.period;
-                if (shown.valid || shown.sketch) siteswapHoverThrow = g.hoverJuggler * shown.loop.period + beat;
+                if (shown.valid || shown.sketch)
+                    gridPane.siteswapHoverThrow = g.hoverJuggler * shown.loop.period + beat;
                 ImGui::SetTooltip("%s", describeThrow(shown.loop, g.hoverJuggler, beat).c_str());
             }
 
             // The status line, beside the Count button.
-            if (!siteswapBox.note.empty() && ImGui::GetTime() < siteswapBox.noteUntil)
+            if (!gridPane.siteswapBox.note.empty() && ImGui::GetTime() < gridPane.siteswapBox.noteUntil)
                 ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(errorTextColor(settings.colorVision)), "%s",
-                                   siteswapBox.note.c_str());
-            else if (!siteswapBox.info.empty() && ImGui::GetTime() < siteswapBox.infoUntil)
-                ImGui::TextUnformatted(siteswapBox.info.c_str());
-            else if (throwLoopBroken)
+                                   gridPane.siteswapBox.note.c_str());
+            else if (!gridPane.siteswapBox.info.empty() && ImGui::GetTime() < gridPane.siteswapBox.infoUntil)
+                ImGui::TextUnformatted(gridPane.siteswapBox.info.c_str());
+            else if (stage.throwLoopBroken)
                 ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(errorTextColor(settings.colorVision)),
                                    "The throwing loop doesn't work: %s (the stage shows it as it last worked).",
-                                   throwLoopProblem.c_str());
-            else if (walkLoopBroken)
+                                   stage.throwLoopProblem.c_str());
+            else if (stage.walkLoopBroken)
                 ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(errorTextColor(settings.colorVision)),
                                    "The walking loop doesn't work: %s (the stage shows it as it last worked).",
-                                   walkLoopProblem.c_str());
-            else if (patternValid && pattern.jugglers > 1)
-                ImGui::TextDisabled("%d jugglers, %d objects, period %d", pattern.jugglers, ballCount(pattern),
-                                    loopPeriodBeats(pattern));
-            else if (patternValid)
-                ImGui::TextDisabled("%d objects, period %d", ballCount(pattern), loopPeriodBeats(pattern));
-            else if (sketching)
-                ImGui::TextDisabled("Sketch: %d throw%s not decided yet, period %d", parsed.openThrows,
-                                    parsed.openThrows == 1 ? "" : "s", sketchLoop.period);
-            else if (!parsed.error.empty())
+                                   stage.walkLoopProblem.c_str());
+            else if (doc.patternValid && doc.pattern.jugglers > 1)
+                ImGui::TextDisabled("%d jugglers, %d objects, period %d", doc.pattern.jugglers, ballCount(doc.pattern),
+                                    loopPeriodBeats(doc.pattern));
+            else if (doc.patternValid)
+                ImGui::TextDisabled("%d objects, period %d", ballCount(doc.pattern), loopPeriodBeats(doc.pattern));
+            else if (doc.sketching)
+                ImGui::TextDisabled("Sketch: %d throw%s not decided yet, period %d", doc.parsed.openThrows,
+                                    doc.parsed.openThrows == 1 ? "" : "s", doc.sketchLoop.period);
+            else if (!doc.parsed.error.empty())
                 ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(errorTextColor(settings.colorVision)),
-                                   "%s", parsed.error.c_str());
+                                   "%s", doc.parsed.error.c_str());
             else
                 ImGui::TextUnformatted("");
             // Where the cursor is ("J1, beat 5, right hand: 3p+2"), at the right.
@@ -1783,48 +1561,54 @@ int runApp() {
         // The jugglers juggle the pattern, or the sketch as far as it goes (props pop in and
         // vanish where throws aren't decided yet), or, while drawing, what a click would make.
         // (While the throws have an error, the pattern as it last worked, so the stage doesn't go blank.)
-        const bool showJugglers = patternValid || sketching || throwsBroken;
-        const JugglingLoop loop = ladderPreview ? ladderPreviewLoop
-                                                : (sketching ? sketchLoop : (patternValid ? patternLoop(pattern) : JugglingLoop()));
+        const bool showJugglers = doc.patternValid || doc.sketching || stage.throwsBroken;
+        const JugglingLoop loop =
+            ladderPane.ladderPreview
+                ? ladderPane.ladderPreviewLoop
+                : (doc.sketching ? doc.sketchLoop : (doc.patternValid ? patternLoop(doc.pattern) : JugglingLoop()));
         // ...playing the loop out (the throwing loop, as it last worked); or the ladder's preview.
-        const JugglingLoop stageLoop = ladderPreview ? loop : stagePlayLoop;
+        const JugglingLoop stageLoop = ladderPane.ladderPreview ? loop : stage.stagePlayLoop;
         // Choreography fixes the distance between the jugglers once anything in it has changed
         // (a mark moved, added or deleted, a keyframe): it puts them where they stand, in meters.
         // Until then it's just the default formation, kept up with the distance.
         // A choreography saved without a length gets one now (enough whole periods to hold its
         // keyframes), so it doesn't change when the siteswap does. (It's not an unsaved change.)
-        if (!ladderPreview && !loop.empty() && choreography.active() && choreography.cycle == 0) {
+        if (!ladderPane.ladderPreview && !loop.empty() && doc.choreography.active() && doc.choreography.cycle == 0) {
             const std::string before = choreographyText();
-            choreography.cycle = choreographyCycle(loop, juggleParams);
-            if (savedChoreography == before) savedChoreography = choreographyText();
-            if (untouchedChoreography == before) untouchedChoreography = choreographyText();
+            doc.choreography.cycle = choreographyCycle(loop, doc.juggleParams);
+            if (doc.savedChoreography == before) doc.savedChoreography = choreographyText();
+            if (doc.untouchedChoreography == before) doc.untouchedChoreography = choreographyText();
         }
-        const bool choreographyLocked = choreography.active() && choreographyText() != untouchedChoreography;
-        if (!ladderPreview && !loop.empty() && choreography.active()) {
+        const bool choreographyLocked = doc.choreography.active() && choreographyText() != doc.untouchedChoreography;
+        if (!ladderPane.ladderPreview && !loop.empty() && doc.choreography.active()) {
             if (choreographyLocked) {
-                if (loop.jugglers > 1 && choreography.reference > 0.0 && juggleParams.distance != choreography.reference)
-                    juggleParams.distance = choreography.reference;
-            } else if (static_cast<int>(choreography.marks.size()) != loop.jugglers || choreography.cycle != loop.period ||
-                       std::fabs(choreography.reference - passingDistance(loop, juggleParams)) > 1e-9) {
-                choreography = Choreography();
+                if (loop.jugglers > 1 && doc.choreography.reference > 0.0 &&
+                    doc.juggleParams.distance != doc.choreography.reference)
+                    doc.juggleParams.distance = doc.choreography.reference;
+            } else if (static_cast<int>(doc.choreography.marks.size()) != loop.jugglers ||
+                       doc.choreography.cycle != loop.period ||
+                       std::fabs(doc.choreography.reference - passingDistance(loop, doc.juggleParams)) > 1e-9) {
+                doc.choreography = Choreography();
                 ensureSpikeMarks();
             }
         }
         const bool loopComplete = !stageLoop.empty() && openThrowCount(stageLoop) == 0;
-        if (selectedJuggler >= std::max(loop.jugglers, pattern.jugglers) || std::max(loop.jugglers, pattern.jugglers) < 2) {
-            selectedJuggler = -1;
-            frameSelected = false;
+        if (stageView.selectedJuggler >= std::max(loop.jugglers, doc.pattern.jugglers) ||
+            std::max(loop.jugglers, doc.pattern.jugglers) < 2) {
+            stageView.selectedJuggler = -1;
+            stageView.frameSelected = false;
         }
         {
             const JugglingLoop shown = shownLoop();
-            const WalkLoop w = choreography.active() && !shown.empty() ? walkLoop(choreography, shown.jugglers) : WalkLoop();
-            walkLoopBroken = !w.valid;
-            walkLoopProblem = w.problem;
-            if (!walkLoopBroken) stageChoreography = choreography;
+            const WalkLoop w =
+                doc.choreography.active() && !shown.empty() ? walkLoop(doc.choreography, shown.jugglers) : WalkLoop();
+            stage.walkLoopBroken = !w.valid;
+            stage.walkLoopProblem = w.problem;
+            if (!stage.walkLoopBroken) stage.stageChoreography = doc.choreography;
         }
         // What the stage is evaluated with: the choreography as it last worked.
-        JuggleParams stageParams = juggleParams;
-        stageParams.choreography = &stageChoreography;
+        JuggleParams stageParams = doc.juggleParams;
+        stageParams.choreography = &stage.stageChoreography;
         JugglerScene scene;
         std::vector<int> styleOfBall;  // with "color by orbit": each prop's orbit
         if (showJugglers) {
@@ -1832,36 +1616,38 @@ int runApp() {
             scene = evaluateScene(stageLoop, ballOrbits, stageParams, playback.beat);
             if (settings.colorByOrbit && loopComplete)
                 styleOfBall = orbitOfEachBall(stageLoop, ballOrbits, computeLoopOrbits(stageLoop));
-            const int framedJuggler = frameSelected ? selectedJuggler : -1;
+            const int framedJuggler = stageView.frameSelected ? stageView.selectedJuggler : -1;
             auto sameParams = [](const JuggleParams& a, const JuggleParams& b) {
                 return a.bpm == b.bpm && a.dwellBeats == b.dwellBeats && a.prop == b.prop && a.distance == b.distance;
             };
             const double now = ImGui::GetTime();
             // (While a spike mark is dragged, the choreography changes every frame: the framing
             // waits till it settles, like for any other change.)
-            const std::string choreographyNow = choreography.active() ? choreographyToText(choreography) : std::string();
-            if (stageLoop != extentsSeenLoop || !sameParams(juggleParams, extentsSeenParams) ||
-                choreographyNow != extentsSeenChoreography) {
-                extentsSeenLoop = stageLoop;
-                extentsSeenParams = juggleParams;
-                extentsSeenChoreography = choreographyNow;
-                extentsSeenSince = now;
+            const std::string choreographyNow =
+                doc.choreography.active() ? choreographyToText(doc.choreography) : std::string();
+            if (stageLoop != stage.extentsSeenLoop || !sameParams(doc.juggleParams, stage.extentsSeenParams) ||
+                choreographyNow != stage.extentsSeenChoreography) {
+                stage.extentsSeenLoop = stageLoop;
+                stage.extentsSeenParams = doc.juggleParams;
+                stage.extentsSeenChoreography = choreographyNow;
+                stage.extentsSeenSince = now;
             }
-            const bool stale = stageLoop != extentsLoop || !sameParams(juggleParams, extentsParams) ||
-                               framedJuggler != extentsJuggler || choreographyNow != extentsChoreography;
+            const bool stale = stageLoop != stage.extentsLoop || !sameParams(doc.juggleParams, stage.extentsParams) ||
+                               framedJuggler != stage.extentsJuggler || choreographyNow != stage.extentsChoreography;
             // At once for the first framing and for framing a juggler (a click); otherwise once
             // the pattern has settled.
             // (Not while a juggler or mark is being moved, or the loiter popup is up: the view would
             // shift under the mouse.)
-            const bool placing = jugglerDrag >= 0 || markDrag >= 0 || loiter.open;
+            const bool placing = stageView.jugglerDrag >= 0 || stageView.markDrag >= 0 || ui.loiter.open;
             if (stale && !placing &&
-                (!haveExtents || framedJuggler != extentsJuggler || now - extentsSeenSince >= kExtentsSettleSeconds)) {
-                haveExtents = true;
-                extents = computeSceneExtents(stageLoop, stageParams, framedJuggler);
-                extentsLoop = stageLoop;
-                extentsParams = juggleParams;
-                extentsJuggler = framedJuggler;
-                extentsChoreography = choreographyNow;
+                (!stage.haveExtents || framedJuggler != stage.extentsJuggler ||
+                 now - stage.extentsSeenSince >= kExtentsSettleSeconds)) {
+                stage.haveExtents = true;
+                stage.extents = computeSceneExtents(stageLoop, stageParams, framedJuggler);
+                stage.extentsLoop = stageLoop;
+                stage.extentsParams = doc.juggleParams;
+                stage.extentsJuggler = framedJuggler;
+                stage.extentsChoreography = choreographyNow;
             }
         }
 
@@ -1883,13 +1669,14 @@ int runApp() {
             };
             for (const JugglerState& js : scene.jugglers) include(js.position.x, js.position.z);
             const float scale = choreographyScale(loop);
-            for (const SpikeMark& m : choreography.marks) include(m.x * scale, m.z * scale);
-            const int cycle = loop.empty() ? 0 : choreographyCycle(loop, juggleParams);
-            const int walkers = std::max(static_cast<int>(choreography.keys.size()), static_cast<int>(choreography.links.size()));
+            for (const SpikeMark& m : doc.choreography.marks) include(m.x * scale, m.z * scale);
+            const int cycle = loop.empty() ? 0 : choreographyCycle(loop, doc.juggleParams);
+            const int walkers = std::max(static_cast<int>(doc.choreography.keys.size()),
+                                         static_cast<int>(doc.choreography.links.size()));
             for (int j = 0; j < walkers; ++j)
-                for (const Keyframe& k : effectiveKeyframes(choreography, j, cycle)) {
+                for (const Keyframe& k : effectiveKeyframes(doc.choreography, j, cycle)) {
                     float x = 0.0f, z = 0.0f, yaw = 0.0f;
-                    keyframeSpot(choreography, k, &x, &z, &yaw);
+                    keyframeSpot(doc.choreography, k, &x, &z, &yaw);
                     include(x * scale, z * scale);
                 }
             if (!any) return StageBox();
@@ -1908,7 +1695,7 @@ int runApp() {
             }
             for (const BallState& b : scene.balls) nearest = std::min(nearest, length(p - b.center));
             const float scale = choreographyScale(loop);
-            for (const SpikeMark& m : choreography.marks)
+            for (const SpikeMark& m : doc.choreography.marks)
                 nearest = std::min(nearest, length(p - Vec3(m.x * scale, 0.0f, m.z * scale)));
             if (nearest >= 1e9f) nearest = 3.0f;
             return std::max(nearest, 0.3f);
@@ -1917,26 +1704,29 @@ int runApp() {
         // Choreography mode: the paths the jugglers walk.
         // (While the throws have an error, the paths of the pattern as it last worked: the stage's.)
         const JugglingLoop& pathLoop = loop.empty() ? stageLoop : loop;
-        const bool showPaths = choreographyMode && choreography.active() && !pathLoop.empty();
-        const int pathLength = showPaths ? std::max(1, choreographyCycle(pathLoop, juggleParams)) : 0;  // (written out)
-        const int pathCycle = choreographyFullCycle(stageChoreography, pathLength);  // (the walking loop too)
+        const bool showPaths = stageView.choreographyMode && doc.choreography.active() && !pathLoop.empty();
+        const int pathLength =
+            showPaths ? std::max(1, choreographyCycle(pathLoop, doc.juggleParams)) : 0;    // (written out)
+        const int pathCycle = choreographyFullCycle(stage.stageChoreography, pathLength);  // (the walking loop too)
         // With rotated repeats, only the beats written out are edited: the rest are them turned.
         // Whether `beat` falls in a rotated repeat (and if so, a note saying so).
         auto inRotatedRepeat = [&](long beat) {
-            if (loop.empty() || choreography.repeats() == 1) return false;
-            const int written = std::max(1, choreographyCycle(loop, juggleParams));
-            const int whole = choreographyFullCycle(choreography, written);
+            if (loop.empty() || doc.choreography.repeats() == 1) return false;
+            const int written = std::max(1, choreographyCycle(loop, doc.juggleParams));
+            const int whole = choreographyFullCycle(doc.choreography, written);
             const int b = static_cast<int>(((beat % whole) + whole) % whole);
             if (b < written) return false;
-            siteswapBox.note = "Beat " + std::to_string(b + 1) + " is in the walking loop's copies (beats " + std::to_string(written + 1) +
-                               "-" + std::to_string(whole) + " come from beats 1-" + std::to_string(written) +
-                               " by the C rows' next column): place jugglers on beats 1-" + std::to_string(written) + " instead.";
-            siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+            gridPane.siteswapBox.note = "Beat " + std::to_string(b + 1) + " is in the walking loop's copies (beats " +
+                                        std::to_string(written + 1) + "-" + std::to_string(whole) +
+                                        " come from beats 1-" + std::to_string(written) +
+                                        " by the C rows' next column): place jugglers on beats 1-" +
+                                        std::to_string(written) + " instead.";
+            gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
             return true;
         };
-        const ChoreographyPaths paths =
-            showPaths ? choreographyPaths(stageChoreography, pathLoop.jugglers, pathLength, choreographyScale(pathLoop))
-                      : ChoreographyPaths();
+        const ChoreographyPaths paths = showPaths ? choreographyPaths(stage.stageChoreography, pathLoop.jugglers,
+                                                                      pathLength, choreographyScale(pathLoop))
+                                                  : ChoreographyPaths();
         int hoveredPathPoint = -1;
 
         // Mouse input for the 3D view: an invisible window over the juggler pane (the 3D view
@@ -1961,76 +1751,83 @@ int runApp() {
                                        ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight |
                                            ImGuiButtonFlags_MouseButtonMiddle);
                 if (!ImGui::IsItemActive() && !ImGui::IsItemDeactivated()) {
-                    viewPress = -1;
-                    pathPress = -1;
+                    stageView.viewPress = -1;
+                    stageView.pathPress = -1;
                 }
                 if (ImGui::IsItemActivated())
-                    viewPress = ImGui::IsMouseClicked(ImGuiMouseButton_Left) ? 0 : (ImGui::IsMouseClicked(ImGuiMouseButton_Right) ? 1 : 2);
-                const bool leftPress = viewPress == 0;
+                    stageView.viewPress = ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+                                              ? 0
+                                              : (ImGui::IsMouseClicked(ImGuiMouseButton_Right) ? 1 : 2);
+                const bool leftPress = stageView.viewPress == 0;
                 const float clickSlop = io.MouseDragThreshold;
                 const bool dragged =
-                    io.MouseDragMaxDistanceSqr[std::max(0, viewPress)] >= clickSlop * clickSlop;
+                    io.MouseDragMaxDistanceSqr[std::max(0, stageView.viewPress)] >= clickSlop * clickSlop;
                 // Choreography: the spike marks can be dragged (moved, or turned by the arrow) and
                 // clicked (a keyframe there for the selected juggler, on the current beat).
-                const bool editingFloor = choreographyMode && choreography.active();
+                const bool editingFloor = stageView.choreographyMode && doc.choreography.active();
                 const float markScale = choreographyScale(loop);
                 const bool canSelect = scene.jugglers.size() > 1;
                 if (ImGui::IsItemActivated()) {
-                    viewPan = viewPress == 2 || (viewPress == 1 && io.KeyShift);
-                    viewOrbitLeft = viewPress == 0 && io.KeyAlt;
+                    stageView.viewPan = stageView.viewPress == 2 || (stageView.viewPress == 1 && io.KeyShift);
+                    stageView.viewOrbitLeft = stageView.viewPress == 0 && io.KeyAlt;
                 }
                 // A path point under the mouse (a click on it goes to its beat, with its juggler
                 // selected).
-                if (showPaths && ImGui::IsItemHovered() && markDrag < 0 && jugglerDrag < 0)
-                    hoveredPathPoint = pickPathPoint(paths, lastViewProj, viewMin, viewSize, io.MousePos,
-                                                     BodyOccluder(scene, lastCamera.position));
-                if (ImGui::IsItemActivated() && leftPress && !pressTakenByChoice) pathPress = hoveredPathPoint;
-                const int underMouse =
-                    canSelect && ImGui::IsItemHovered() ? pickJuggler(scene, lastViewProj, viewMin, viewSize, io.MousePos)
-                                                        : -1;
+                if (showPaths && ImGui::IsItemHovered() && stageView.markDrag < 0 && stageView.jugglerDrag < 0)
+                    hoveredPathPoint = pickPathPoint(paths, stageView.lastViewProj, viewMin, viewSize, io.MousePos,
+                                                     BodyOccluder(scene, stageView.lastCamera.position));
+                if (ImGui::IsItemActivated() && leftPress && !stageView.pressTakenByChoice)
+                    stageView.pathPress = hoveredPathPoint;
+                const int underMouse = canSelect && ImGui::IsItemHovered()
+                                           ? pickJuggler(scene, stageView.lastViewProj, viewMin, viewSize, io.MousePos)
+                                           : -1;
                 // Any part of a mark can be dragged: anywhere inside its ring moves it, and its
                 // arrow turns it. A click on it puts the selected juggler there. Someone standing on
                 // it is picked instead only where the mouse is squarely on their body (no slack),
                 // so the floor showing inside the ring is the mark's. The arrow beats everything.
                 bool onArrow = false;
                 Vec3 floorHere(0.0f, 0.0f, 0.0f);
-                const bool haveFloor =
-                    editingFloor && floorUnderMouse(lastCamera, lastAspect, viewMin, viewSize, io.MousePos, &floorHere);
+                const bool haveFloor = editingFloor && floorUnderMouse(stageView.lastCamera, stageView.lastAspect,
+                                                                       viewMin, viewSize, io.MousePos, &floorHere);
                 // (A mark's name comes first: it picks that mark, even among several on one spot.)
-                const int labelUnderMouse = editingFloor && ImGui::IsItemHovered() && markDrag < 0
-                                                ? markLabelUnder(choreography, markScale, lastViewProj, viewMin, viewSize, io.MousePos,
-                                                                 markGroupView().badgeH())
-                                                : -1;
-                const int markUnderMouse = labelUnderMouse >= 0 ? labelUnderMouse
-                                           : editingFloor && ImGui::IsItemHovered() && markDrag < 0
-                                               ? pickSpikeMark(choreography, markScale, lastViewProj, viewMin, viewSize,
-                                                               io.MousePos, haveFloor, floorHere, &onArrow)
-                                               : -1;
-                const bool onBody = labelUnderMouse < 0 && underMouse >= 0 && markUnderMouse >= 0 && !onArrow &&
-                                    pickJuggler(scene, lastViewProj, viewMin, viewSize, io.MousePos, 0.0f) >= 0;
+                const int labelUnderMouse =
+                    editingFloor && ImGui::IsItemHovered() && stageView.markDrag < 0
+                        ? markLabelUnder(doc.choreography, markScale, stageView.lastViewProj, viewMin, viewSize,
+                                         io.MousePos, markGroupView().badgeH())
+                        : -1;
+                const int markUnderMouse =
+                    labelUnderMouse >= 0 ? labelUnderMouse
+                    : editingFloor && ImGui::IsItemHovered() && stageView.markDrag < 0
+                        ? pickSpikeMark(doc.choreography, markScale, stageView.lastViewProj, viewMin, viewSize,
+                                        io.MousePos, haveFloor, floorHere, &onArrow)
+                        : -1;
+                const bool onBody =
+                    labelUnderMouse < 0 && underMouse >= 0 && markUnderMouse >= 0 && !onArrow &&
+                    pickJuggler(scene, stageView.lastViewProj, viewMin, viewSize, io.MousePos, 0.0f) >= 0;
                 const bool markRing = markUnderMouse >= 0 && (onArrow || !onBody);
                 // A mark (or its arrow) comes before the path points drawn on it (a juggler standing
                 // on a mark has a path point in its middle).
                 if (markRing) {
                     hoveredPathPoint = -1;
-                    if (ImGui::IsItemActivated()) pathPress = -1;
+                    if (ImGui::IsItemActivated()) stageView.pathPress = -1;
                 }
                 // Choosing among marks in the same place: a click on an arrow's tip or its number picks
                 // that mark; a click anywhere else keeps the one they're on for now.
-                if (!ImGui::IsItemActive() && !ImGui::IsItemDeactivated()) pressTakenByChoice = false;
-                if (markChoice.active && ImGui::IsItemActivated() && leftPress) {
-                    pressTakenByChoice = true;
+                if (!ImGui::IsItemActive() && !ImGui::IsItemDeactivated()) stageView.pressTakenByChoice = false;
+                if (stageView.markChoice.active && ImGui::IsItemActivated() && leftPress) {
+                    stageView.pressTakenByChoice = true;
                     std::vector<bool> shown;
                     const std::vector<ImVec2> bubbles =
-                        markBubbleCenters(choreography, markScale, lastViewProj, viewMin, viewSize, &shown, markGroupView().badgeH());
+                        markBubbleCenters(doc.choreography, markScale, stageView.lastViewProj, viewMin, viewSize,
+                                          &shown, markGroupView().badgeH());
                     int best = -1;
                     float bestD = ImGui::GetFontSize() * 1.4f;
-                    for (const int m : markChoice.marks) {
-                        if (m < 0 || m >= static_cast<int>(choreography.marks.size())) continue;
+                    for (const int m : stageView.markChoice.marks) {
+                        if (m < 0 || m >= static_cast<int>(doc.choreography.marks.size())) continue;
                         Vec3 middle, tip;
-                        markGeometry(choreography.marks[static_cast<size_t>(m)], markScale, &middle, &tip);
+                        markGeometry(doc.choreography.marks[static_cast<size_t>(m)], markScale, &middle, &tip);
                         ImVec2 t;
-                        if (projectToScreen(lastViewProj, tip, viewMin, viewSize, &t)) {
+                        if (projectToScreen(stageView.lastViewProj, tip, viewMin, viewSize, &t)) {
                             const float d = std::hypot(t.x - io.MousePos.x, t.y - io.MousePos.y);
                             if (d < bestD) {
                                 bestD = d;
@@ -2047,55 +1844,60 @@ int runApp() {
                         }
                     }
                     if (best >= 0) {
-                        Keyframe k = markChoice.pending;
+                        Keyframe k = stageView.markChoice.pending;
                         k.mark = best;
-                        setKeyframe(&choreography, markChoice.juggler, k);
-                        openLoiterPopup(markChoice.juggler, k, markChoice.at);
+                        setKeyframe(&doc.choreography, stageView.markChoice.juggler, k);
+                        openLoiterPopup(stageView.markChoice.juggler, k, stageView.markChoice.at);
                     }
-                    markChoice.active = false;
+                    stageView.markChoice.active = false;
                 }
-                if (editingFloor && ImGui::IsItemActivated() && leftPress && !pressTakenByChoice) {
+                if (editingFloor && ImGui::IsItemActivated() && leftPress && !stageView.pressTakenByChoice) {
                     if (markUnderMouse >= 0 && (underMouse < 0 || markRing)) {
-                        markDrag = markUnderMouse;
-                        markTurning = onArrow;
-                        markForKeyframe = markRing;
+                        stageView.markDrag = markUnderMouse;
+                        stageView.markTurning = onArrow;
+                        stageView.markForKeyframe = markRing;
                         // Pressed: it's in the selection now (on its own, or added with Shift), so
                         // a drag moves the selection.
-                        markPressWasSelected =
-                            std::find(selectedMarks.begin(), selectedMarks.end(), markDrag) != selectedMarks.end();
-                        if (!markPressWasSelected) {
-                            if (!io.KeyShift) selectedMarks.clear();
-                            selectedMarks.push_back(markDrag);
+                        stageView.markPressWasSelected =
+                            std::find(stageView.selectedMarks.begin(), stageView.selectedMarks.end(),
+                                      stageView.markDrag) != stageView.selectedMarks.end();
+                        if (!stageView.markPressWasSelected) {
+                            if (!io.KeyShift) stageView.selectedMarks.clear();
+                            stageView.selectedMarks.push_back(stageView.markDrag);
                         }
-                        markDragStart.clear();
-                        for (const int m : selectedMarks)
-                            markDragStart.push_back({choreography.marks[static_cast<size_t>(m)].x,
-                                                     choreography.marks[static_cast<size_t>(m)].z});
-                    } else if (underMouse >= 0 && !loop.empty() && choreography.link(underMouse).active()) {
+                        stageView.markDragStart.clear();
+                        for (const int m : stageView.selectedMarks)
+                            stageView.markDragStart.push_back({doc.choreography.marks[static_cast<size_t>(m)].x,
+                                                     doc.choreography.marks[static_cast<size_t>(m)].z});
+                    } else if (underMouse >= 0 && !loop.empty() && doc.choreography.link(underMouse).active()) {
                         // A juggler who walks like another goes where the leader goes.
-                        siteswapBox.note = "J" + std::to_string(underMouse + 1) + " " + walkLinkLabel(choreography.link(underMouse)) +
-                                           ": move J" + std::to_string(choreography.link(underMouse).leader + 1) +
-                                           ", or unlink J" + std::to_string(underMouse + 1) + " (right-click them: Walk Like...).";
-                        siteswapBox.noteUntil = ImGui::GetTime() + 5.0;
+                        gridPane.siteswapBox.note = "J" + std::to_string(underMouse + 1) + " " +
+                                                    walkLinkLabel(doc.choreography.link(underMouse)) + ": move J" +
+                                                    std::to_string(doc.choreography.link(underMouse).leader + 1) +
+                                                    ", or unlink J" + std::to_string(underMouse + 1) +
+                                                    " (right-click them: Walk Like...).";
+                        gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 5.0;
                     } else if (underMouse >= 0 && !loop.empty() && inRotatedRepeat(std::lround(playback.beat))) {
                         // (Not in a rotated repeat: the note says where to do it.)
                     } else if (underMouse >= 0 && !loop.empty()) {
                         // A juggler: dragging them puts them somewhere new (a keyframe).
-                        jugglerDrag = underMouse;
+                        stageView.jugglerDrag = underMouse;
                         Vec3 at;
-                        jugglerPlacementAt(loop, juggleParams, underMouse, std::round(playback.beat), &at, &jugglerDragYaw);
+                        jugglerPlacementAt(loop, doc.juggleParams, underMouse, std::round(playback.beat), &at,
+                                           &stageView.jugglerDragYaw);
                     }
                 }
-                if (jugglerDrag >= 0 && !ImGui::IsItemActive()) {
+                if (stageView.jugglerDrag >= 0 && !ImGui::IsItemActive()) {
                     // Dropped: how long do they stay?
-                    if (ImGui::IsItemDeactivated() && dragged && jugglerDrag < loop.jugglers && !loop.empty()) {
-                        const int cycle = std::max(1, choreographyCycle(loop, juggleParams));
+                    if (ImGui::IsItemDeactivated() && dragged && stageView.jugglerDrag < loop.jugglers &&
+                        !loop.empty()) {
+                        const int cycle = std::max(1, choreographyCycle(loop, doc.juggleParams));
                         const long beat = std::lround(playback.beat);
                         const int b = static_cast<int>(((beat % cycle) + cycle) % cycle);
                         Keyframe placed;
                         bool found = false;
-                        if (jugglerDrag < static_cast<int>(choreography.keys.size()))
-                            for (const Keyframe& k : choreography.keys[static_cast<size_t>(jugglerDrag)])
+                        if (stageView.jugglerDrag < static_cast<int>(doc.choreography.keys.size()))
+                            for (const Keyframe& k : doc.choreography.keys[static_cast<size_t>(stageView.jugglerDrag)])
                                 if (k.beat == b) {
                                     placed = k;
                                     found = true;
@@ -2103,39 +1905,43 @@ int runApp() {
                         // Dropped off every mark: a new mark there, which the keyframe is on (every
                         // keyframe is on a mark).
                         if (found && placed.mark < 0) {
-                            placed.mark = markForSpot(&choreography, placed.x, placed.z, placed.yaw);
-                            setKeyframe(&choreography, jugglerDrag, placed);
+                            placed.mark = markForSpot(&doc.choreography, placed.x, placed.z, placed.yaw);
+                            setKeyframe(&doc.choreography, stageView.jugglerDrag, placed);
                         }
                         Vec3 floor;
                         const std::vector<int> here =
-                            found && placed.mark >= 0 && floorUnderMouse(lastCamera, lastAspect, viewMin, viewSize, io.MousePos, &floor)
+                            found && placed.mark >= 0 &&
+                                    floorUnderMouse(stageView.lastCamera, stageView.lastAspect, viewMin, viewSize,
+                                                    io.MousePos, &floor)
                                 ? marksAround(floor.x, floor.z, markScale)
                                 : std::vector<int>();
                         if (here.size() >= 2) {
-                            markChoice = MarkChoice{true, jugglerDrag, placed, here, io.MousePos};
+                            stageView.markChoice = MarkChoice{true, stageView.jugglerDrag, placed, here, io.MousePos};
                         } else if (found) {
-                            openLoiterPopup(jugglerDrag, placed, io.MousePos);
+                            openLoiterPopup(stageView.jugglerDrag, placed, io.MousePos);
                         }
                     }
-                    jugglerDrag = -1;
+                    stageView.jugglerDrag = -1;
                 }
-                if (jugglerDrag >= 0 && jugglerDrag < loop.jugglers && dragged) {
+                if (stageView.jugglerDrag >= 0 && stageView.jugglerDrag < loop.jugglers && dragged) {
                     // Dragged to the floor under the mouse, on the current beat: onto a spike mark
                     // if it's dropped on one (facing as the mark says), else a spot (snapped to the
                     // floor grid; Shift: freely), facing as they were, which gets a mark of its own
                     // when they're let go.
                     Vec3 floor;
-                    if (floorUnderMouse(lastCamera, lastAspect, viewMin, viewSize, io.MousePos, &floor)) {
-                        const int cycle = std::max(1, choreographyCycle(loop, juggleParams));
+                    if (floorUnderMouse(stageView.lastCamera, stageView.lastAspect, viewMin, viewSize, io.MousePos,
+                                        &floor)) {
+                        const int cycle = std::max(1, choreographyCycle(loop, doc.juggleParams));
                         const long beat = std::lround(playback.beat);
                         Keyframe k;
                         k.beat = static_cast<int>(((beat % cycle) + cycle) % cycle);
-                        for (const Keyframe& old : choreography.keys.size() > static_cast<size_t>(jugglerDrag)
-                                                       ? choreography.keys[static_cast<size_t>(jugglerDrag)]
-                                                       : std::vector<Keyframe>())
+                        for (const Keyframe& old :
+                             doc.choreography.keys.size() > static_cast<size_t>(stageView.jugglerDrag)
+                                 ? doc.choreography.keys[static_cast<size_t>(stageView.jugglerDrag)]
+                                 : std::vector<Keyframe>())
                             if (old.beat == k.beat) k.longTurn = old.longTurn;
-                        for (int m = 0; m < static_cast<int>(choreography.marks.size()); ++m) {
-                            const SpikeMark& sm = choreography.marks[static_cast<size_t>(m)];
+                        for (int m = 0; m < static_cast<int>(doc.choreography.marks.size()); ++m) {
+                            const SpikeMark& sm = doc.choreography.marks[static_cast<size_t>(m)];
                             if (std::hypot(floor.x - sm.x * markScale, floor.z - sm.z * markScale) <= kMarkRadius * markScale)
                                 k.mark = m;
                         }
@@ -2144,20 +1950,21 @@ int runApp() {
                             if (!io.KeyShift) snapToFloorGrid(settings, &x, &z);
                             k.x = x / markScale;
                             k.z = z / markScale;
-                            k.yaw = jugglerDragYaw;
+                            k.yaw = stageView.jugglerDragYaw;
                         }
-                        setKeyframe(&choreography, jugglerDrag, k);
+                        setKeyframe(&doc.choreography, stageView.jugglerDrag, k);
                         playback.playing = false;
                         playback.beat = static_cast<double>(beat);
-                        selectedJuggler = jugglerDrag;
+                        stageView.selectedJuggler = stageView.jugglerDrag;
                     }
                 }
-                if (markDrag >= 0 && markDrag < static_cast<int>(choreography.marks.size()) && ImGui::IsItemActive() &&
-                    dragged) {
+                if (stageView.markDrag >= 0 && stageView.markDrag < static_cast<int>(doc.choreography.marks.size()) &&
+                    ImGui::IsItemActive() && dragged) {
                     Vec3 floor;
-                    if (floorUnderMouse(lastCamera, lastAspect, viewMin, viewSize, io.MousePos, &floor)) {
-                        SpikeMark& m = choreography.marks[static_cast<size_t>(markDrag)];
-                        if (markTurning) {
+                    if (floorUnderMouse(stageView.lastCamera, stageView.lastAspect, viewMin, viewSize, io.MousePos,
+                                        &floor)) {
+                        SpikeMark& m = doc.choreography.marks[static_cast<size_t>(stageView.markDrag)];
+                        if (stageView.markTurning) {
                             // Turned to point at the mouse: in 15-degree steps (Shift: freely). With
                             // the radial grid, the steps are counted from facing the middle, so one of
                             // them is along the mark's spoke, whatever the spokes.
@@ -2175,129 +1982,152 @@ int runApp() {
                             // of the selection moves with it, keeping their shape.
                             float x = floor.x, z = floor.z;
                             if (!io.KeyShift) snapToFloorGrid(settings, &x, &z);
-                            const auto here = std::find(selectedMarks.begin(), selectedMarks.end(), markDrag);
-                            const size_t me = static_cast<size_t>(here - selectedMarks.begin());
-                            if (here == selectedMarks.end() || markDragStart.size() != selectedMarks.size()) {
+                            const auto here = std::find(stageView.selectedMarks.begin(), stageView.selectedMarks.end(),
+                                                        stageView.markDrag);
+                            const size_t me = static_cast<size_t>(here - stageView.selectedMarks.begin());
+                            if (here == stageView.selectedMarks.end() ||
+                                stageView.markDragStart.size() != stageView.selectedMarks.size()) {
                                 m.x = x / markScale;
                                 m.z = z / markScale;
                             } else {
-                                const float dx = x / markScale - markDragStart[me].first;
-                                const float dz = z / markScale - markDragStart[me].second;
-                                for (size_t i = 0; i < selectedMarks.size(); ++i) {
-                                    const int k = selectedMarks[i];
-                                    if (k < 0 || k >= static_cast<int>(choreography.marks.size())) continue;
-                                    choreography.marks[static_cast<size_t>(k)].x = markDragStart[i].first + dx;
-                                    choreography.marks[static_cast<size_t>(k)].z = markDragStart[i].second + dz;
+                                const float dx = x / markScale - stageView.markDragStart[me].first;
+                                const float dz = z / markScale - stageView.markDragStart[me].second;
+                                for (size_t i = 0; i < stageView.selectedMarks.size(); ++i) {
+                                    const int k = stageView.selectedMarks[i];
+                                    if (k < 0 || k >= static_cast<int>(doc.choreography.marks.size())) continue;
+                                    doc.choreography.marks[static_cast<size_t>(k)].x =
+                                        stageView.markDragStart[i].first + dx;
+                                    doc.choreography.marks[static_cast<size_t>(k)].z =
+                                        stageView.markDragStart[i].second + dz;
                                 }
                             }
                         }
                     }
                 }
-                const bool cameraDrag = ImGui::IsItemActive() && markDrag < 0 && jugglerDrag < 0 && viewPress >= 0 &&
-                                        (viewPress != 0 || viewOrbitLeft) &&
-                                        ImGui::IsMouseDragging(static_cast<ImGuiMouseButton>(viewPress), 0.0f);
-                const bool orbiting = cameraDrag && !viewPan;
-                const bool panning = cameraDrag && viewPan;
+                const bool cameraDrag =
+                    ImGui::IsItemActive() && stageView.markDrag < 0 && stageView.jugglerDrag < 0 &&
+                    stageView.viewPress >= 0 && (stageView.viewPress != 0 || stageView.viewOrbitLeft) &&
+                    ImGui::IsMouseDragging(static_cast<ImGuiMouseButton>(stageView.viewPress), 0.0f);
+                const bool orbiting = cameraDrag && !stageView.viewPan;
+                const bool panning = cameraDrag && stageView.viewPan;
                 if (orbiting) {
                     const ImVec2 d = io.MouseDelta;
                     // In the top view, orbiting turns the view round the vertical (it stays
                     // looking straight down).
-                    if (camera.free) {
-                        if (!cameraOrbiting) orbitCenter = freeOrbitCenter(lastCamera, scene, selectedJuggler, stageBox());
-                        orbitFreeCamera(camera, orbitCenter, -d.x * 0.008f, d.y * 0.008f);
+                    if (stageView.camera.free) {
+                        if (!stageView.cameraOrbiting)
+                            stageView.orbitCenter =
+                                freeOrbitCenter(stageView.lastCamera, scene, stageView.selectedJuggler, stageBox());
+                        orbitFreeCamera(stageView.camera, stageView.orbitCenter, -d.x * 0.008f, d.y * 0.008f);
                     } else {
-                        camera.yaw -= d.x * 0.008f;
-                        if (!camera.topView) camera.pitch = std::clamp(camera.pitch + d.y * 0.008f, -1.45f, 1.45f);
+                        stageView.camera.yaw -= d.x * 0.008f;
+                        if (!stageView.camera.topView)
+                            stageView.camera.pitch = std::clamp(stageView.camera.pitch + d.y * 0.008f, -1.45f, 1.45f);
                     }
                 }
                 if (panning) {
                     // Panning drags the floor under the mouse along with it (and frees the camera).
-                    if (!camera.free) makeCameraFree(camera, lastCamera);
-                    if (!cameraPanning) {
+                    if (!stageView.camera.free) makeCameraFree(stageView.camera, stageView.lastCamera);
+                    if (!stageView.cameraPanning) {
                         Vec3 floor;
-                        panDepth = floorUnderMouse(lastCamera, lastAspect, viewMin, viewSize, io.MousePos, &floor)
-                                       ? std::min(length(floor - lastCamera.position), 40.0f)
-                                       : length(freeOrbitCenter(lastCamera, scene, selectedJuggler, stageBox()) - lastCamera.position);
+                        stageView.panDepth = floorUnderMouse(stageView.lastCamera, stageView.lastAspect, viewMin,
+                                                             viewSize, io.MousePos, &floor)
+                                                 ? std::min(length(floor - stageView.lastCamera.position), 40.0f)
+                                                 : length(freeOrbitCenter(stageView.lastCamera, scene,
+                                                                          stageView.selectedJuggler, stageBox()) -
+                                                          stageView.lastCamera.position);
                     }
-                    const float metersPerPixel = 2.0f * panDepth * std::tan(kCameraFovY * 0.5f) / std::max(1.0f, viewSize.y);
+                    const float metersPerPixel =
+                        2.0f * stageView.panDepth * std::tan(kCameraFovY * 0.5f) / std::max(1.0f, viewSize.y);
                     Vec3 forward, right, up;
-                    freeCameraAxes(camera, &forward, &right, &up);
-                    camera.freePos = camera.freePos - right * (io.MouseDelta.x * metersPerPixel) +
+                    freeCameraAxes(stageView.camera, &forward, &right, &up);
+                    stageView.camera.freePos = stageView.camera.freePos - right * (io.MouseDelta.x * metersPerPixel) +
                                      up * (io.MouseDelta.y * metersPerPixel);
                 }
-                cameraOrbiting = orbiting;
-                cameraPanning = panning;
+                stageView.cameraOrbiting = orbiting;
+                stageView.cameraPanning = panning;
                 // A click is a press and release without dragging (dragging orbits).
-                if (pathPress >= 0 && pathPress < static_cast<int>(paths.points.size()) && ImGui::IsItemDeactivated() &&
-                    leftPress && !dragged) {
+                if (stageView.pathPress >= 0 && stageView.pathPress < static_cast<int>(paths.points.size()) &&
+                    ImGui::IsItemDeactivated() && leftPress && !dragged) {
                     // A click on a path point: its beat (in the cycle playing now), its juggler selected.
-                    const PathPoint& point = paths.points[static_cast<size_t>(pathPress)];
-                    if (loop.jugglers > 1) selectedJuggler = point.juggler;
+                    const PathPoint& point = paths.points[static_cast<size_t>(stageView.pathPress)];
+                    if (loop.jugglers > 1) stageView.selectedJuggler = point.juggler;
                     playback.playing = false;
                     playback.beat = std::floor(playback.beat / pathCycle) * pathCycle + point.firstBeat;
-                    markDrag = -1;
-                    jugglerDrag = -1;
-                    pathPress = -1;
-                } else if (markDrag >= 0 && ImGui::IsItemDeactivated() && leftPress && !dragged && !markForKeyframe) {
-                    selectedJuggler = underMouse;  // a click on someone standing on a mark
-                    markDrag = -1;
-                } else if (markDrag >= 0 && ImGui::IsItemDeactivated()) {
+                    stageView.markDrag = -1;
+                    stageView.jugglerDrag = -1;
+                    stageView.pathPress = -1;
+                } else if (stageView.markDrag >= 0 && ImGui::IsItemDeactivated() && leftPress && !dragged &&
+                           !stageView.markForKeyframe) {
+                    stageView.selectedJuggler = underMouse;  // a click on someone standing on a mark
+                    stageView.markDrag = -1;
+                } else if (stageView.markDrag >= 0 && ImGui::IsItemDeactivated()) {
                     if (!dragged) {
                         // A click on a mark selects it (Shift: adds it, or takes it away if it was
                         // already in), and no juggler. (A keyframe: drag a juggler onto it.)
                         if (io.KeyShift) {
-                            if (markPressWasSelected)
-                                selectedMarks.erase(std::remove(selectedMarks.begin(), selectedMarks.end(), markDrag),
-                                                    selectedMarks.end());
+                            if (stageView.markPressWasSelected)
+                                stageView.selectedMarks.erase(
+                                    std::remove(stageView.selectedMarks.begin(), stageView.selectedMarks.end(),
+                                                stageView.markDrag),
+                                    stageView.selectedMarks.end());
                         } else {
-                            selectedMarks.assign(1, markDrag);
+                            stageView.selectedMarks.assign(1, stageView.markDrag);
                         }
-                        selectedJuggler = -1;
-                        frameSelected = false;
+                        stageView.selectedJuggler = -1;
+                        stageView.frameSelected = false;
                     }
-                    markDrag = -1;
-                } else if (canSelect && ImGui::IsItemDeactivated() && leftPress && !dragged && !pressTakenByChoice) {
-                    selectedJuggler = underMouse;
-                    selectedMarks.clear();
-                    if (underMouse < 0) frameSelected = false;
+                    stageView.markDrag = -1;
+                } else if (canSelect && ImGui::IsItemDeactivated() && leftPress && !dragged &&
+                           !stageView.pressTakenByChoice) {
+                    stageView.selectedJuggler = underMouse;
+                    stageView.selectedMarks.clear();
+                    if (underMouse < 0) stageView.frameSelected = false;
                 }
                 // Right-click (without dragging) the floor: add a mark there, or (on a mark) its menu.
-                if (editingFloor && ImGui::IsItemDeactivated() && viewPress == 1 && !dragged) {
-                    markMenuMark = markRing ? markUnderMouse : -1;
+                if (editingFloor && ImGui::IsItemDeactivated() && stageView.viewPress == 1 && !dragged) {
+                    stageView.markMenuMark = markRing ? markUnderMouse : -1;
                     Vec3 floor(0.0f, 0.0f, 0.0f);
-                    if (markMenuMark >= 0 || underMouse >= 0 ||
-                        floorUnderMouse(lastCamera, lastAspect, viewMin, viewSize, io.MousePos, &floor)) {
-                        markMenuPoint = Vec3(floor.x / markScale, 0.0f, floor.z / markScale);
-                        floorMenuJuggler = underMouse;
+                    if (stageView.markMenuMark >= 0 || underMouse >= 0 ||
+                        floorUnderMouse(stageView.lastCamera, stageView.lastAspect, viewMin, viewSize, io.MousePos,
+                                        &floor)) {
+                        stageView.markMenuPoint = Vec3(floor.x / markScale, 0.0f, floor.z / markScale);
+                        stageView.floorMenuJuggler = underMouse;
                         ImGui::OpenPopup("##floor_menu");
                     }
                 }
                 if (ImGui::BeginPopup("##floor_menu")) {
-                    if (floorMenuJuggler >= 0 && floorMenuJuggler < loop.jugglers && loop.jugglers > 1) {
-                        const std::string how = walkLinkLabel(choreography.link(floorMenuJuggler));
-                        ImGui::TextDisabled("Juggler %d%s%s", floorMenuJuggler + 1, how.empty() ? "" : ": ", how.c_str());
+                    if (stageView.floorMenuJuggler >= 0 && stageView.floorMenuJuggler < loop.jugglers &&
+                        loop.jugglers > 1) {
+                        const std::string how = walkLinkLabel(doc.choreography.link(stageView.floorMenuJuggler));
+                        ImGui::TextDisabled("Juggler %d%s%s", stageView.floorMenuJuggler + 1, how.empty() ? "" : ": ",
+                                            how.c_str());
                         ImGui::Separator();
-                        if (ImGui::MenuItem("Walk Like...")) openWalkLike(floorMenuJuggler);
+                        if (ImGui::MenuItem("Walk Like...")) openWalkLike(stageView.floorMenuJuggler);
                         ImGui::Separator();
                     }
-                    if (markMenuMark >= 0 && markMenuMark < static_cast<int>(choreography.marks.size())) {
-                        ImGui::TextDisabled("Spike mark %s", choreography.marks[static_cast<size_t>(markMenuMark)].name.c_str());
+                    if (stageView.markMenuMark >= 0 &&
+                        stageView.markMenuMark < static_cast<int>(doc.choreography.marks.size())) {
+                        ImGui::TextDisabled(
+                            "Spike mark %s",
+                            doc.choreography.marks[static_cast<size_t>(stageView.markMenuMark)].name.c_str());
                         ImGui::Separator();
                         if (ImGui::MenuItem("Face the Middle")) {
-                            SpikeMark& m = choreography.marks[static_cast<size_t>(markMenuMark)];
+                            SpikeMark& m = doc.choreography.marks[static_cast<size_t>(stageView.markMenuMark)];
                             if (std::hypot(m.x, m.z) > 1e-3f) m.yaw = std::atan2(-m.x, -m.z);
                         }
                         if (ImGui::MenuItem("Rename...")) {
-                            renameMark.mark = markMenuMark;
-                            renameMark.requested = true;
+                            ui.renameMark.mark = stageView.markMenuMark;
+                            ui.renameMark.requested = true;
                         }
                         if (ImGui::MenuItem("Delete Spike Mark")) {
                             std::string why;
-                            if (!removeSpikeMark(&choreography, markMenuMark, loop.empty() ? 0 : loop.jugglers, &why)) {
-                                siteswapBox.note = why;
-                                siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+                            if (!removeSpikeMark(&doc.choreography, stageView.markMenuMark,
+                                                 loop.empty() ? 0 : loop.jugglers, &why)) {
+                                gridPane.siteswapBox.note = why;
+                                gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
                             } else {
-                                selectedMarks.clear();
+                                stageView.selectedMarks.clear();
                             }
                         }
                         if (ImGui::IsItemHovered())
@@ -2305,40 +2135,42 @@ int runApp() {
                         if (ImGui::MenuItem("Add Another Spike Mark Here")) {
                             // Same place, facing the other way for now (so its arrow and name are
                             // clear of the first's), and selected, ready to be turned by its arrow.
-                            SpikeMark copy = choreography.marks[static_cast<size_t>(markMenuMark)];
+                            SpikeMark copy = doc.choreography.marks[static_cast<size_t>(stageView.markMenuMark)];
                             copy.name.clear();
                             copy.yaw = std::remainder(copy.yaw + kPi, 2.0f * kPi);
-                            const int added = addSpikeMark(&choreography, copy);
+                            const int added = addSpikeMark(&doc.choreography, copy);
                             if (added >= 0) {
-                                selectedMarks.assign(1, added);
-                                selectedJuggler = -1;
+                                stageView.selectedMarks.assign(1, added);
+                                stageView.selectedJuggler = -1;
                             }
                         }
                         if (ImGui::IsItemHovered())
                             ImGui::SetTooltip("A second mark on the same spot, facing the other way and selected: drag its\n"
                                               "arrow to turn it. Putting a juggler there then asks which mark they stand on.");
-                    } else if (floorMenuJuggler < 0) {
+                    } else if (stageView.floorMenuJuggler < 0) {
                         if (ImGui::MenuItem("Add Spike Mark Here")) {
                             SpikeMark m;
-                            float x = markMenuPoint.x * markScale, z = markMenuPoint.z * markScale;
+                            float x = stageView.markMenuPoint.x * markScale, z = stageView.markMenuPoint.z * markScale;
                             snapToFloorGrid(settings, &x, &z);
                             m.x = x / markScale;
                             m.z = z / markScale;
                             m.yaw = std::hypot(m.x, m.z) > 1e-3f ? std::atan2(-m.x, -m.z) : 0.0f;  // facing the middle
-                            const int added = addSpikeMark(&choreography, m);
+                            const int added = addSpikeMark(&doc.choreography, m);
                             if (added >= 0) {  // (selected, to see which it is and turn it)
-                                selectedMarks.assign(1, added);
-                                selectedJuggler = -1;
+                                stageView.selectedMarks.assign(1, added);
+                                stageView.selectedJuggler = -1;
                             }
                         }
                     }
                     ImGui::EndPopup();
                 }
                 // Things that can be dragged show it: a hand over a juggler (in choreography).
-                if (editingFloor && jugglerDrag >= 0) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
-                else if (editingFloor && underMouse >= 0 && markDrag < 0 && !orbiting) ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                if (editingFloor && (markUnderMouse >= 0 || markDrag >= 0))
-                    ImGui::SetMouseCursor(markTurning && markDrag >= 0 ? ImGuiMouseCursor_ResizeAll : ImGuiMouseCursor_Hand);
+                if (editingFloor && stageView.jugglerDrag >= 0) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
+                else if (editingFloor && underMouse >= 0 && stageView.markDrag < 0 && !orbiting)
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                if (editingFloor && (markUnderMouse >= 0 || stageView.markDrag >= 0))
+                    ImGui::SetMouseCursor(stageView.markTurning && stageView.markDrag >= 0 ? ImGuiMouseCursor_ResizeAll
+                                                                                           : ImGuiMouseCursor_Hand);
                 if (hoveredPathPoint >= 0 && !ImGui::IsItemActive()) {
                     const PathPoint& point = paths.points[static_cast<size_t>(hoveredPathPoint)];
                     const std::string beats = pathPointBeats(point, pathCycle);
@@ -2348,32 +2180,35 @@ int runApp() {
                 } else if (editingFloor && markUnderMouse >= 0 && !ImGui::IsItemActive() && (markRing || onArrow)) {
                     if (onArrow)
                         ImGui::SetTooltip("Spike mark %s: drag the arrow to turn it (Shift: freely)",
-                                          choreography.marks[static_cast<size_t>(markUnderMouse)].name.c_str());
+                                          doc.choreography.marks[static_cast<size_t>(markUnderMouse)].name.c_str());
                     else
                         ImGui::SetTooltip("Spike mark %s: drag to move it (it snaps to the grid; Shift: freely)\n"
                                           "Click to select it, Shift+click to add it to the selection: dragging one\n"
                                           "moves them all. To put a juggler here, drag them onto it.\n"
                                           "Right-click for more",
-                                          choreography.marks[static_cast<size_t>(markUnderMouse)].name.c_str());
+                                          doc.choreography.marks[static_cast<size_t>(markUnderMouse)].name.c_str());
                 }
                 if (canSelect && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                    selectedJuggler = underMouse;
-                    frameSelected = underMouse >= 0;
-                    camera.free = false;
+                    stageView.selectedJuggler = underMouse;
+                    stageView.frameSelected = underMouse >= 0;
+                    stageView.camera.free = false;
                 }
                 if (ImGui::IsItemHovered()) {
-                    if (io.MouseWheel != 0.0f && camera.free) {
+                    if (io.MouseWheel != 0.0f && stageView.camera.free) {
                         // A free camera moves along its view, more slowly the nearer it is to
                         // something.
                         Vec3 forward, right, up;
-                        freeCameraAxes(camera, &forward, &right, &up);
-                        camera.freePos = camera.freePos + forward * (io.MouseWheel * 0.15f * nearestToCamera(camera.freePos));
+                        freeCameraAxes(stageView.camera, &forward, &right, &up);
+                        stageView.camera.freePos =
+                            stageView.camera.freePos +
+                            forward * (io.MouseWheel * 0.15f * nearestToCamera(stageView.camera.freePos));
                     } else if (io.MouseWheel != 0.0f) {
-                        camera.zoom = std::clamp(camera.zoom * std::pow(0.88f, io.MouseWheel), 0.15f, 6.0f);
+                        stageView.camera.zoom =
+                            std::clamp(stageView.camera.zoom * std::pow(0.88f, io.MouseWheel), 0.15f, 6.0f);
                     }
                     if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Home)) {
-                        resetCamera(camera);
-                        frameSelected = false;
+                        resetCamera(stageView.camera);
+                        stageView.frameSelected = false;
                     }
                     // Paused, resting on a club or ring in the air: its throw and spin rate.
                     bool propTip = false;
@@ -2383,7 +2218,7 @@ int runApp() {
                         for (const BallState& b : scene.balls) {
                             ImVec2 at;
                             if (!b.inFlight || b.flightBeats <= 0.0f ||
-                                !projectToScreen(lastViewProj, b.center, viewMin, viewSize, &at))
+                                !projectToScreen(stageView.lastViewProj, b.center, viewMin, viewSize, &at))
                                 continue;
                             const float d = std::hypot(at.x - io.MousePos.x, at.y - io.MousePos.y);
                             if (d < nearestD) {
@@ -2469,44 +2304,46 @@ int runApp() {
         // never comes to the front).
         const float panelMargin = style.WindowPadding.x;
         float tweakablesBottom = top + panelMargin;
-        if (drawTweakablesPanel(juggleParams, loop, settings.tempoPanelCollapsed,
-                                ImVec2(W - panelMargin, top + panelMargin), tweakablesPanel, choreographyLocked,
+        if (drawTweakablesPanel(doc.juggleParams, loop, settings.tempoPanelCollapsed,
+                                ImVec2(W - panelMargin, top + panelMargin), ui.tweakablesPanel, choreographyLocked,
                                 &tweakablesBottom))
             saveSettings(settings);
-        groupChipHovered = -1;  // (set again below while the panel is up)
-        if (choreographyMode && choreography.active() && !loop.empty()) {
+        stageView.groupChipHovered = -1;  // (set again below while the panel is up)
+        if (stageView.choreographyMode && doc.choreography.active() && !loop.empty()) {
             int newLength = -1;
 
             const std::string gridBefore = floorGridText(settings);
-            choreographyPanel.groupSizes.assign(Choreography::kMarkGroups, 0);
+            ui.choreographyPanel.groupSizes.assign(Choreography::kMarkGroups, 0);
             for (int g = 0; g < Choreography::kMarkGroups; ++g)
-                choreographyPanel.groupSizes[static_cast<size_t>(g)] = static_cast<int>(choreography.group(g).size());
+                ui.choreographyPanel.groupSizes[static_cast<size_t>(g)] =
+                    static_cast<int>(doc.choreography.group(g).size());
             if (drawChoreographyPanel(settings, ImVec2(W - panelMargin, tweakablesBottom + panelMargin * 0.5f),
-                                      choreographyPanel, choreographyCycle(loop, juggleParams), &newLength,
-                                      choreography.repeats(), loop.period))
+                                      ui.choreographyPanel, choreographyCycle(loop, doc.juggleParams), &newLength,
+                                      doc.choreography.repeats(), loop.period))
                 saveSettings(settings);
-            groupChipHovered = choreographyPanel.hoveredGroup;
-            if (choreographyPanel.clickedGroup >= 0) selectMarkGroup(choreographyPanel.clickedGroup, false);
-            if (choreographyPanel.addedGroup >= 0) selectMarkGroup(choreographyPanel.addedGroup, true);
-            if (choreographyPanel.emptiedGroup >= 0) setMarkGroup(choreographyPanel.emptiedGroup, std::vector<int>());
+            stageView.groupChipHovered = ui.choreographyPanel.hoveredGroup;
+            if (ui.choreographyPanel.clickedGroup >= 0) selectMarkGroup(ui.choreographyPanel.clickedGroup, false);
+            if (ui.choreographyPanel.addedGroup >= 0) selectMarkGroup(ui.choreographyPanel.addedGroup, true);
+            if (ui.choreographyPanel.emptiedGroup >= 0)
+                setMarkGroup(ui.choreographyPanel.emptiedGroup, std::vector<int>());
             // The grid changed: it's the choreography's (saved with the pattern). (A choreography
             // nobody has changed yet stays that way: the grid doesn't fix the passing distance.)
             if (floorGridText(settings) != gridBefore) {
-                const bool untouched = choreographyText() == untouchedChoreography;
-                choreography.grid = floorGridText(settings);
-                choreographyGridShown = choreography.grid;
-                if (untouched) untouchedChoreography = choreographyText();
+                const bool untouched = choreographyText() == doc.untouchedChoreography;
+                doc.choreography.grid = floorGridText(settings);
+                doc.choreographyGridShown = doc.choreography.grid;
+                if (untouched) doc.untouchedChoreography = choreographyText();
             }
             if (newLength > 0) {
                 // Shorter than a keyframe's beat: ask first (those keyframes go).
                 bool strands = false;
-                for (const std::vector<Keyframe>& keys : choreography.keys)
+                for (const std::vector<Keyframe>& keys : doc.choreography.keys)
                     for (const Keyframe& k : keys) strands = strands || k.beat >= newLength;
                 if (strands) {
-                    pendingChoreographyLength = newLength;
+                    ui.pendingChoreographyLength = newLength;
                     ImGui::OpenPopup("Shorten the choreography?");
                 } else {
-                    choreography.cycle = newLength;
+                    doc.choreography.cycle = newLength;
                 }
             }
         }
@@ -2515,23 +2352,24 @@ int runApp() {
             const float em = ImGui::GetFontSize();
             std::string gone;
             int count = 0;
-            for (size_t j = 0; j < choreography.keys.size(); ++j)
-                for (const Keyframe& k : choreography.keys[j])
-                    if (k.beat >= pendingChoreographyLength) {
+            for (size_t j = 0; j < doc.choreography.keys.size(); ++j)
+                for (const Keyframe& k : doc.choreography.keys[j])
+                    if (k.beat >= ui.pendingChoreographyLength) {
                         gone += (count++ == 0 ? "" : ", ") + std::string("J") + std::to_string(j + 1) + " on beat " +
                                 std::to_string(k.beat + 1);
                     }
             ImGui::PushTextWrapPos(em * 30.0f);
-            ImGui::Text("A %d-beat choreography has no room for %s %s. Delete %s?", pendingChoreographyLength,
+            ImGui::Text("A %d-beat choreography has no room for %s %s. Delete %s?", ui.pendingChoreographyLength,
                         count == 1 ? "this keyframe:" : "these keyframes:", gone.c_str(), count == 1 ? "it" : "them");
             ImGui::PopTextWrapPos();
             ImGui::Spacing();
             if (ImGui::Button("Shorten", ImVec2(em * 7.0f, 0.0f))) {
-                for (std::vector<Keyframe>& keys : choreography.keys)
-                    keys.erase(std::remove_if(keys.begin(), keys.end(),
-                                              [&](const Keyframe& k) { return k.beat >= pendingChoreographyLength; }),
-                               keys.end());
-                choreography.cycle = pendingChoreographyLength;
+                for (std::vector<Keyframe>& keys : doc.choreography.keys)
+                    keys.erase(
+                        std::remove_if(keys.begin(), keys.end(),
+                                       [&](const Keyframe& k) { return k.beat >= ui.pendingChoreographyLength; }),
+                        keys.end());
+                doc.choreography.cycle = ui.pendingChoreographyLength;
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
@@ -2545,8 +2383,8 @@ int runApp() {
         // what it's about).
         {
             std::vector<std::pair<std::string, std::string>> warnings;  // key, text
-            if (choreography.active() && !loop.empty() && !ladderPreview) {
-                const int cycle = choreographyFullCycle(choreography, choreographyCycle(loop, juggleParams));
+            if (doc.choreography.active() && !loop.empty() && !ladderPane.ladderPreview) {
+                const int cycle = choreographyFullCycle(doc.choreography, choreographyCycle(loop, doc.juggleParams));
                 const int period = loop.period;
                 if (cycle > 0 && period > 0 && cycle % period != 0 && period % cycle != 0) {
                     long a = cycle, b = period;
@@ -2563,14 +2401,14 @@ int runApp() {
                                               " beats.");
                 }
             }
-            for (std::set<std::string>::iterator it = dismissedWarnings.begin(); it != dismissedWarnings.end();) {
+            for (std::set<std::string>::iterator it = ui.dismissedWarnings.begin(); it != ui.dismissedWarnings.end();) {
                 bool stillThere = false;
                 for (const std::pair<std::string, std::string>& w : warnings) stillThere = stillThere || w.first == *it;
-                it = stillThere ? std::next(it) : dismissedWarnings.erase(it);
+                it = stillThere ? std::next(it) : ui.dismissedWarnings.erase(it);
             }
             std::vector<std::pair<std::string, std::string>> shown;
             for (const std::pair<std::string, std::string>& w : warnings)
-                if (dismissedWarnings.count(w.first) == 0) shown.push_back(w);
+                if (ui.dismissedWarnings.count(w.first) == 0) shown.push_back(w);
             if (!shown.empty()) {
                 const float em = ImGui::GetFontSize();
                 ImGui::SetNextWindowPos(ImVec2(viewMin.x + panelMargin, viewMin.y + panelMargin + kTitleFontSize + em * 0.6f));
@@ -2583,7 +2421,7 @@ int runApp() {
                                      ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove)) {
                     for (const std::pair<std::string, std::string>& w : shown) {
                         ImGui::PushID(w.first.c_str());
-                        ImGui::PushFont(titleFont, kTitleFontSize);
+                        ImGui::PushFont(gfx.titleFont, kTitleFontSize);
                         ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(warn), "!");
                         ImGui::PopFont();
                         ImGui::SameLine();
@@ -2591,7 +2429,7 @@ int runApp() {
                         ImGui::TextUnformatted(w.second.c_str());
                         ImGui::PopTextWrapPos();
                         ImGui::SameLine();
-                        if (ImGui::SmallButton("Dismiss")) dismissedWarnings.insert(w.first);
+                        if (ImGui::SmallButton("Dismiss")) ui.dismissedWarnings.insert(w.first);
                         ImGui::PopID();
                     }
                 }
@@ -2654,151 +2492,161 @@ int runApp() {
         }
         ImGui::End();
 
-        if (showColorPreview) drawColorVisionPreview(&showColorPreview, settings.colorVision);
+        if (ui.showColorPreview) drawColorVisionPreview(&ui.showColorPreview, settings.colorVision);
 
         // Pattern library dialogs.
         const SavePatternRequest saveRequest =
-            drawSavePatternDialog(saveDialog, siteswapText, settingsForSaving(), myPatterns);
-        if (saveRequest.save && (patternValid || sketching)) {
+            drawSavePatternDialog(library.saveDialog, doc.siteswapText, settingsForSaving(), library.myPatterns);
+        if (saveRequest.save && (doc.patternValid || doc.sketching)) {
             storeMyPattern(saveRequest.name, saveRequest.replace);
-            if (newAfterSave) newPatternDialog.openRequested = true;
-            if (quitAfterSave) done = true;
-            newAfterSave = quitAfterSave = false;
-        } else if ((newAfterSave || quitAfterSave) && !saveDialog.openRequested &&
+            if (ui.newAfterSave) ui.newPatternDialog.openRequested = true;
+            if (ui.quitAfterSave) ui.done = true;
+            ui.newAfterSave = ui.quitAfterSave = false;
+        } else if ((ui.newAfterSave || ui.quitAfterSave) && !library.saveDialog.openRequested &&
                    !ImGui::IsPopupOpen("Save to My Patterns")) {
-            newAfterSave = quitAfterSave = false;  // the save was cancelled: so is the new pattern (or quitting)
+            ui.newAfterSave = ui.quitAfterSave = false;  // the save was cancelled: so is the new pattern (or quitting)
         }
         const ManagePatternsRequest manageRequest =
-            drawManagePatternsWindow(manageWindow, myPatterns, settings.colorVision);
+            drawManagePatternsWindow(library.manageWindow, library.myPatterns, settings.colorVision);
         if (manageRequest.load >= 0) {
-            const LibraryPattern chosen = myPatterns[static_cast<size_t>(manageRequest.load)];
+            const LibraryPattern chosen = library.myPatterns[static_cast<size_t>(manageRequest.load)];
             loadLibraryPattern(chosen, true);
         }
         if (manageRequest.rename >= 0) {
-            LibraryPattern& renamed = myPatterns[static_cast<size_t>(manageRequest.rename)];
+            LibraryPattern& renamed = library.myPatterns[static_cast<size_t>(manageRequest.rename)];
             const std::string oldName = renamed.displayName();
-            const bool wasOpen = oldName == openPatternName;
+            const bool wasOpen = oldName == doc.openPatternName;
             renamed.name = manageRequest.newName;
-            if (wasOpen) openPatternName = renamed.displayName();
+            if (wasOpen) doc.openPatternName = renamed.displayName();
             saveMyPatterns();
-            refreshRecentPattern(&recentPatterns, oldName, renamed);
-            saveRecentPatterns(recentPatterns);
+            refreshRecentPattern(&library.recentPatterns, oldName, renamed);
+            saveRecentPatterns(library.recentPatterns);
         }
         if (manageRequest.remove >= 0) {
-            const std::string removedName = myPatterns[static_cast<size_t>(manageRequest.remove)].displayName();
-            if (removedName == openPatternName) openPatternName.clear();
-            myPatterns.erase(myPatterns.begin() + manageRequest.remove);
+            const std::string removedName = library.myPatterns[static_cast<size_t>(manageRequest.remove)].displayName();
+            if (removedName == doc.openPatternName) doc.openPatternName.clear();
+            library.myPatterns.erase(library.myPatterns.begin() + manageRequest.remove);
             saveMyPatterns();
-            removeRecentPattern(&recentPatterns, removedName);
-            saveRecentPatterns(recentPatterns);
+            removeRecentPattern(&library.recentPatterns, removedName);
+            saveRecentPatterns(library.recentPatterns);
         }
         // File > Save / Save As.
-        if (saveRequested && (patternValid || sketching)) {
+        if (ui.saveRequested && (doc.patternValid || doc.sketching)) {
             if (openPatternIndex() >= 0) {
-                storeMyPattern(openPatternName, true);
-                siteswapBox.info = "Saved \"" + openPatternName + "\" to My Patterns.";
-                siteswapBox.infoUntil = ImGui::GetTime() + 3.0;
+                storeMyPattern(doc.openPatternName, true);
+                gridPane.siteswapBox.info = "Saved \"" + doc.openPatternName + "\" to My Patterns.";
+                gridPane.siteswapBox.infoUntil = ImGui::GetTime() + 3.0;
             } else {
-                saveAsRequested = true;
+                ui.saveAsRequested = true;
             }
         }
-        if (saveAsRequested && (patternValid || sketching)) {
-            std::snprintf(saveDialog.name, sizeof(saveDialog.name), "%s",
-                          openPatternName.empty() ? siteswapText : openPatternName.c_str());
-            saveDialog.openRequested = true;
+        if (ui.saveAsRequested && (doc.patternValid || doc.sketching)) {
+            std::snprintf(library.saveDialog.name, sizeof(library.saveDialog.name), "%s",
+                          doc.openPatternName.empty() ? doc.siteswapText : doc.openPatternName.c_str());
+            library.saveDialog.openRequested = true;
         }
-        saveRequested = saveAsRequested = false;
-        if (!fileError.empty()) ImGui::OpenPopup("Couldn't save");
+        ui.saveRequested = ui.saveAsRequested = false;
+        if (!ui.fileError.empty()) ImGui::OpenPopup("Couldn't save");
         ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         if (ImGui::BeginPopupModal("Couldn't save", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
-            ImGui::TextUnformatted(fileError.c_str());
+            ImGui::TextUnformatted(ui.fileError.c_str());
             ImGui::PopTextWrapPos();
             if (ImGui::Button("OK", ImVec2(ImGui::GetFontSize() * 6.0f, 0.0f))) {
-                fileError.clear();
+                ui.fileError.clear();
                 ImGui::CloseCurrentPopup();
             }
             ImGui::EndPopup();
         }
-        if (showImGuiDemo) ImGui::ShowDemoWindow(&showImGuiDemo);
-        if (showShortcuts) drawShortcutsWindow(&showShortcuts);
+        if (ui.showImGuiDemo) ImGui::ShowDemoWindow(&ui.showImGuiDemo);
+        if (ui.showShortcuts) drawShortcutsWindow(&ui.showShortcuts);
         // Choosing among marks in the same place (see MarkChoice): say so, until done (Esc: keep
         // the one they're on).
-        if (markChoice.active) {
-            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || !choreographyMode) {
-                markChoice.active = false;
+        if (stageView.markChoice.active) {
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || !stageView.choreographyMode) {
+                stageView.markChoice.active = false;
             } else {
-                siteswapBox.info = "Spike marks " + [&]() {
-                    std::string list;
-                    for (size_t i = 0; i < markChoice.marks.size(); ++i)
-                        list += (i == 0 ? "" : (i + 1 == markChoice.marks.size() ? " and " : ", ")) +
-                                markNameOf(markChoice.marks[i]);
-                    return list;
-                }() + " are here: click the arrow (or name) of the one J" + std::to_string(markChoice.juggler + 1) +
-                                   " stands on. (Esc: mark " + markNameOf(markChoice.pending.mark) + ".)";
-                siteswapBox.infoUntil = ImGui::GetTime() + 0.1;
+                gridPane.siteswapBox.info =
+                    "Spike marks " +
+                    [&]() {
+                        std::string list;
+                        for (size_t i = 0; i < stageView.markChoice.marks.size(); ++i)
+                            list += (i == 0 ? "" : (i + 1 == stageView.markChoice.marks.size() ? " and " : ", ")) +
+                                    markNameOf(stageView.markChoice.marks[i]);
+                        return list;
+                    }() +
+                    " are here: click the arrow (or name) of the one J" +
+                    std::to_string(stageView.markChoice.juggler + 1) + " stands on. (Esc: mark " +
+                    markNameOf(stageView.markChoice.pending.mark) + ".)";
+                gridPane.siteswapBox.infoUntil = ImGui::GetTime() + 0.1;
             }
         }
         // Selected spike marks: Esc clears them (as does leaving choreography mode); a change says
         // what to do with them, for a few seconds.
-        selectedMarks.erase(std::remove_if(selectedMarks.begin(), selectedMarks.end(),
-                                           [&](int m) { return m < 0 || m >= static_cast<int>(choreography.marks.size()); }),
-                            selectedMarks.end());
-        if (!choreographyMode || (!markChoice.active && !io.WantTextInput && markDrag < 0 &&
-                                  !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
-            selectedMarks.clear();
-        if (selectedGroup >= 0 && selectedMarks != choreography.group(selectedGroup)) {
-            std::vector<int> sorted = selectedMarks;
+        stageView.selectedMarks.erase(
+            std::remove_if(stageView.selectedMarks.begin(), stageView.selectedMarks.end(),
+                           [&](int m) { return m < 0 || m >= static_cast<int>(doc.choreography.marks.size()); }),
+            stageView.selectedMarks.end());
+        if (!stageView.choreographyMode ||
+            (!stageView.markChoice.active && !io.WantTextInput && stageView.markDrag < 0 &&
+             !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId) && ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
+            stageView.selectedMarks.clear();
+        if (stageView.selectedGroup >= 0 &&
+            stageView.selectedMarks != doc.choreography.group(stageView.selectedGroup)) {
+            std::vector<int> sorted = stageView.selectedMarks;
             std::sort(sorted.begin(), sorted.end());
-            if (sorted != choreography.group(selectedGroup)) selectedGroup = -1;
+            if (sorted != doc.choreography.group(stageView.selectedGroup)) stageView.selectedGroup = -1;
         }
-        if (selectedMarks != selectedMarksSaid) {
-            selectedMarksSaid = selectedMarks;
-            if (!selectedMarks.empty()) {
+        if (stageView.selectedMarks != stageView.selectedMarksSaid) {
+            stageView.selectedMarksSaid = stageView.selectedMarks;
+            if (!stageView.selectedMarks.empty()) {
                 std::string list;
-                for (size_t i = 0; i < selectedMarks.size(); ++i)
-                    list += (i == 0 ? "" : (i + 1 == selectedMarks.size() ? " and " : ", ")) + markNameOf(selectedMarks[i]);
-                siteswapBox.info = std::string(selectedMarks.size() == 1 ? "Spike mark " : "Spike marks ") + list +
-                                   " selected: drag " + (selectedMarks.size() == 1 ? "it" : "one to move them all") +
-                                   " (Shift: off the grid). Shift+click adds or removes a mark; Esc clears.";
-                siteswapBox.infoUntil = ImGui::GetTime() + 5.0;
+                for (size_t i = 0; i < stageView.selectedMarks.size(); ++i)
+                    list += (i == 0 ? "" : (i + 1 == stageView.selectedMarks.size() ? " and " : ", ")) +
+                            markNameOf(stageView.selectedMarks[i]);
+                gridPane.siteswapBox.info =
+                    std::string(stageView.selectedMarks.size() == 1 ? "Spike mark " : "Spike marks ") + list +
+                    " selected: drag " + (stageView.selectedMarks.size() == 1 ? "it" : "one to move them all") +
+                    " (Shift: off the grid). Shift+click adds or removes a mark; Esc clears.";
+                gridPane.siteswapBox.infoUntil = ImGui::GetTime() + 5.0;
             }
         }
         // The Walk Like... window (see WalkLikeWindow).
-        walkLike.previewing = false;
-        if (walkLike.open) {
+        ui.walkLike.previewing = false;
+        if (ui.walkLike.open) {
             const JugglingLoop loop = shownLoop();
-            const int j = walkLike.juggler;
-            const int cycle = loop.empty() ? 0 : choreographyCycle(loop, juggleParams);
+            const int j = ui.walkLike.juggler;
+            const int cycle = loop.empty() ? 0 : choreographyCycle(loop, doc.juggleParams);
             if (loop.empty() || j < 0 || j >= loop.jugglers || cycle <= 0) {
-                walkLike.open = false;
+                ui.walkLike.open = false;
             } else {
                 const float em = ImGui::GetFontSize();
                 ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
                 char title[48];
                 std::snprintf(title, sizeof(title), "J%d Walks Like...###walk_like", j + 1);
-                if (ImGui::Begin(title, &walkLike.open, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
-                    WalkLink link = choreography.link(j);
+                if (ImGui::Begin(title, &ui.walkLike.open,
+                                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+                    WalkLink link = doc.choreography.link(j);
                     bool changed = false;
                     // Hovering a choice: show where it would put them.
                     auto previewIf = [&](const WalkLink& would) {
                         if (!ImGui::IsItemHovered() || would.leader < 0) return;
-                        walkLike.previewing = true;
-                        walkLike.preview = would;
+                        ui.walkLike.previewing = true;
+                        ui.walkLike.preview = would;
                     };
                     // Leader: anyone whose walking doesn't already depend on this juggler.
                     ImGui::TextUnformatted("Leader:");
                     for (int k = 0; k < loop.jugglers; ++k) {
                         if (k == j) continue;
                         ImGui::SameLine();
-                        const bool loops = choreography.dependsOn(k, j);
+                        const bool loops = doc.choreography.dependsOn(k, j);
                         ImGui::BeginDisabled(loops);
                         char label[8];
                         std::snprintf(label, sizeof(label), "J%d", k + 1);
                         if (ImGui::RadioButton(label, link.leader == k) && link.leader != k) {
-                            if (!link.active() && choreography.hasKeys(j)) {
-                                walkLike.confirmLeader = k;  // ask first: their own keyframes go
-                                walkLike.confirmRequested = true;
+                            if (!link.active() && doc.choreography.hasKeys(j)) {
+                                ui.walkLike.confirmLeader = k;  // ask first: their own keyframes go
+                                ui.walkLike.confirmRequested = true;
                             } else {
                                 link.leader = k;
                                 changed = true;
@@ -2820,7 +2668,7 @@ int runApp() {
                     ImGui::SameLine();
                     ImGui::SetNextItemWidth(em * 7.0f);
                     // (Offsets run over the whole choreography, rotated repeats and all.)
-                    const int full = choreographyFullCycle(choreography, cycle);
+                    const int full = choreographyFullCycle(doc.choreography, cycle);
                     int offset = link.offset;
                     if (ImGui::InputInt("##offset", &offset, 0, 0)) {
                         link.offset = ((offset % full) + full) % full;
@@ -2873,7 +2721,7 @@ int runApp() {
                     // Past the beats written out, the leader is walking a part of the loop: say whose,
                     // and how far turned, as a check ("= J3's part 2 beats in, turned 1/4 CCW").
                     if (full != cycle && link.offset >= cycle && link.leader >= 0) {
-                        const WalkLoop w = walkLoop(choreography, loop.jugglers);
+                        const WalkLoop w = walkLoop(doc.choreography, loop.jugglers);
                         const int times = link.offset / cycle, rest = link.offset % cycle;
                         if (w.valid && times < w.phases && link.leader < static_cast<int>(w.role[static_cast<size_t>(times)].size())) {
                             const int part = w.role[static_cast<size_t>(times)][static_cast<size_t>(link.leader)];
@@ -2894,13 +2742,13 @@ int runApp() {
                     hoveredTurn.den = -1;  // (none hovered)
                     if (turnEditor("##turned", &link.turn, &hoveredTurn)) changed = true;
                     if (hoveredTurn.den > 0 && link.active()) {
-                        walkLike.preview = link;
-                        walkLike.preview.turn = hoveredTurn;
-                        walkLike.previewing = true;
+                        ui.walkLike.preview = link;
+                        ui.walkLike.preview.turn = hoveredTurn;
+                        ui.walkLike.previewing = true;
                     }
                     ImGui::TextDisabled("        about the middle of the floor, seen from above");
                     ImGui::EndDisabled();
-                    if (changed && link.active()) setWalkLink(&choreography, j, link);
+                    if (changed && link.active()) setWalkLink(&doc.choreography, j, link);
                     ImGui::Spacing();
                     ImGui::BeginDisabled(!link.active());
                     if (ImGui::Button("Unlink", ImVec2(em * 6.0f, 0.0f))) unlinkWalk(j);
@@ -2908,22 +2756,25 @@ int runApp() {
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                         ImGui::SetTooltip("Write J%d's walking out as their own keyframes (nothing moves).", j + 1);
                     ImGui::SameLine();
-                    if (ImGui::Button("Close", ImVec2(em * 6.0f, 0.0f))) walkLike.open = false;
+                    if (ImGui::Button("Close", ImVec2(em * 6.0f, 0.0f))) ui.walkLike.open = false;
 
                     // Linking a juggler who has keyframes of their own: ask first.
-                    if (walkLike.confirmRequested) {
+                    if (ui.walkLike.confirmRequested) {
                         ImGui::OpenPopup("Link this juggler?");
-                        walkLike.confirmRequested = false;
+                        ui.walkLike.confirmRequested = false;
                     }
                     if (ImGui::BeginPopupModal("Link this juggler?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-                        const size_t count = j < static_cast<int>(choreography.keys.size()) ? choreography.keys[static_cast<size_t>(j)].size() : 0;
+                        const size_t count = j < static_cast<int>(doc.choreography.keys.size())
+                                                 ? doc.choreography.keys[static_cast<size_t>(j)].size()
+                                                 : 0;
                         ImGui::Text("J%d's %d keyframe%s will be deleted: J%d will walk like J%d instead.", j + 1,
-                                    static_cast<int>(count), count == 1 ? "" : "s", j + 1, walkLike.confirmLeader + 1);
+                                    static_cast<int>(count), count == 1 ? "" : "s", j + 1,
+                                    ui.walkLike.confirmLeader + 1);
                         ImGui::Spacing();
                         if (ImGui::Button("Link", ImVec2(em * 6.0f, 0.0f))) {
                             WalkLink l;
-                            l.leader = walkLike.confirmLeader;
-                            setWalkLink(&choreography, j, l);
+                            l.leader = ui.walkLike.confirmLeader;
+                            setWalkLink(&doc.choreography, j, l);
                             ImGui::CloseCurrentPopup();
                         }
                         ImGui::SameLine();
@@ -2936,16 +2787,16 @@ int runApp() {
             }
         }
         // The loop column's builder (see LoopBuilder).
-        if (loopBuilder.requested) {
-            loopBuilder.requested = false;
+        if (stageView.loopBuilder.requested) {
+            stageView.loopBuilder.requested = false;
             ImGui::OpenPopup("Walking Loop");
             ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         }
         if (ImGui::BeginPopupModal("Walking Loop", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             const JugglingLoop loop = shownLoop();
-            const int j = loopBuilder.juggler;
+            const int j = stageView.loopBuilder.juggler;
             const int n = loop.empty() ? 0 : loop.jugglers;
-            const int written = loop.empty() ? 0 : choreographyCycle(loop, juggleParams);
+            const int written = loop.empty() ? 0 : choreographyCycle(loop, doc.juggleParams);
             if (j < 0 || j >= n) ImGui::CloseCurrentPopup();
             const float em = ImGui::GetFontSize();
             ImGui::Text("After beat %d, whoever's on C%d goes on to:", written, j + 1);
@@ -2953,17 +2804,18 @@ int runApp() {
                 if (r > 0) ImGui::SameLine();
                 char label[24];
                 std::snprintf(label, sizeof(label), r == j ? "C%d (own)" : "C%d", r + 1);
-                if (ImGui::RadioButton(label, loopBuilder.k.roleFor(j) == r)) loopBuilder.k.role = r == j ? -1 : r;
+                if (ImGui::RadioButton(label, stageView.loopBuilder.k.roleFor(j) == r))
+                    stageView.loopBuilder.k.role = r == j ? -1 : r;
             }
             ImGui::TextUnformatted("...from its beat 1, turned:");
-            turnEditor("##loopTurn", &loopBuilder.k.turn);
+            turnEditor("##loopTurn", &stageView.loopBuilder.k.turn);
             ImGui::TextDisabled("about the middle of the floor, seen from above");
-            const std::string text = continuationText(loopBuilder.k, j);
+            const std::string text = continuationText(stageView.loopBuilder.k, j);
             ImGui::TextDisabled("In the cell: %s", text.empty() ? (std::to_string(j + 1) + " (its own path, unturned)").c_str()
                                                                : text.c_str());
             ImGui::Spacing();
             if (ImGui::Button("Set", ImVec2(em * 6.0f, 0.0f))) {
-                setContinuation(j, loopBuilder.k);
+                setContinuation(j, stageView.loopBuilder.k);
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
@@ -2971,46 +2823,48 @@ int runApp() {
             ImGui::EndPopup();
         }
         // Renaming a spike mark (see RenameMark).
-        if (renameMark.requested) {
-            renameMark.requested = false;
-            if (renameMark.mark >= 0 && renameMark.mark < static_cast<int>(choreography.marks.size())) {
-                std::snprintf(renameMark.text, sizeof(renameMark.text), "%s",
-                              choreography.marks[static_cast<size_t>(renameMark.mark)].name.c_str());
-                renameMark.error.clear();
+        if (ui.renameMark.requested) {
+            ui.renameMark.requested = false;
+            if (ui.renameMark.mark >= 0 && ui.renameMark.mark < static_cast<int>(doc.choreography.marks.size())) {
+                std::snprintf(ui.renameMark.text, sizeof(ui.renameMark.text), "%s",
+                              doc.choreography.marks[static_cast<size_t>(ui.renameMark.mark)].name.c_str());
+                ui.renameMark.error.clear();
                 ImGui::OpenPopup("Rename Spike Mark");
                 ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
             }
         }
         if (ImGui::BeginPopupModal("Rename Spike Mark", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            const bool exists = renameMark.mark >= 0 && renameMark.mark < static_cast<int>(choreography.marks.size());
+            const bool exists =
+                ui.renameMark.mark >= 0 && ui.renameMark.mark < static_cast<int>(doc.choreography.marks.size());
             if (!exists) ImGui::CloseCurrentPopup();
             ImGui::TextUnformatted("Two characters, each 0-9 or a-z:");
             if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
             ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4.0f);
-            const bool entered = ImGui::InputText("##markName", renameMark.text, sizeof(renameMark.text),
+            const bool entered = ImGui::InputText("##markName", ui.renameMark.text, sizeof(ui.renameMark.text),
                                                   ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CharsNoBlank);
             // Only 0-9 and a-z (capitals made small).
             {
                 std::string kept;
-                for (const char* ch = renameMark.text; *ch; ++ch) {
+                for (const char* ch = ui.renameMark.text; *ch; ++ch) {
                     const char lower = static_cast<char>(std::tolower(static_cast<unsigned char>(*ch)));
                     if ((lower >= '0' && lower <= '9') || (lower >= 'a' && lower <= 'z')) kept += lower;
                 }
-                std::snprintf(renameMark.text, sizeof(renameMark.text), "%s", kept.c_str());
+                std::snprintf(ui.renameMark.text, sizeof(ui.renameMark.text), "%s", kept.c_str());
             }
-            if (!renameMark.error.empty()) ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "%s", renameMark.error.c_str());
+            if (!ui.renameMark.error.empty())
+                ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "%s", ui.renameMark.error.c_str());
             const float em = ImGui::GetFontSize();
             if ((ImGui::Button("Rename", ImVec2(em * 6.0f, 0.0f)) || entered) && exists) {
-                const std::string name = renameMark.text;
-                const int other = findMarkNamed(choreography, name);
+                const std::string name = ui.renameMark.text;
+                const int other = findMarkNamed(doc.choreography, name);
                 if (!validMarkName(name)) {
-                    renameMark.error = "It needs two characters.";
-                    plipWanted = true;
-                } else if (other >= 0 && other != renameMark.mark) {
-                    renameMark.error = "Another mark is called " + name + ".";
-                    plipWanted = true;
+                    ui.renameMark.error = "It needs two characters.";
+                    sound.plipWanted = true;
+                } else if (other >= 0 && other != ui.renameMark.mark) {
+                    ui.renameMark.error = "Another mark is called " + name + ".";
+                    sound.plipWanted = true;
                 } else {
-                    choreography.marks[static_cast<size_t>(renameMark.mark)].name = name;
+                    doc.choreography.marks[static_cast<size_t>(ui.renameMark.mark)].name = name;
                     ImGui::CloseCurrentPopup();
                 }
             }
@@ -3020,14 +2874,14 @@ int runApp() {
         }
         // The Walk Like... window's preview: where the choice under the mouse would put them, now.
         WalkGhost walkGhost;
-        if (walkLike.open && walkLike.previewing) {
+        if (ui.walkLike.open && ui.walkLike.previewing) {
             const JugglingLoop loop = shownLoop();
-            const int j = walkLike.juggler;
-            const int cycle = loop.empty() ? 0 : choreographyCycle(loop, juggleParams);
+            const int j = ui.walkLike.juggler;
+            const int cycle = loop.empty() ? 0 : choreographyCycle(loop, doc.juggleParams);
             if (cycle > 0 && j >= 0 && j < static_cast<int>(scene.jugglers.size()) && j < loop.jugglers) {
-                Choreography trial = choreography;
-                setWalkLink(&trial, j, walkLike.preview);
-                JuggleParams params = juggleParams;
+                Choreography trial = doc.choreography;
+                setWalkLink(&trial, j, ui.walkLike.preview);
+                JuggleParams params = doc.juggleParams;
                 params.choreography = &trial;
                 Vec3 at;
                 float yaw = 0.0f;
@@ -3042,26 +2896,26 @@ int runApp() {
         // The loiter popup (see LoiterPopup).
         {
             const JugglingLoop loop = shownLoop();
-            const int cycle = loop.empty() ? 0 : choreographyCycle(loop, juggleParams);
-            if (loiter.openRequested) {
-                loiter.openRequested = false;
+            const int cycle = loop.empty() ? 0 : choreographyCycle(loop, doc.juggleParams);
+            if (ui.loiter.openRequested) {
+                ui.loiter.openRequested = false;
                 if (cycle > 0) ImGui::OpenPopup("##loiter");
             }
-            ImGui::SetNextWindowPos(ImVec2(loiter.at.x + 16.0f, loiter.at.y + 16.0f), ImGuiCond_Appearing);
-            const bool flashing = ImGui::GetTime() < loiter.errorUntil;
+            ImGui::SetNextWindowPos(ImVec2(ui.loiter.at.x + 16.0f, ui.loiter.at.y + 16.0f), ImGuiCond_Appearing);
+            const bool flashing = ImGui::GetTime() < ui.loiter.errorUntil;
             const ImU32 errorColor = errorTextColor(settings.colorVision);
             if (flashing) {
                 ImGui::PushStyleColor(ImGuiCol_Border, errorColor);
                 ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 3.0f);
             }
-            loiter.open = ImGui::BeginPopup("##loiter");
+            ui.loiter.open = ImGui::BeginPopup("##loiter");
             if (flashing) {
                 ImGui::PopStyleVar();
                 ImGui::PopStyleColor();
             }
-            if (loiter.open) {
-                const int j = loiter.juggler;
-                const int b = loiter.arrival.beat;
+            if (ui.loiter.open) {
+                const int j = ui.loiter.juggler;
+                const int b = ui.loiter.arrival.beat;
                 // Whether a loiter of n beats fits: it mustn't reach (or pass) another of this
                 // juggler's keyframes, and must be shorter than the choreography.
                 auto fits = [&](int n, int* blockingBeat) {
@@ -3072,12 +2926,12 @@ int runApp() {
                     }
                     // With rotated repeats a loiter can't run on past the beats written out: the
                     // next beats are the first ones turned.
-                    if (choreography.repeats() > 1 && b + n >= cycle) {
+                    if (doc.choreography.repeats() > 1 && b + n >= cycle) {
                         if (blockingBeat) *blockingBeat = -2;
                         return false;
                     }
-                    if (j >= 0 && j < static_cast<int>(choreography.keys.size()))
-                        for (const Keyframe& k : choreography.keys[static_cast<size_t>(j)]) {
+                    if (j >= 0 && j < static_cast<int>(doc.choreography.keys.size()))
+                        for (const Keyframe& k : doc.choreography.keys[static_cast<size_t>(j)]) {
                             const int d = ((k.beat - b) % cycle + cycle) % cycle;
                             if (k.beat != b && d >= 1 && d <= n) {
                                 if (blockingBeat) *blockingBeat = d;
@@ -3089,32 +2943,32 @@ int runApp() {
                 auto apply = [&](int n) {
                     int blocking = 0;
                     if (!fits(n, &blocking)) {
-                        loiter.error = blocking == -2 ? "Too long: it would run past beat " + std::to_string(cycle) +
+                        ui.loiter.error = blocking == -2 ? "Too long: it would run past beat " + std::to_string(cycle) +
                                                             ", into the walking loop's copies."
                                        : blocking < 0 ? "Too long: the choreography is only " + std::to_string(cycle) + " beats."
                                                     : "No room: J" + std::to_string(j + 1) + " has a keyframe " +
                                                           std::to_string(blocking) + " beats later.";
-                        loiter.errorUntil = ImGui::GetTime() + 1.5;
+                        ui.loiter.errorUntil = ImGui::GetTime() + 1.5;
                         return;
                     }
                     if (n > 0) {
-                        Keyframe stay = loiter.arrival;
+                        Keyframe stay = ui.loiter.arrival;
                         stay.beat = (b + n) % cycle;
                         stay.longTurn = false;
-                        setKeyframe(&choreography, j, stay);
+                        setKeyframe(&doc.choreography, j, stay);
                     }
                     ImGui::CloseCurrentPopup();
                 };
                 // Loiter lengths already in the choreography, nearest in time to this beat first
                 // (beyond the 0-4 buttons); up to four, shortest first.
                 std::vector<std::pair<int, int>> used;  // (distance in time, length)
-                for (size_t jj = 0; jj < choreography.keys.size(); ++jj) {
-                    const std::vector<Keyframe>& keys = choreography.keys[jj];
+                for (size_t jj = 0; jj < doc.choreography.keys.size(); ++jj) {
+                    const std::vector<Keyframe>& keys = doc.choreography.keys[jj];
                     for (size_t i = 0; i < keys.size() && keys.size() > 1; ++i) {
                         const Keyframe& k = keys[i];
                         const Keyframe& next = keys[(i + 1) % keys.size()];
                         const int gap = ((next.beat - k.beat) % cycle + cycle) % cycle;
-                        if (gap <= 4 || !sameKeyframeSpot(choreography, k, next)) continue;
+                        if (gap <= 4 || !sameKeyframeSpot(doc.choreography, k, next)) continue;
                         if (static_cast<int>(jj) == j && k.beat == b) continue;  // (this one, if it's already a loiter)
                         const int d = ((k.beat - b) % cycle + cycle) % cycle;
                         used.emplace_back(std::min(d, cycle - d), gap);
@@ -3127,8 +2981,10 @@ int runApp() {
                         recent.push_back(u.second);
                 std::sort(recent.begin(), recent.end());
 
-                const std::string where = loiter.arrival.mark >= 0 ? "on mark " + markNameOf(loiter.arrival.mark) : "here";
-                ImGui::Text("J%d arrives on beat %ld. Loiter %s for how many beats?", j + 1, loiter.onBeat + 1, where.c_str());
+                const std::string where =
+                    ui.loiter.arrival.mark >= 0 ? "on mark " + markNameOf(ui.loiter.arrival.mark) : "here";
+                ImGui::Text("J%d arrives on beat %ld. Loiter %s for how many beats?", j + 1, ui.loiter.onBeat + 1,
+                            where.c_str());
                 const float em = ImGui::GetFontSize();
                 auto choice = [&](int n) {
                     ImGui::PushID(n);
@@ -3149,14 +3005,14 @@ int runApp() {
                 }
                 ImGui::NewLine();
                 ImGui::SetNextItemWidth(em * 5.0f);
-                const bool entered = ImGui::InputText("beats", loiter.text, sizeof(loiter.text),
+                const bool entered = ImGui::InputText("beats", ui.loiter.text, sizeof(ui.loiter.text),
                                                       ImGuiInputTextFlags_CharsDecimal | ImGuiInputTextFlags_EnterReturnsTrue);
                 const bool typing = ImGui::IsItemActive();
                 ImGui::SameLine();
-                if ((ImGui::Button("OK") || entered) && loiter.text[0] != '\0') apply(std::atoi(loiter.text));
+                if ((ImGui::Button("OK") || entered) && ui.loiter.text[0] != '\0') apply(std::atoi(ui.loiter.text));
                 ImGui::TextDisabled("Or press a key: 0-9, a = 10, b = 11 ... (as in siteswap). Esc: just arrive.");
-                if (ImGui::GetTime() < loiter.errorUntil)
-                    ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(errorColor), "%s", loiter.error.c_str());
+                if (ImGui::GetTime() < ui.loiter.errorUntil)
+                    ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(errorColor), "%s", ui.loiter.error.c_str());
                 if (!typing) {
                     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::CloseCurrentPopup();
                     for (const ImWchar c : io.InputQueueCharacters) {
@@ -3174,9 +3030,9 @@ int runApp() {
             }
         }
         // Help > 3D Mouse Diagnostics: what the cap is sending, live (-1..1 on each axis).
-        if (showSpaceMouseDiagnostics) {
+        if (ui.showSpaceMouseDiagnostics) {
             ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
-            if (ImGui::Begin("3D Mouse Diagnostics", &showSpaceMouseDiagnostics,
+            if (ImGui::Begin("3D Mouse Diagnostics", &ui.showSpaceMouseDiagnostics,
                              ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
                 if (!spaceMouse.present) {
                     ImGui::TextUnformatted("No 3D mouse found.");
@@ -3189,51 +3045,52 @@ int runApp() {
                     const bool idle = std::fabs(spaceMouse.turn[0]) < 0.06f && std::fabs(spaceMouse.move[1]) < 0.06f;
                     const bool tiltWins = std::fabs(spaceMouse.turn[0]) > 0.8f * std::fabs(spaceMouse.move[1]);
                     ImGui::Text("Tilt vs push/pull: %s", idle ? "-" : (tiltWins ? "tilt (turns the stage)" : "push/pull (moves)"));
-                    ImGui::Text("Mouse-wheel events from the driver: %s",
-                                ImGui::GetTime() - spaceMouseWheelBlocked < 1.0 ? "yes (ignored)" : "none seen");
+                    ImGui::Text(
+                        "Mouse-wheel events from the driver: %s",
+                        ImGui::GetTime() - stageView.spaceMouseWheelBlocked < 1.0 ? "yes (ignored)" : "none seen");
                 }
             }
             ImGui::End();
         }
 
         // File > New Pattern..., first offering to save the current pattern if it has changed.
-        if (savePromptRequested) {
+        if (ui.savePromptRequested) {
             ImGui::OpenPopup("Save changes?");
-            savePromptRequested = false;
+            ui.savePromptRequested = false;
         }
         ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         if (ImGui::BeginPopupModal("Save changes?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             const float em = ImGui::GetFontSize();
             ImGui::PushTextWrapPos(em * 34.0f);
             ImGui::Text("Save %s%s to My Patterns before %s?",
-                        openPatternIndex() >= 0 ? ("\"" + openPatternName + "\"").c_str() : siteswapText,
-                        savedChoreography != choreographyText() ? " (and its choreography)"
-                        : savedThrowNext != throwNextText(throwNext) ? " (and its throwing loop)" : "",
-                        promptForQuit ? "quitting" : "starting a new pattern");
+                        openPatternIndex() >= 0 ? ("\"" + doc.openPatternName + "\"").c_str() : doc.siteswapText,
+                        doc.savedChoreography != choreographyText() ? " (and its choreography)"
+                        : doc.savedThrowNext != throwNextText(doc.throwNext) ? " (and its throwing loop)" : "",
+                        ui.promptForQuit ? "quitting" : "starting a new pattern");
             ImGui::PopTextWrapPos();
             ImGui::Spacing();
             const bool open = openPatternIndex() >= 0;
             if (ImGui::Button(open ? "Save" : "Save...", ImVec2(em * 7.0f, 0.0f))) {
                 if (open) {
                     // Over the open pattern, then on.
-                    storeMyPattern(openPatternName, true);
-                    if (promptForQuit)
-                        done = true;
+                    storeMyPattern(doc.openPatternName, true);
+                    if (ui.promptForQuit)
+                        ui.done = true;
                     else
-                        newPatternDialog.openRequested = true;
+                        ui.newPatternDialog.openRequested = true;
                 } else {
-                    std::snprintf(saveDialog.name, sizeof(saveDialog.name), "%s", siteswapText);
-                    saveDialog.openRequested = true;
-                    (promptForQuit ? quitAfterSave : newAfterSave) = true;
+                    std::snprintf(library.saveDialog.name, sizeof(library.saveDialog.name), "%s", doc.siteswapText);
+                    library.saveDialog.openRequested = true;
+                    (ui.promptForQuit ? ui.quitAfterSave : ui.newAfterSave) = true;
                 }
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
             if (ImGui::Button("Don't Save", ImVec2(em * 7.0f, 0.0f))) {
-                if (promptForQuit)
-                    done = true;
+                if (ui.promptForQuit)
+                    ui.done = true;
                 else
-                    newPatternDialog.openRequested = true;
+                    ui.newPatternDialog.openRequested = true;
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
@@ -3241,9 +3098,9 @@ int runApp() {
                 ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
         }
-        if (newPatternDialog.openRequested) {
+        if (ui.newPatternDialog.openRequested) {
             ImGui::OpenPopup("New Pattern");
-            newPatternDialog.openRequested = false;
+            ui.newPatternDialog.openRequested = false;
         }
         ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
         if (ImGui::BeginPopupModal("New Pattern", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -3261,50 +3118,51 @@ int runApp() {
                 if (n > 1) ImGui::SameLine();
                 char label[8];
                 std::snprintf(label, sizeof(label), "%d", n);
-                ImGui::RadioButton(label, &newPatternDialog.jugglers, n);
+                ImGui::RadioButton(label, &ui.newPatternDialog.jugglers, n);
             }
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted("Period");
             ImGui::SameLine(em * 5.0f);
             ImGui::SetNextItemWidth(em * 8.0f);
-            ImGui::InputInt("##period", &newPatternDialog.period);
-            newPatternDialog.period = std::clamp(newPatternDialog.period, 1, kMaxLoopBeats);
+            ImGui::InputInt("##period", &ui.newPatternDialog.period);
+            ui.newPatternDialog.period = std::clamp(ui.newPatternDialog.period, 1, kMaxLoopBeats);
             ImGui::SameLine();
             ImGui::TextDisabled("beats");
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted("Count");
             ImGui::SameLine(em * 5.0f);
             ImGui::SetNextItemWidth(em * 8.0f);
-            const std::string countName =
-                newPatternDialog.count >= 2 ? std::to_string(newPatternDialog.count) + "-count" : std::string("None");
+            const std::string countName = ui.newPatternDialog.count >= 2
+                                              ? std::to_string(ui.newPatternDialog.count) + "-count"
+                                              : std::string("None");
             if (ImGui::BeginCombo("##count", countName.c_str())) {
-                if (ImGui::Selectable("None", newPatternDialog.count < 2)) newPatternDialog.count = 0;
+                if (ImGui::Selectable("None", ui.newPatternDialog.count < 2)) ui.newPatternDialog.count = 0;
                 for (int n = 2; n <= 8; ++n)
-                    if (ImGui::Selectable((std::to_string(n) + "-count").c_str(), newPatternDialog.count == n))
-                        newPatternDialog.count = n;
+                    if (ImGui::Selectable((std::to_string(n) + "-count").c_str(), ui.newPatternDialog.count == n))
+                        ui.newPatternDialog.count = n;
                 ImGui::EndCombo();
             }
-            if (newPatternDialog.count >= 2) {
+            if (ui.newPatternDialog.count >= 2) {
                 ImGui::SameLine();
-                ImGui::TextDisabled("(the period becomes a multiple of %d)", newPatternDialog.count);
+                ImGui::TextDisabled("(the period becomes a multiple of %d)", ui.newPatternDialog.count);
             }
             ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted("Walking");
             ImGui::SameLine(em * 5.0f);
             ImGui::SetNextItemWidth(em * 8.0f);
-            ImGui::InputInt("##walking", &newPatternDialog.walking);
-            newPatternDialog.walking = std::clamp(newPatternDialog.walking, 0, kMaxChoreographyLength);
+            ImGui::InputInt("##walking", &ui.newPatternDialog.walking);
+            ui.newPatternDialog.walking = std::clamp(ui.newPatternDialog.walking, 0, kMaxChoreographyLength);
             ImGui::SameLine();
-            ImGui::TextDisabled(newPatternDialog.walking == 0 ? "beats (0: no choreography yet)" : "beats");
+            ImGui::TextDisabled(ui.newPatternDialog.walking == 0 ? "beats (0: no choreography yet)" : "beats");
             if (ImGui::IsItemHovered() || ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
                 ImGui::SetTooltip("The choreography's own period: the beats of walking written out before its\n"
                                   "loop (a short passing pattern can have a long walk, and the other way round).");
             ImGui::Spacing();
             if (ImGui::Button("Create", ImVec2(em * 6.0f, 0.0f))) {
                 JugglingLoop blank;
-                const int n = newPatternDialog.count;
-                blank.jugglers = newPatternDialog.jugglers;
-                blank.period = n >= 2 ? (newPatternDialog.period + n - 1) / n * n : newPatternDialog.period;
+                const int n = ui.newPatternDialog.count;
+                blank.jugglers = ui.newPatternDialog.jugglers;
+                blank.period = n >= 2 ? (ui.newPatternDialog.period + n - 1) / n * n : ui.newPatternDialog.period;
                 for (int j = 0; j < blank.jugglers; ++j)
                     for (int b = 0; b < blank.period; ++b)
                         blank.throws.push_back({n >= 2 && b % n != 0 ? 3 : kOpenThrow, j});
@@ -3315,25 +3173,25 @@ int runApp() {
                     recordSettingsChange();
                     const PatternSettings before = currentPatternSettings();
                     showPatternText(text);
-                    choreography = Choreography();  // a new pattern starts in the default formation
-                    if (newPatternDialog.walking > 0) {
+                    doc.choreography = Choreography();  // a new pattern starts in the default formation
+                    if (ui.newPatternDialog.walking > 0) {
                         // ...with spike marks under everyone, and the walking's own period.
                         // (A length of its own counts as a change: an untouched choreography follows the
                         // siteswap's period, which would put this one back to it.)
                         ensureSpikeMarks();
-                        choreography.cycle = newPatternDialog.walking;
-                        choreographyMode = true;
+                        doc.choreography.cycle = ui.newPatternDialog.walking;
+                        stageView.choreographyMode = true;
                     }
-                    camera.free = false;
-                    patternCount = n >= 2 ? n : 0;
-                    throwNext.clear();
-                    openPatternName.clear();
-                    history.recordWithSettings(text, before, currentPatternSettings());
+                    stageView.camera.free = false;
+                    doc.patternCount = n >= 2 ? n : 0;
+                    doc.throwNext.clear();
+                    doc.openPatternName.clear();
+                    doc.history.recordWithSettings(text, before, currentPatternSettings());
                     settingsRecorded();
                     markSaved();
-                    selectedJuggler = -1;
-                    frameSelected = false;
-                    resetLadderView(ladderEdit);
+                    stageView.selectedJuggler = -1;
+                    stageView.frameSelected = false;
+                    resetLadderView(ladderPane.ladderEdit);
                 }
                 ImGui::CloseCurrentPopup();
             }
@@ -3357,13 +3215,14 @@ int runApp() {
             float half = 1.5f;
             for (const JugglerState& js : scene.jugglers) half = std::max(half, std::max(std::fabs(js.position.x), std::fabs(js.position.z)) + 0.8f);
             const float markScale = choreographyScale(loop);
-            for (const SpikeMark& m : choreography.marks)
+            for (const SpikeMark& m : doc.choreography.marks)
                 half = std::max(half, std::max(std::fabs(m.x), std::fabs(m.z)) * markScale + 0.8f);
-            const bool placing = jugglerDrag >= 0 || markDrag >= 0 || loiter.open;
+            const bool placing = stageView.jugglerDrag >= 0 || stageView.markDrag >= 0 || ui.loiter.open;
             if (!placing)
-                camera.floorHalf = half;
-            else if (half > camera.floorHalf)
-                camera.floorHalf += std::min(half - camera.floorHalf, 0.5f * io.DeltaTime);  // 0.5 m a second
+                stageView.camera.floorHalf = half;
+            else if (half > stageView.camera.floorHalf)
+                stageView.camera.floorHalf +=
+                    std::min(half - stageView.camera.floorHalf, 0.5f * io.DeltaTime);  // 0.5 m a second
         }
         // The 3D mouse, grabbing the stage: spin and tilt the cap to orbit; push it away to move
         // back (zoom out), pull it toward you to move in; slide it sideways or up and down and
@@ -3397,68 +3256,72 @@ int runApp() {
             const bool turning = spin != 0.0f || tilt != 0.0f;
             const bool sliding = slideX != 0.0f || slideY != 0.0f || slideZ != 0.0f;
             // Anything done with the 3D mouse makes the camera free, from where it is.
-            if (!camera.free && (turning || sliding)) {
-                makeCameraFree(camera, lastCamera);
-                spaceOrbitUntil = 0.0;
+            if (!stageView.camera.free && (turning || sliding)) {
+                makeCameraFree(stageView.camera, stageView.lastCamera);
+                stageView.spaceOrbitUntil = 0.0;
             }
-            if (camera.free) {
+            if (stageView.camera.free) {
                 const double now = ImGui::GetTime();
                 if (spin != 0.0f || tilt != 0.0f) {
                     // Spinning and tilting turn the stage like an object in your hand: the
                     // camera orbits round a center that stays put while the cap keeps turning
                     // (and a moment after), round the vertical for a spin and over the top for
                     // a tilt (never past straight down or up, so it never turns upside down).
-                    if (now >= spaceOrbitUntil)
-                        orbitCenter = freeOrbitCenter(lastCamera, scene, selectedJuggler, stageBox());
-                    spaceOrbitUntil = now + 0.3;
-                    orbitFreeCamera(camera, orbitCenter, -spin * 2.5f * step, tilt * 1.5f * step);
+                    if (now >= stageView.spaceOrbitUntil)
+                        stageView.orbitCenter =
+                            freeOrbitCenter(stageView.lastCamera, scene, stageView.selectedJuggler, stageBox());
+                    stageView.spaceOrbitUntil = now + 0.3;
+                    orbitFreeCamera(stageView.camera, stageView.orbitCenter, -spin * 2.5f * step, tilt * 1.5f * step);
                 }
                 if (sliding) {
                     Vec3 forward, right, up;
-                    freeCameraAxes(camera, &forward, &right, &up);
-                    const float v = 1.5f * nearestToCamera(camera.freePos) * step;
-                    camera.freePos = camera.freePos - right * (slideX * v) - up * (slideZ * v) - forward * (slideY * v);
+                    freeCameraAxes(stageView.camera, &forward, &right, &up);
+                    const float v = 1.5f * nearestToCamera(stageView.camera.freePos) * step;
+                    stageView.camera.freePos =
+                        stageView.camera.freePos - right * (slideX * v) - up * (slideZ * v) - forward * (slideY * v);
                 }
             }
         }
-        const CameraView cameraView = updateCamera(camera, extents, jugglerAspect, io.DeltaTime);
-        lastViewProj = cameraViewProj(cameraView, jugglerAspect);
-        lastCamera = cameraView;
-        lastAspect = jugglerAspect;
+        const CameraView cameraView = updateCamera(stageView.camera, stage.extents, jugglerAspect, io.DeltaTime);
+        stageView.lastViewProj = cameraViewProj(cameraView, jugglerAspect);
+        stageView.lastCamera = cameraView;
+        stageView.lastAspect = jugglerAspect;
         // Floor overlays: their lines go in the 3D pass (overlayTriangles, drawn after the scene,
         // so bodies hide them); their text, here, where no body is in front of it.
-        overlayTriangles.clear();
+        stageView.overlayTriangles.clear();
         {
-            OverlayBuilder overlay(&overlayTriangles, cameraView, viewSize.y);
+            OverlayBuilder overlay(&stageView.overlayTriangles, cameraView, viewSize.y);
             const BodyOccluder bodies(scene, cameraView.position);
             ImDrawList* bg = ImGui::GetBackgroundDrawList();
-            if (choreographyMode && choreography.active()) {
+            if (stageView.choreographyMode && doc.choreography.active()) {
                 const StageBox box = stageBox();
                 buildFloorGrid(overlay, settings, box.min.x, box.min.z, box.max.x, box.max.z);
-                std::vector<int> lit = markChoice.active ? markChoice.marks : std::vector<int>();
-                lit.insert(lit.end(), selectedMarks.begin(), selectedMarks.end());
-                buildSpikeMarks(overlay, choreography, choreographyScale(loop), markDrag, lit);
-                drawSpikeMarkNumbers(bg, choreography, choreographyScale(loop), lastViewProj, viewMin, viewSize, bodies, lit,
-                                     markGroupView());
+                std::vector<int> lit = stageView.markChoice.active ? stageView.markChoice.marks : std::vector<int>();
+                lit.insert(lit.end(), stageView.selectedMarks.begin(), stageView.selectedMarks.end());
+                buildSpikeMarks(overlay, doc.choreography, choreographyScale(loop), stageView.markDrag, lit);
+                drawSpikeMarkNumbers(bg, doc.choreography, choreographyScale(loop), stageView.lastViewProj, viewMin,
+                                     viewSize, bodies, lit, markGroupView());
             }
             if (showPaths) {
-                const int pathSelected = loop.jugglers == 1 ? 0 : selectedJuggler;
+                const int pathSelected = loop.jugglers == 1 ? 0 : stageView.selectedJuggler;
                 buildChoreographyPaths(overlay, paths, pathSelected, hoveredPathPoint);
-                drawChoreographyPathLabels(bg, paths, pathCycle, lastViewProj, viewMin, viewSize, pathSelected,
-                                           hoveredPathPoint, settings.pathBeatNumbers, bodies);
+                drawChoreographyPathLabels(bg, paths, pathCycle, stageView.lastViewProj, viewMin, viewSize,
+                                           pathSelected, hoveredPathPoint, settings.pathBeatNumbers, bodies);
             }
             // The reticle: what the camera orbits about. Always shown (faintly) for a free
             // camera, brighter while orbiting; for the automatic framing, only while orbiting.
-            const bool orbitingNow = cameraOrbiting || ImGui::GetTime() < spaceOrbitUntil;
-            if (camera.free || orbitingNow) {
-                const Vec3 center = !camera.free ? cameraView.target
-                                                 : (orbitingNow ? orbitCenter
-                                                                : freeOrbitCenter(cameraView, scene, selectedJuggler, stageBox()));
+            const bool orbitingNow = stageView.cameraOrbiting || ImGui::GetTime() < stageView.spaceOrbitUntil;
+            if (stageView.camera.free || orbitingNow) {
+                const Vec3 center =
+                    !stageView.camera.free
+                        ? cameraView.target
+                        : (orbitingNow ? stageView.orbitCenter
+                                       : freeOrbitCenter(cameraView, scene, stageView.selectedJuggler, stageBox()));
                 buildOrbitReticle(overlay, center, orbitingNow);
             }
         }
         // The walking loop doesn't work: the stage is as it last was that did, tinted red round the edge.
-        if (walkLoopBroken || throwLoopBroken || throwsBroken) {
+        if (stage.walkLoopBroken || stage.throwLoopBroken || stage.throwsBroken) {
             ImDrawList* bg = ImGui::GetBackgroundDrawList();
             const ImVec2 b(viewMin.x + viewSize.x, viewMin.y + viewSize.y);
             bg->AddRectFilled(viewMin, b, IM_COL32(200, 40, 30, 22));
@@ -3467,31 +3330,33 @@ int runApp() {
                 bg->AddRect(ImVec2(viewMin.x + inset, viewMin.y + inset), ImVec2(b.x - inset, b.y - inset),
                             IM_COL32(220, 50, 40, 150 - i * 24), 0.0f, 0, 3.0f);
             }
-            const char* says = throwsBroken      ? "The throws have an error (see the grid): this is the pattern as it last worked"
-                               : throwLoopBroken ? (walkLoopBroken ? "Walking and throwing loops: see the grid"
-                                                                   : "Throwing loop: see the grid")
-                                                 : "Walking loop: see the grid";
+            const char* says =
+                stage.throwsBroken ? "The throws have an error (see the grid): this is the pattern as it last worked"
+                : stage.throwLoopBroken ? (stage.walkLoopBroken ? "Walking and throwing loops: see the grid"
+                                                                : "Throwing loop: see the grid")
+                                        : "Walking loop: see the grid";
             bg->AddText(ImVec2(viewMin.x + 24.0f, b.y - ImGui::GetTextLineHeight() - 20.0f), IM_COL32(255, 140, 120, 255), says);
         }
-        drawJugglerLabels(ImGui::GetBackgroundDrawList(), scene, lastViewProj, viewMin, viewSize, selectedJuggler,
-                          &jugglerLabelCenters);
+        drawJugglerLabels(ImGui::GetBackgroundDrawList(), scene, stageView.lastViewProj, viewMin, viewSize,
+                          stageView.selectedJuggler, &stageView.jugglerLabelCenters);
         if (settings.showThrowValues)
-            drawPropValueLabels(ImGui::GetBackgroundDrawList(), scene, lastViewProj, viewMin, viewSize,
-                                settings.colorVision, styleOfBall, parsed.form.relative);
+            drawPropValueLabels(ImGui::GetBackgroundDrawList(), scene, stageView.lastViewProj, viewMin, viewSize,
+                                settings.colorVision, styleOfBall, doc.parsed.form.relative);
         // The pattern's name, if it has one, in the top-left corner of the juggler pane.
-        if (patternValid) {
+        if (doc.patternValid) {
             const std::map<std::string, std::string>::const_iterator named =
-                patternNames.find(canonicalSiteswap(pattern));
-            if (named != patternNames.end()) {
+                library.patternNames.find(canonicalSiteswap(doc.pattern));
+            if (named != library.patternNames.end()) {
                 ImDrawList* bg = ImGui::GetBackgroundDrawList();
                 const ImVec2 at(viewMin.x + panelMargin * 1.5f, viewMin.y + panelMargin);
                 const char* name = named->second.c_str();
-                bg->AddText(titleFont, kTitleFontSize, ImVec2(at.x + 1.0f, at.y + 1.0f), IM_COL32(0, 0, 0, 160), name);
-                bg->AddText(titleFont, kTitleFontSize, at, IM_COL32(232, 234, 240, 255), name);
+                bg->AddText(gfx.titleFont, kTitleFontSize, ImVec2(at.x + 1.0f, at.y + 1.0f), IM_COL32(0, 0, 0, 160),
+                            name);
+                bg->AddText(gfx.titleFont, kTitleFontSize, at, IM_COL32(232, 234, 240, 255), name);
             }
         }
         // A free camera stays where it's put; say so (and how to get the automatic framing back).
-        if (camera.free) {
+        if (stageView.camera.free) {
             ImDrawList* bg = ImGui::GetBackgroundDrawList();
             const char* note = "Free camera: Home re-frames";
             const ImVec2 size = ImGui::CalcTextSize(note);
@@ -3503,37 +3368,40 @@ int runApp() {
         // The window's title: the open pattern (its name if it's one of mine, else its
         // siteswap), with a * while it has changes that aren't saved.
         {
-            const bool unsaved = (patternValid || sketching) &&
-                                 (savedPatternText != siteswapText || savedChoreography != choreographyText() || savedThrowNext != throwNextText(throwNext));
-            const std::string shown = openPatternIndex() >= 0 ? openPatternName : std::string(siteswapText);
+            const bool unsaved =
+                (doc.patternValid || doc.sketching) &&
+                (doc.savedPatternText != doc.siteswapText || doc.savedChoreography != choreographyText() ||
+                 doc.savedThrowNext != throwNextText(doc.throwNext));
+            const std::string shown = openPatternIndex() >= 0 ? doc.openPatternName : std::string(doc.siteswapText);
             const std::string title =
                 shown.empty() ? std::string("JuggleSim") : shown + (unsaved ? "*" : "") + " \xe2\x80\x94 JuggleSim";
-            if (title != windowTitle) {
-                windowTitle = title;
+            if (title != ui.windowTitle) {
+                ui.windowTitle = title;
                 platformSetWindowTitle(title.c_str());
             }
         }
 
         // The plip: something the user just did was refused (a note under the siteswap grid, or
         // the loiter popup's) or broke the pattern. Once per thing, however it was refused.
-        if (siteswapBox.noteUntil != lastNoteUntil) {
-            if (siteswapBox.noteUntil > lastNoteUntil && !siteswapBox.note.empty()) plipWanted = true;
-            lastNoteUntil = siteswapBox.noteUntil;
+        if (gridPane.siteswapBox.noteUntil != sound.lastNoteUntil) {
+            if (gridPane.siteswapBox.noteUntil > sound.lastNoteUntil && !gridPane.siteswapBox.note.empty())
+                sound.plipWanted = true;
+            sound.lastNoteUntil = gridPane.siteswapBox.noteUntil;
         }
-        if (loiter.errorUntil != lastLoiterErrorUntil) {
-            if (loiter.errorUntil > lastLoiterErrorUntil) plipWanted = true;
-            lastLoiterErrorUntil = loiter.errorUntil;
+        if (ui.loiter.errorUntil != ui.lastLoiterErrorUntil) {
+            if (ui.loiter.errorUntil > ui.lastLoiterErrorUntil) sound.plipWanted = true;
+            ui.lastLoiterErrorUntil = ui.loiter.errorUntil;
         }
         // (One sound at a time: the plip wins over a tick.)
-        if (plipWanted && settings.sounds) {
+        if (sound.plipWanted && settings.sounds) {
             const std::vector<unsigned char>& wav = plipWav();
             platformPlaySound(wav.data(), wav.size());
-        } else if (tickWanted > 0) {
-            const std::vector<unsigned char>& wav = tickWav(tickWanted == 2);
+        } else if (sound.tickWanted > 0) {
+            const std::vector<unsigned char>& wav = tickWav(sound.tickWanted == 2);
             platformPlaySound(wav.data(), wav.size());
         }
-        plipWanted = false;
-        tickWanted = 0;
+        sound.plipWanted = false;
+        sound.tickWanted = 0;
 
         ImGui::Render();
 
@@ -3557,22 +3425,24 @@ int runApp() {
                                  framebufferHeight - topPixels - bottomPixels};
         // (Torches light the stage, except while working on the choreography, which wants the
         // ordinary light to see the floor and its marks by.)
-        renderJugglerView(renderer, prims, propMeshes, scene, cameraView, selectedJuggler, settings.colorVision, styleOfBall,
-                          jugglerRect, scene.prop == PropType::Torch && !choreographyMode);
+        renderJugglerView(gfx.renderer, gfx.prims, gfx.propMeshes, scene, cameraView, stageView.selectedJuggler,
+                          settings.colorVision, styleOfBall, jugglerRect,
+                          scene.prop == PropType::Torch && !stageView.choreographyMode);
         if (jugglerRect.w > 0 && jugglerRect.h > 0) {
             glViewport(jugglerRect.x, jugglerRect.y, jugglerRect.w, jugglerRect.h);
-            renderer.drawOverlay(cameraViewProj(cameraView, static_cast<float>(jugglerRect.w) / static_cast<float>(jugglerRect.h)),
-                                 overlayTriangles);
-            renderWalkGhost(renderer, prims, walkGhost, cameraView, jugglerRect, ImGui::GetTime());
+            gfx.renderer.drawOverlay(
+                cameraViewProj(cameraView, static_cast<float>(jugglerRect.w) / static_cast<float>(jugglerRect.h)),
+                stageView.overlayTriangles);
+            renderWalkGhost(gfx.renderer, gfx.prims, walkGhost, cameraView, jugglerRect, ImGui::GetTime());
         }
 
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         platformSwapBuffers();
     }
 
-    propMeshes.destroy();
-    prims.destroy();
-    renderer.shutdown();
+    gfx.propMeshes.destroy();
+    gfx.prims.destroy();
+    gfx.renderer.shutdown();
     ImGui_ImplOpenGL3_Shutdown();
     return 0;
 }

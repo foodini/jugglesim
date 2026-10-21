@@ -113,6 +113,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\app.h" />
+    <ClInclude Include="src\app_state.h" />
     <ClInclude Include="src\app_widgets.h" />
     <ClInclude Include="src\camera.h" />
     <ClInclude Include="src\choreography.h" />
