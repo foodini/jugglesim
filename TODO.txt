@@ -1,41 +1,38 @@
+HARD STUFF
 * When a juggler is passing through a spike, smooth their motion. They shouldn't come to a
   stop at all.
-* I need to be able to click on an arrow to select a spike.	
-* Clicing the arrow of spike marks doesn't work if you click on the stem instead of the arrowhead.
-* Home and B have too-similar functions. Make ONE of them reset the camera to autoframe and the
-  other send the playhead back to 1.
-* allow user to choose which error types to audio mute and which to allow.
-* Add "forward 1 beat" etc. to the scrubber. Make 1/12 beat ctrl arrows/
-* A collapsed ladder ought to be a single vertical line.
-* I'm occasionally seeing a pass line that intersects a beat/hand line as it crosses over
-  it. We should think about how to avoid this without breaking the crossing-path info that
-  we get - like when you do a 97531, the crossing point of the props illustrates that they
-  all peak at the same time. Something to think about for the long run.
-* add a config to choose between straight and spline lines in the ladder.
 * add some really ridiculous props;
-  * Torches (not ridiculous.) 
   * Chainsaw, birthday cake, salmon, dry ice, open 2L bottle of soda, bowling balls?
-* If the primary read head leaves the ladder view, scroll to follow it? Do we pop back to
-  beat1 when it fades? If so, we should do so in a way that doesn't appear to move the 
-  entire ladder. Rather, the ladder should bump back by exactly the cycle length. The only
-  thing you'd see on the sceen is the numbers suddenly changing.
-* Add a trash icon next to a pattern in the menu to allow deletion? Ask for confirmation,
-  of course.
-* save should probably get a proper dialogue.
 * DETECT PHYSICS COLLISIONS. If a pattern puts two clubs in the same place at the same time,
   like two pairs of jugglers trying to pass through a middle point, warn the user that the
   pattern may not be realistic? That specific example, if juggled perfectly, works. But,
   real jugglers are not going to have that kind of timing, targeting, and spin control. We'd
   need to specify slop parameters.
-* When spin rates differ, have the Juggler pane call this out! In spins/beat so the bpm
-  doesn't change this value.
-  * hovering over a throw in the ladder will tell you it's spin rate.
+* Delete/Add juggler
+  * Deleting a juggler should turn all passes to them into selfs and recompute offsets.
+
+Easier stuff
+* allow user to choose which error types to audio mute and which to allow.
+* A collapsed ladder ought to be a single vertical line.
+* add a config to choose between straight and spline lines in the ladder.
+* Add a trash icon next to a pattern in the menu to allow deletion? Ask for confirmation,
+  of course.
+* save should probably get a proper dialogue.
 * Provide the option to set the # of spins for different heights. I'd make this pattern-
   global. So, ALL 8s in the pattern are 2s, for example.
 * allow click to select an SM so I can hit delete on one.
-* Delete/Add juggler
-  * Deleting a juggler should turn all passes to them into selfs and recompute offsets.
 * Different gravity settings; earth, moon, jupiter, neutron star, black hole, deimos.
+
+LOW HANGING FRUIT
+* Get rid of "distance." Choreo is less convenient, but it's the mechanism of the app.
+* I need to be able to click on an arrow to select a spike.	
+* Clicing the arrow of spike marks doesn't work if you click on the stem instead of the arrowhead.
+  (Is this still true?)
+* Home and B have too-similar functions. Make ONE of them reset the camera to autoframe and the
+  other send the playhead back to 1.
+* Add "forward 1 beat" etc. to the scrubber. Make 1/12 beat ctrl arrows/
+
+
 
   
 Easter eggs
@@ -46,6 +43,6 @@ Easter eggs
   * Do The Macarena
   * Pushups, burpees,
   * Shrug.
-  * Stare at the camera and do a wft shrug
+  * Stare at the camera and do a wtf shrug
   * Do a head-spin
   
