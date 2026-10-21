@@ -136,6 +136,7 @@ src/
   renderer.h/.cpp     lit solid-color shader (and see-through ghosts), plus additive "glow" ribbons
   juggler_figure.*    stick-figure pose, arm and leg IK, and drawing
   prop_figure.*       ball, club and ring meshes and drawing
+  grid_pane.*         the siteswap grid pane: draws it, and says what was done (app.cpp applies it)
   juggle_sim.h/.cpp   where hands, body and props are at any moment (closed-form physics)
   timing.h            ticks (5040 per beat, int64) and the TempoMap (beats <-> seconds)
   pattern.h/.cpp      throw events + sections: the source of truth for juggling
