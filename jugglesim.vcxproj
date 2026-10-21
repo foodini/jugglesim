@@ -88,6 +88,7 @@
     <ClCompile Include="src\juggle_sim.cpp" />
     <ClCompile Include="src\juggler_figure.cpp" />
     <ClCompile Include="src\ladder_edit.cpp" />
+    <ClCompile Include="src\ladder_pane.cpp" />
     <ClCompile Include="src\ladder_view.cpp" />
     <ClCompile Include="src\loop_ops.cpp" />
     <ClCompile Include="src\main.cpp" />
@@ -127,6 +128,7 @@
     <ClInclude Include="src\juggle_sim.h" />
     <ClInclude Include="src\juggler_figure.h" />
     <ClInclude Include="src\ladder_edit.h" />
+    <ClInclude Include="src\ladder_pane.h" />
     <ClInclude Include="src\ladder_view.h" />
     <ClInclude Include="src\loop_ops.h" />
     <ClInclude Include="src\math3d.h" />

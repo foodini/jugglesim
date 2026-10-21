@@ -16,6 +16,7 @@
 #include "app_state.h"
 #include "document.h"
 #include "grid_pane.h"
+#include "ladder_pane.h"
 #include "camera.h"
 #include "panels.h"
 #include "stage_overlays.h"
@@ -668,6 +669,122 @@ int runApp() {
             ui.done = true;
         }
     };
+    // Makes the changes asked for in the ladder pane (see drawLadderPane). `writtenLoop`: the throws
+    // as written this frame.
+    auto applyLadderRequest = [&](const LadderPaneRequest& r, const JugglingLoop& writtenLoop) {
+        LadderEditResult edited = r.edited;
+        if (r.toolbar.toggleOrbits) {
+            settings.colorByOrbit = !settings.colorByOrbit;
+            saveSettings(settings);
+        }
+        if (r.toolbar.toggleDimLinked) {
+            settings.dimLinked = !settings.dimLinked;
+            saveSettings(settings);
+        }
+        if (r.toolbar.toggleValues) {
+            settings.showThrowValues = !settings.showThrowValues;
+            saveSettings(settings);
+        }
+        if (r.toolbar.newPeriodBeats > 0 && doc.patternCount >= 2 && r.toolbar.newPeriodBeats % doc.patternCount != 0) {
+            gridPane.siteswapBox.note = "Can't: this is a " + std::to_string(doc.patternCount) +
+                                        "-count, so the period goes up and down " +
+                                        std::to_string(doc.patternCount) + " beats at a time.";
+            gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+        } else if (r.toolbar.newPeriodBeats > 0) {
+            cancelLadderEdit(ladderPane.ladderEdit);
+            commitTyping();
+            const JugglingLoop longer = loopWithPeriod(writtenLoop, r.toolbar.newPeriodBeats);
+            // (Written as it is: a period chosen on purpose isn't shortened again.)
+            std::string text;
+            if (loopToText(longer, &text, &doc.parsed.form)) {
+                const Siteswap check = parseSiteswap(text);
+                if (check.valid || check.sketch) {
+                    std::snprintf(doc.siteswapText, sizeof(doc.siteswapText), "%s", text.c_str());
+                    doc.parsed = check;
+                    doc.patternValid = check.valid;
+                    doc.sketching = check.sketch;
+                    if (check.valid) doc.pattern = patternFromSiteswap(check);
+                    if (check.sketch) doc.sketchLoop = check.loop;
+                    recordPattern(text);
+                }
+            }
+        }
+        // Picking up a throw pauses the jugglers (don't confuse them mid-edit); drawing in a
+        // sketch doesn't, so you can watch props pop in as you go.
+        if (edited.startedChain) playback.playing = false;
+        if (!edited.note.empty()) {
+            gridPane.siteswapBox.note = edited.note;
+            gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+        }
+        if (edited.selectJuggler != kNoSelectionChange) {
+            stageView.selectedJuggler = edited.selectJuggler;
+            if (stageView.selectedJuggler < 0) stageView.frameSelected = false;
+        }
+        if (edited.committed) {
+            const bool wasWorking = doc.parsed.valid || doc.parsed.sketch;
+            // An edit to the loop played out goes into the beats written out (if that's where it was).
+            JugglingLoop changed = edited.loop;
+            std::string why;
+            if (stage.derived.played.expanded &&
+                !writtenFromPlayed(stage.derived.played, writtenLoop, edited.loop, stage.derived.paths, &changed, &why)) {
+                gridPane.siteswapBox.note = "Can't: " + why;
+                gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+                sound.plipWanted = true;
+            } else {
+                applyLoop(changed);
+                if (wasWorking && !doc.parsed.valid && !doc.parsed.sketch)
+                    sound.plipWanted = true;  // (it broke it)
+            }
+        }
+        if (edited.goToStart) goToStart();
+        if (edited.walkLikeJuggler >= 0) openWalkLike(edited.walkLikeJuggler);
+        if (edited.deleteKeyframeJuggler >= 0)
+            removeKeyframe(&doc.choreography, edited.deleteKeyframeJuggler, edited.deleteKeyframeBeat);
+        // A keyframe's own changes: turning the long way round, or moved to another beat.
+        auto keyframeAt = [&](int j, int beat) -> Keyframe* {
+            if (j < 0 || j >= static_cast<int>(doc.choreography.keys.size())) return nullptr;
+            for (Keyframe& k : doc.choreography.keys[static_cast<size_t>(j)])
+                if (k.beat == beat) return &k;
+            return nullptr;
+        };
+        if (Keyframe* k = keyframeAt(edited.longTurnKeyframeJuggler, edited.longTurnKeyframeBeat)) k->longTurn = !k->longTurn;
+        // With rotated repeats, keyframes stay in the beats written out.
+        const int writtenBeats = choreographyCycle(shownLoop(), doc.juggleParams);
+        auto pastWritten = [&](int beat) {
+            if (doc.choreography.repeats() == 1 || beat < writtenBeats) return false;
+            gridPane.siteswapBox.note =
+                "Can't: beat " + std::to_string(beat + 1) + " is in the walking loop's copies (only beats 1-" +
+                std::to_string(writtenBeats) + " are written out; the C rows' next column says what comes after).";
+            gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+            return true;
+        };
+        if (edited.moveKeyframeJuggler >= 0 && pastWritten(edited.moveKeyframeTo)) edited.moveKeyframeJuggler = -1;
+        if (edited.loiterJuggler >= 0 && pastWritten(edited.loiterTo)) edited.loiterJuggler = -1;
+        if (Keyframe* k = keyframeAt(edited.moveKeyframeJuggler, edited.moveKeyframeFrom)) {
+            Keyframe moved = *k;
+            moved.beat = edited.moveKeyframeTo;
+            removeKeyframe(&doc.choreography, edited.moveKeyframeJuggler, edited.moveKeyframeFrom);
+            setKeyframe(&doc.choreography, edited.moveKeyframeJuggler, moved);  // (replacing one already there)
+        }
+        // Ctrl+dragged: a loiter, the keyframe copied to another beat. If the copy comes first,
+        // the juggler arrives there (and any long way round goes with the arrival).
+        if (Keyframe* k = keyframeAt(edited.loiterJuggler, edited.loiterFrom)) {
+            Keyframe copy = *k;
+            copy.beat = edited.loiterTo;
+            copy.longTurn = edited.loiterBefore && k->longTurn;
+            if (edited.loiterBefore) k->longTurn = false;
+            setKeyframe(&doc.choreography, edited.loiterJuggler, copy);
+        }
+        // Scrubbing in the beat numbers: the playhead follows the mouse, and playback stays
+        // paused afterwards.
+        if (edited.scrubbing) {
+            playback.playing = false;
+            playback.beat = edited.scrubBeat;
+        }
+        // A juggler's menu: Same as... (make them a link) or Unlink (write them out).
+        if (edited.linkJuggler >= 0) linkJugglers(edited.linkJuggler, edited.linkTo, edited.linkStart);
+        if (edited.unlinkJuggler >= 0) unlinkJugglers(edited.unlinkJuggler);
+    };
     // Makes the changes asked for in the siteswap grid (see drawGridPane). `writtenLoop`: the
     // throws as written this frame.
     auto applyGridRequest = [&](const SiteswapGridResult& g, const JugglingLoop& writtenLoop) {
@@ -1191,196 +1308,10 @@ int runApp() {
         refreshDerived();
 
         // Ladder diagram (top of left half).
-        ImGui::SetNextWindowPos(ImVec2(0.0f, top));
-        ImGui::SetNextWindowSize(ImVec2(leftWidth, bodyBottom - top));
-        // The ladder handles the mouse wheel itself (pan/zoom), so the pane mustn't scroll.
-        ladderPane.ladderPreview = false;
-        if (ImGui::Begin("Ladder", nullptr, paneFlags | ImGuiWindowFlags_NoScrollWithMouse)) {
-            // What the ladder shows and edits: the sketch, or the pattern.
-            const JugglingLoop ladderLoop =
-                doc.sketching ? doc.sketchLoop : (doc.patternValid ? patternLoop(doc.pattern) : JugglingLoop());
-            const LadderToolbarRequest request =
-                drawLadderToolbar(ladderLoop, ladderPane.ladderEdit, settings.showThrowValues, settings.colorByOrbit,
-                                  doc.parsed.form.hasLinks(), settings.dimLinked);
-            if (request.toggleOrbits) {
-                settings.colorByOrbit = !settings.colorByOrbit;
-                saveSettings(settings);
-            }
-            if (request.toggleCollapseAll) toggleCollapseAll(ladderPane.ladderEdit, ladderLoop.jugglers);
-            if (request.toggleDimLinked) {
-                settings.dimLinked = !settings.dimLinked;
-                saveSettings(settings);
-            }
-            if (request.resetView) resetLadderView(ladderPane.ladderEdit);
-            if (request.toggleValues) {
-                settings.showThrowValues = !settings.showThrowValues;
-                saveSettings(settings);
-            }
-            if (request.newPeriodBeats > 0 && doc.patternCount >= 2 && request.newPeriodBeats % doc.patternCount != 0) {
-                gridPane.siteswapBox.note = "Can't: this is a " + std::to_string(doc.patternCount) +
-                                            "-count, so the period goes up and down " +
-                                            std::to_string(doc.patternCount) + " beats at a time.";
-                gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
-            } else if (request.newPeriodBeats > 0) {
-                cancelLadderEdit(ladderPane.ladderEdit);
-                commitTyping();
-                const JugglingLoop longer = loopWithPeriod(ladderLoop, request.newPeriodBeats);
-                // (Written as it is: a period chosen on purpose isn't shortened again.)
-                std::string text;
-                if (loopToText(longer, &text, &doc.parsed.form)) {
-                    const Siteswap check = parseSiteswap(text);
-                    if (check.valid || check.sketch) {
-                        std::snprintf(doc.siteswapText, sizeof(doc.siteswapText), "%s", text.c_str());
-                        doc.parsed = check;
-                        doc.patternValid = check.valid;
-                        doc.sketching = check.sketch;
-                        if (check.valid) doc.pattern = patternFromSiteswap(check);
-                        if (check.sketch) doc.sketchLoop = check.loop;
-                        recordPattern(text);
-                    }
-                }
-            }
-            LadderViewOptions ladderOptions;
-            ladderOptions.showValues = settings.showThrowValues;
-            ladderOptions.colorByOrbit = settings.colorByOrbit;
-            ladderOptions.selectedJuggler = stageView.selectedJuggler;
-            ladderOptions.highlightThrow = gridPane.siteswapHoverThrow;
-            ladderOptions.relativeTargets = doc.parsed.form.relative;
-            ladderOptions.form = &doc.parsed.form;
-            ladderOptions.countN = doc.patternCount;
-            ladderOptions.writtenPeriod = stage.derived.played.expanded ? stage.derived.played.period : 0;
-            ladderOptions.dimLinked = settings.dimLinked;
-            ladderOptions.followPlayhead = playback.playing;
-            {
-                const JugglingLoop spinLoop = doc.patternValid && !doc.sketching ? stage.derived.played.loop : JugglingLoop();
-                if (spinLoop != ladderPane.spinCacheLoop || doc.juggleParams.bpm != ladderPane.spinCacheParams.bpm ||
-                    doc.juggleParams.dwellBeats != ladderPane.spinCacheParams.dwellBeats ||
-                    doc.juggleParams.prop != ladderPane.spinCacheParams.prop ||
-                    doc.juggleParams.distance != ladderPane.spinCacheParams.distance) {
-                    ladderPane.spinCache = throwSpins(spinLoop, doc.juggleParams);
-                    ladderPane.spinCacheLoop = spinLoop;
-                    ladderPane.spinCacheParams = doc.juggleParams;
-                }
-                ladderOptions.spins = &ladderPane.spinCache;
-            }
-            {
-                const JugglingLoop ladderLoop = shownLoop();
-                const int written = choreographyCycle(ladderLoop, doc.juggleParams);  // (the beats written out)
-                ladderOptions.keyframeCycle = choreographyFullCycle(doc.choreography, written);
-                ladderOptions.showKeyframeMarks = settings.showKeyframeMarks;
-                ladderOptions.walkLinks = stageView.choreographyMode && ladderLoop.jugglers > 1;
-                const int cycle = ladderOptions.keyframeCycle;
-                ladderOptions.walkLabels.assign(static_cast<size_t>(std::max(0, ladderLoop.jugglers)), std::string());
-                for (int j = 0; j < ladderLoop.jugglers; ++j)
-                    ladderOptions.walkLabels[static_cast<size_t>(j)] = walkLinkLabel(doc.choreography.link(j));
-                for (size_t j = 0; j < static_cast<size_t>(std::max(0, ladderLoop.jugglers)); ++j) {
-                    const std::vector<Keyframe> keys =
-                        effectiveKeyframes(doc.choreography, static_cast<int>(j), written);
-                    const bool linked = doc.choreography.link(static_cast<int>(j)).active();
-                    for (size_t i = 0; i < keys.size(); ++i) {
-                        const Keyframe& k = keys[i];
-                        LadderKeyframe lk;
-                        lk.juggler = static_cast<int>(j);
-                        lk.beat = k.beat;
-                        const bool onMark = k.mark >= 0 && k.mark < static_cast<int>(doc.choreography.marks.size());
-                        lk.where = onMark ? "on spike mark " + doc.choreography.marks[static_cast<size_t>(k.mark)].name
-                                          : "a turned spot";
-                        lk.longTurn = k.longTurn;
-                        lk.mark = onMark ? k.mark : -1;
-                        if (onMark) lk.markName = doc.choreography.marks[static_cast<size_t>(k.mark)].name;
-                        lk.derived = linked || k.beat >= written;  // (a link's, or a rotated repeat's: locked)
-                        if (cycle > 0) {
-                            const Keyframe& next = keys[(i + 1) % keys.size()];
-                            const int gap = keys.size() == 1 ? cycle : ((next.beat - k.beat) % cycle + cycle) % cycle;
-                            if (gap > 0 && sameKeyframeSpot(doc.choreography, k, next)) lk.stayBeats = gap;
-                        }
-                        ladderOptions.keyframes.push_back(lk);
-                    }
-                }
-            }
-            // (It shows the loop played out: what happens on each beat.)
-            LadderEditResult edited =
-                drawLadderDiagram(stage.derived.played.expanded ? stage.derived.played.loop : writtenLoop, settings.colorVision,
-                                  ladderPane.ladderEdit, playback.beat, ladderOptions);
-            // Picking up a throw pauses the jugglers (don't confuse them mid-edit); drawing in a
-            // sketch doesn't, so you can watch props pop in as you go.
-            if (edited.startedChain) playback.playing = false;
-            if (!edited.note.empty()) {
-                gridPane.siteswapBox.note = edited.note;
-                gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
-            }
-            ladderPane.ladderPreview = edited.hasPreview;
-            if (ladderPane.ladderPreview) ladderPane.ladderPreviewLoop = edited.preview;
-            if (edited.selectJuggler != kNoSelectionChange) {
-                stageView.selectedJuggler = edited.selectJuggler;
-                if (stageView.selectedJuggler < 0) stageView.frameSelected = false;
-            }
-            if (edited.committed) {
-                const bool wasWorking = doc.parsed.valid || doc.parsed.sketch;
-                // An edit to the loop played out goes into the beats written out (if that's where it was).
-                JugglingLoop changed = edited.loop;
-                std::string why;
-                if (stage.derived.played.expanded &&
-                    !writtenFromPlayed(stage.derived.played, writtenLoop, edited.loop, stage.derived.paths, &changed, &why)) {
-                    gridPane.siteswapBox.note = "Can't: " + why;
-                    gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
-                    sound.plipWanted = true;
-                } else {
-                    applyLoop(changed);
-                    if (wasWorking && !doc.parsed.valid && !doc.parsed.sketch)
-                        sound.plipWanted = true;  // (it broke it)
-                }
-            }
-            if (edited.goToStart) goToStart();
-            if (edited.walkLikeJuggler >= 0) openWalkLike(edited.walkLikeJuggler);
-            if (edited.deleteKeyframeJuggler >= 0)
-                removeKeyframe(&doc.choreography, edited.deleteKeyframeJuggler, edited.deleteKeyframeBeat);
-            // A keyframe's own changes: turning the long way round, or moved to another beat.
-            auto keyframeAt = [&](int j, int beat) -> Keyframe* {
-                if (j < 0 || j >= static_cast<int>(doc.choreography.keys.size())) return nullptr;
-                for (Keyframe& k : doc.choreography.keys[static_cast<size_t>(j)])
-                    if (k.beat == beat) return &k;
-                return nullptr;
-            };
-            if (Keyframe* k = keyframeAt(edited.longTurnKeyframeJuggler, edited.longTurnKeyframeBeat)) k->longTurn = !k->longTurn;
-            // With rotated repeats, keyframes stay in the beats written out.
-            const int writtenBeats = choreographyCycle(shownLoop(), doc.juggleParams);
-            auto pastWritten = [&](int beat) {
-                if (doc.choreography.repeats() == 1 || beat < writtenBeats) return false;
-                gridPane.siteswapBox.note =
-                    "Can't: beat " + std::to_string(beat + 1) + " is in the walking loop's copies (only beats 1-" +
-                    std::to_string(writtenBeats) + " are written out; the C rows' next column says what comes after).";
-                gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
-                return true;
-            };
-            if (edited.moveKeyframeJuggler >= 0 && pastWritten(edited.moveKeyframeTo)) edited.moveKeyframeJuggler = -1;
-            if (edited.loiterJuggler >= 0 && pastWritten(edited.loiterTo)) edited.loiterJuggler = -1;
-            if (Keyframe* k = keyframeAt(edited.moveKeyframeJuggler, edited.moveKeyframeFrom)) {
-                Keyframe moved = *k;
-                moved.beat = edited.moveKeyframeTo;
-                removeKeyframe(&doc.choreography, edited.moveKeyframeJuggler, edited.moveKeyframeFrom);
-                setKeyframe(&doc.choreography, edited.moveKeyframeJuggler, moved);  // (replacing one already there)
-            }
-            // Ctrl+dragged: a loiter, the keyframe copied to another beat. If the copy comes first,
-            // the juggler arrives there (and any long way round goes with the arrival).
-            if (Keyframe* k = keyframeAt(edited.loiterJuggler, edited.loiterFrom)) {
-                Keyframe copy = *k;
-                copy.beat = edited.loiterTo;
-                copy.longTurn = edited.loiterBefore && k->longTurn;
-                if (edited.loiterBefore) k->longTurn = false;
-                setKeyframe(&doc.choreography, edited.loiterJuggler, copy);
-            }
-            // Scrubbing in the beat numbers: the playhead follows the mouse, and playback stays
-            // paused afterwards.
-            if (edited.scrubbing) {
-                playback.playing = false;
-                playback.beat = edited.scrubBeat;
-            }
-            // A juggler's menu: Same as... (make them a link) or Unlink (write them out).
-            if (edited.linkJuggler >= 0) linkJugglers(edited.linkJuggler, edited.linkTo, edited.linkStart);
-            if (edited.unlinkJuggler >= 0) unlinkJugglers(edited.unlinkJuggler);
-        }
-        ImGui::End();
+        const LadderPaneRequest ladderRequest =
+            drawLadderPane(ladderPane, doc, stage, stageView, gridPane.siteswapHoverThrow, playback, settings, writtenLoop,
+                           shownLoop(), ImVec2(0.0f, top), ImVec2(leftWidth, bodyBottom - top), paneFlags);
+        applyLadderRequest(ladderRequest, writtenLoop);
 
         // The siteswap grid (along the bottom, full width).
         const SiteswapGridResult gridRequest =

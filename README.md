@@ -148,6 +148,7 @@ src/
   siteswap_grid.*     the siteswap grid along the bottom: drawing it, typing, menus, paste
   sound.h/.cpp        the plip (a short sound when something's refused), made as a WAV in memory
   sound_mac.mm        macOS: plays it with AVFoundation (Windows uses PlaySound, in main.cpp)
+  ladder_pane.*       the ladder pane: toolbar and diagram; draws, and says what was done (app.cpp applies it)
   ladder_view.h/.cpp  ladder diagram + its toolbar + drag editing, drawn with ImGui
   ladder_edit.h/.cpp  the edit chain behind ladder editing (pure logic, no drawing)
   loop_ops.h/.cpp     loop operations: ? sketches, beat insert/delete, paths and orbits, drawing

@@ -60,6 +60,12 @@
     <ClInclude Include="src\grid_pane.h">
       <Filter>src</Filter>
     </ClInclude>
+    <ClCompile Include="src\ladder_pane.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClInclude Include="src\ladder_pane.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClCompile Include="src\app.cpp">
       <Filter>src</Filter>
     </ClCompile>
