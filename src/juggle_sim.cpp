@@ -266,10 +266,10 @@ Vec3 dropbackByFace(bool right) { return Vec3(right ? -0.09f : 0.09f, 1.66f, 0.3
 Vec3 dropbackLowPoint(bool right) { return Vec3(right ? -0.12f : 0.12f, 0.92f, 0.33f); }
 Vec3 behindCatchPoint(bool right) { return Vec3(right ? -0.27f : 0.27f, 1.70f, 0.06f); }
 
-// Hoops are thrown with a long swing of the arm. A hoop going up (a self) is let go high, the
-// arm reaching up and forward above the head, after a low swoop at about waist height (from
-// video of a hoop juggler); a flatter self, and any pass, is let go lower, in front of the
-// chest, from an underhand swing that starts down beside the hip. The swing runs back
+// Hoops are thrown with a long swing of the arm. A high self is let go high, the arm reaching
+// up and forward above the head, after a low swoop at about waist height (from video of a hoop
+// juggler); a lower self, and any pass, is let go lower, in front of the chest, from an
+// underhand swing that starts down beside the hip. The swing runs back
 // along the way the hoop leaves the hand, so the hand is already moving that way.
 // Rings (from video of a 3-ring cascade): caught high, about head height with the arm
 // reaching up and forward, and thrown low, about waist height with the arm well forward.
@@ -278,7 +278,9 @@ Vec3 ringCatchPoint(bool right) { return Vec3(right ? -0.26f : 0.26f, 1.58f, 0.4
 
 Vec3 hoopThrowPointHigh(bool right) { return Vec3(right ? -0.22f : 0.22f, 1.90f, 0.30f); }
 Vec3 hoopThrowPointOut(bool right) { return Vec3(right ? -0.18f : 0.18f, 1.35f, 0.50f); }
-constexpr float kHoopSteep = 75.0f * kPi / 180.0f, kHoopFlat = 45.0f * kPi / 180.0f;  // launch angles
+// Selfs this high (m, without drag) or lower are let go out in front; this high or higher,
+// overhead; between, between.
+constexpr float kHoopLowSelf = 1.0f, kHoopHighSelf = 2.0f;
 constexpr float kHoopSwing = 0.95f;  // m: how far back along its launch the swing starts
 constexpr float kHoopLowestHand = 0.90f;  // m: and no lower than this
 constexpr float kHoopFurthestBack = -0.15f;  // m: nor further back than this (behind the body)
@@ -535,7 +537,9 @@ public:
     // Whether the throw j makes on beat b starts from a low scoop and comes all the way up to a
     // high release (a dropback, or any hoop throw), and the low point it starts from.
     bool longDrive(int j, int b) const {
-        return isDropback(j, b) || (prop() == PropType::Hoop && valueAt(j, b) > 0 && !isHeld(j, b));
+        if (isDropback(j, b)) return true;
+        // (A hoop's hand-across 1 is just handed over, like anything else's.)
+        return prop() == PropType::Hoop && valueAt(j, b) > 0 && !isHeld(j, b) && !(valueAt(j, b) == 1 && destAt(j, b) == j);
     }
     Vec3 longDriveLowPoint(int j, int b) const {
         if (prop() != PropType::Hoop) return dropbackLowPoint(rightHand(j, b));
@@ -550,9 +554,8 @@ public:
         low.z = std::max(low.z, kHoopFurthestBack);  // (beside the hip at the furthest)
         return low;
     }
-    // A hoop's release (j-local, before turning toward a partner): high for a steep self, out in
-    // front for a flat one or a pass (see hoopThrowPointHigh). How steep is estimated from where the hoop
-    // goes and how long it flies, from about the hands (the release itself depends on this).
+    // A hoop's release (j-local, before turning toward a partner): overhead for a high self, out
+    // in front for a low one or a pass (see hoopThrowPointHigh).
     Vec3 hoopThrowPoint(int j, int b) const {
         const bool right = rightHand(j, b);
         const int v = valueAt(j, b);
@@ -560,12 +563,10 @@ public:
         // A pass is swung out underhand however high it goes (lobbing it to someone close, the
         // swing just comes up more steeply); only a self goes up overhead.
         if (r != j) return hoopThrowPointOut(right);
-        const double catchTime = catchTimeFor(r, b + v);
-        const Vec3 from = placement(j, b).point(Vec3(0.0f, 1.4f, 0.3f));
-        const Vec3 to = placement(r, catchTime).point(catchPointAt(r, b + v));
-        const Vec3 v0 = drag_.launch(from, to, std::max(flightSeconds(j, b, v), 1e-3f));
-        const float steep = std::atan2(v0.y, std::hypot(v0.x, v0.z));
-        const float u = std::clamp((steep - kHoopFlat) / (kHoopSteep - kHoopFlat), 0.0f, 1.0f);
+        // How high it goes (without drag: just to choose), from the flight's time.
+        const float T = flightSeconds(j, b, v);
+        const float height = kGravity * T * T / 8.0f;
+        const float u = std::clamp((height - kHoopLowSelf) / (kHoopHighSelf - kHoopLowSelf), 0.0f, 1.0f);
         const float w = u * u * (3.0f - 2.0f * u);
         return hoopThrowPointOut(right) * (1.0f - w) + hoopThrowPointHigh(right) * w;
     }

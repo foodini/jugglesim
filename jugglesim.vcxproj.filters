@@ -15,6 +15,36 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\app_widgets.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClInclude Include="src\app_widgets.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClCompile Include="src\camera.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClInclude Include="src\camera.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClCompile Include="src\panels.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClInclude Include="src\panels.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClCompile Include="src\stage_overlays.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClInclude Include="src\stage_overlays.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClCompile Include="src\stage_render.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClInclude Include="src\stage_render.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClCompile Include="src\app.cpp">
       <Filter>src</Filter>
     </ClCompile>

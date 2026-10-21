@@ -121,6 +121,11 @@ build.bat             command-line build on Windows (see above)
 mac.mk, build_mac.sh  the macOS build (see above)
 src/
   app.h/.cpp          the app itself: panes, menus, editing, playback, drawing (every platform)
+  app_widgets.*       small UI pieces: transport buttons, throw descriptions, the shortcuts sheet
+  camera.*            the 3D view's camera: automatic framing, orbit/zoom, free camera, projection
+  stage_overlays.*    over and on the 3D view: spike marks, paths, floor grid, labels, picking
+  stage_render.*      drawing the 3D view: jugglers, props, flames, the walking ghost
+  panels.*            the floating Tweakables and Choreography panels
   platform.h          what each platform provides to the app (window, input, OpenGL, files)
   main.cpp            Windows: Win32 window, WGL context, ImGui's Win32 backend
   main_glfw.cpp       macOS: GLFW window and OpenGL 3.3 core context, ImGui's GLFW backend
