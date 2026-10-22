@@ -22,9 +22,11 @@ bool platformTakeCloseRequest();
 void platformSetWindowTitle(const char* title);
 
 // A 3D mouse (a 3Dconnexion SpaceMouse, or any multi-axis controller), read directly (no
-// vendor SDK): how far its cap is pushed along, and turned about, each of its axes, from -1 to
-// 1 (0 at rest; the device's own axes: x to the right, y away from you, z up), and its buttons
-// (bit 0: the left one). Not present: there's none, or this platform doesn't read them yet.
+// vendor SDK): how far its cap is pushed along, and turned about, each of its axes, in the
+// device's raw counts (0 at rest; the device's own axes: x to the right, y away from you, z up),
+// and its buttons (bit 0: the left one). Not present: there's none, or this platform doesn't read
+// them yet. (The counts are said to run to about 350 either way, but well past that is common
+// without much force.)
 struct SpaceMouseState {
     bool present = false;
     float move[3] = {0.0f, 0.0f, 0.0f};

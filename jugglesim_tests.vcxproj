@@ -68,6 +68,7 @@
     <ClCompile Include="src\loop_ops.cpp" />
     <ClCompile Include="src\pattern.cpp" />
     <ClCompile Include="src\pattern_library.cpp" />
+    <ClCompile Include="src\response_curve.cpp" />
     <ClCompile Include="src\settings.cpp" />
     <ClCompile Include="src\siteswap.cpp" />
     <ClCompile Include="src\siteswap_edit.cpp" />
@@ -81,6 +82,7 @@
     <ClCompile Include="tests\test_library.cpp" />
     <ClCompile Include="tests\test_main.cpp" />
     <ClCompile Include="tests\test_physics.cpp" />
+    <ClCompile Include="tests\test_response_curve.cpp" />
     <ClCompile Include="tests\test_siteswap.cpp" />
   </ItemGroup>
   <ItemGroup>

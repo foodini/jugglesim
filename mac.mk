@@ -78,7 +78,7 @@ LDFLAGS += $(PLATFORM_FLAGS)
 # Always optimized; run from here, the repository root, so they find data/patterns.txt.
 
 TEST_APP_SRCS := $(addprefix src/,choreography.cpp color_vision.cpp document.cpp draw_helpers.cpp juggle_sim.cpp \
-                   ladder_edit.cpp loop_ops.cpp pattern.cpp pattern_library.cpp settings.cpp \
+                   ladder_edit.cpp loop_ops.cpp pattern.cpp pattern_library.cpp response_curve.cpp settings.cpp \
                    siteswap.cpp siteswap_edit.cpp)
 TEST_IMGUI_SRCS := $(IMGUI)/imgui.cpp $(IMGUI)/imgui_draw.cpp $(IMGUI)/imgui_tables.cpp $(IMGUI)/imgui_widgets.cpp
 TEST_SRCS := $(wildcard tests/*.cpp)

@@ -17,6 +17,7 @@
 #include "document.h"
 #include "grid_pane.h"
 #include "ladder_pane.h"
+#include "stage_pane.h"
 #include "camera.h"
 #include "panels.h"
 #include "stage_overlays.h"
@@ -126,16 +127,11 @@ int runApp() {
             return stage.lastGoodDerived.written;
         return JugglingLoop();
     };
-    // Spike marks are kept in meters for the distance they were placed at, and scale with it.
     // A spike mark's name ("0a"), or "?" for none.
     auto markNameOf = [&](int m) {
         return m >= 0 && m < static_cast<int>(doc.choreography.marks.size())
                    ? doc.choreography.marks[static_cast<size_t>(m)].name
                    : std::string("?");
-    };
-    auto choreographyScale = [&](const JugglingLoop& loop) {
-        if (doc.choreography.reference <= 0.0 || loop.empty()) return 1.0f;
-        return static_cast<float>(passingDistance(loop, doc.juggleParams) / doc.choreography.reference);
     };
     // Starts a choreography if there isn't one: a spike mark where each juggler stands now
     // (the default formation), facing as they do.
@@ -160,22 +156,6 @@ int runApp() {
         }
         doc.choreography = c;
         doc.untouchedChoreography = choreographyToText(doc.choreography);
-    };
-    // What of the groups the floor shows this frame: all of them (badges and lines) while Ctrl is
-    // held; else the lines of the group under the mouse in the panel, or of the one selected.
-    auto markGroupView = [&]() {
-        MarkGroupView v;
-        if (!stageView.choreographyMode || !doc.choreography.active()) return v;
-        if (ImGui::GetIO().KeyCtrl) {
-            v.slots = doc.choreography.groupsUsed();
-            for (int g = 0; g < v.slots; ++g)
-                if (!doc.choreography.group(g).empty()) v.lines.push_back(g);
-        } else if (stageView.groupChipHovered >= 0) {
-            v.lines.push_back(stageView.groupChipHovered);
-        } else if (stageView.selectedGroup >= 0 && !doc.choreography.group(stageView.selectedGroup).empty()) {
-            v.lines.push_back(stageView.selectedGroup);
-        }
-        return v;
     };
     auto markListText = [&](const std::vector<int>& marks) {
         std::string list;
@@ -203,15 +183,6 @@ int runApp() {
                                                " to add them to a selection; hold Ctrl to see the groups.";
         gridPane.siteswapBox.infoUntil = ImGui::GetTime() + 5.0;
         stageView.selectedGroup = marks.empty() ? -1 : g;
-    };
-    // The spike marks whose rings contain a floor point (world).
-    auto marksAround = [&](float x, float z, float scale) {
-        std::vector<int> found;
-        for (int m = 0; m < static_cast<int>(doc.choreography.marks.size()); ++m) {
-            const SpikeMark& sm = doc.choreography.marks[static_cast<size_t>(m)];
-            if (std::hypot(x - sm.x * scale, z - sm.z * scale) <= kMarkRadius * scale) found.push_back(m);
-        }
-        return found;
     };
     auto openLoiterPopup = [&](int juggler, const Keyframe& arrival, ImVec2 at) {
         ui.loiter.openRequested = true;
@@ -669,6 +640,72 @@ int runApp() {
             ui.done = true;
         }
     };
+    // Makes the changes asked for in the 3D view (see drawStagePane). `loop`: the loop shown this
+    // frame.
+    auto applyStageRequest = [&](const StagePaneRequest& r, const JugglingLoop& loop) {
+        if (r.keyframeJuggler >= 0) setKeyframe(&doc.choreography, r.keyframeJuggler, r.keyframe);
+        if (r.loiterJuggler >= 0) openLoiterPopup(r.loiterJuggler, r.loiterArrival, r.loiterAt);
+        // Dropped after a drag: how long do they stay? (Or, dropped where several marks are, which
+        // one first.)
+        if (r.droppedJuggler >= 0 && r.droppedJuggler < loop.jugglers && !loop.empty()) {
+            const int cycle = std::max(1, choreographyCycle(loop, doc.juggleParams));
+            const long beat = std::lround(playback.beat);
+            const int b = static_cast<int>(((beat % cycle) + cycle) % cycle);
+            Keyframe placed;
+            bool found = false;
+            if (r.droppedJuggler < static_cast<int>(doc.choreography.keys.size()))
+                for (const Keyframe& k : doc.choreography.keys[static_cast<size_t>(r.droppedJuggler)])
+                    if (k.beat == b) {
+                        placed = k;
+                        found = true;
+                    }
+            // Dropped off every mark: a new mark there, which the keyframe is on (every keyframe is
+            // on a mark).
+            if (found && placed.mark < 0) {
+                placed.mark = markForSpot(&doc.choreography, placed.x, placed.z, placed.yaw);
+                setKeyframe(&doc.choreography, r.droppedJuggler, placed);
+            }
+            const std::vector<int> here =
+                found && placed.mark >= 0 && r.dropOnFloor
+                    ? marksAround(doc.choreography, r.dropFloor.x, r.dropFloor.z, choreographyScale(doc, loop))
+                    : std::vector<int>();
+            if (here.size() >= 2) {
+                stageView.markChoice = MarkChoice{true, r.droppedJuggler, placed, here, r.dropAt};
+            } else if (found) {
+                openLoiterPopup(r.droppedJuggler, placed, r.dropAt);
+            }
+        }
+        for (const std::pair<int, SpikeMark>& moved : r.movedMarks)
+            if (moved.first >= 0 && moved.first < static_cast<int>(doc.choreography.marks.size()))
+                doc.choreography.marks[static_cast<size_t>(moved.first)] = moved.second;
+        if (r.renameMark >= 0) {
+            ui.renameMark.mark = r.renameMark;
+            ui.renameMark.requested = true;
+        }
+        if (r.deleteMark >= 0) {
+            std::string why;
+            if (!removeSpikeMark(&doc.choreography, r.deleteMark, loop.empty() ? 0 : loop.jugglers, &why)) {
+                gridPane.siteswapBox.note = why;
+                gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
+            } else {
+                stageView.selectedMarks.clear();
+            }
+        }
+        if (r.addMark) {
+            const int added = addSpikeMark(&doc.choreography, r.newMark);
+            if (added >= 0) {  // (selected, to see which it is and turn it)
+                stageView.selectedMarks.assign(1, added);
+                stageView.selectedJuggler = -1;
+            }
+        }
+        if (r.walkLikeJuggler >= 0) openWalkLike(r.walkLikeJuggler);
+        if (r.pause) playback.playing = false;
+        if (r.goToBeat) playback.beat = r.beat;
+        if (!r.note.empty()) {
+            gridPane.siteswapBox.note = r.note;
+            gridPane.siteswapBox.noteUntil = ImGui::GetTime() + r.noteSeconds;
+        }
+    };
     // Makes the changes asked for in the ladder pane (see drawLadderPane). `writtenLoop`: the throws
     // as written this frame.
     auto applyLadderRequest = [&](const LadderPaneRequest& r, const JugglingLoop& writtenLoop) {
@@ -982,7 +1019,7 @@ int runApp() {
         {
             bool moving = false;
             for (int i = 0; i < 3; ++i)
-                moving = moving || std::fabs(spaceMouse.move[i]) > 0.06f || std::fabs(spaceMouse.turn[i]) > 0.06f;
+                moving = moving || std::fabs(spaceMouse.move[i]) > 20.0f || std::fabs(spaceMouse.turn[i]) > 20.0f;
             if (spaceMouse.present && moving) stageView.spaceMouseQuietUntil = ImGui::GetTime() + 0.3;
             if (ImGui::GetTime() < stageView.spaceMouseQuietUntil) {
                 if (io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f)
@@ -1112,6 +1149,8 @@ int runApp() {
                                     !doc.history.undo.empty() || ladderPane.ladderEdit.chain.active))
                     undo();
                 if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !doc.history.redo.empty())) redo();
+                ImGui::Separator();
+                ImGui::MenuItem("Preferences...", nullptr, &ui.showPreferences);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Playback")) {
@@ -1250,10 +1289,8 @@ int runApp() {
                 ImGui::EndMenu();
             }
             if (spaceMouse.present && ImGui::BeginMenu("3D Mouse")) {
-                ImGui::SetNextItemWidth(ImGui::GetFontSize() * 10.0f);
-                if (ImGui::SliderFloat("Speed", &settings.spaceMouseSpeed, 0.25f, 4.0f, "%.2fx",
-                                       ImGuiSliderFlags_Logarithmic))
-                    saveSettings(settings);
+                if (ImGui::MenuItem("Response Curves...")) ui.showPreferences = true;
+                ImGui::Separator();
                 ImGui::TextDisabled("Grab the stage (it makes the camera free). Spin: orbit.\n"
                                     "Tilt toward / away: turn it to see it from above / below.\n"
                                     "Push away / pull toward you: move back / in.\n"
@@ -1421,56 +1458,6 @@ int runApp() {
             }
         }
 
-        // The stage a free camera orbits within: the jugglers, the spike marks and keyframe
-        // spots, with a margin, from the floor to a bit above head height.
-        auto stageBox = [&]() {
-            StageBox box;
-            bool any = false;
-            auto include = [&](float x, float z) {
-                if (!any) {
-                    box.min = Vec3(x, 0.0f, z);
-                    box.max = Vec3(x, 2.5f, z);
-                    any = true;
-                }
-                box.min.x = std::min(box.min.x, x);
-                box.min.z = std::min(box.min.z, z);
-                box.max.x = std::max(box.max.x, x);
-                box.max.z = std::max(box.max.z, z);
-            };
-            for (const JugglerState& js : scene.jugglers) include(js.position.x, js.position.z);
-            const float scale = choreographyScale(loop);
-            for (const SpikeMark& m : doc.choreography.marks) include(m.x * scale, m.z * scale);
-            const int cycle = loop.empty() ? 0 : choreographyCycle(loop, doc.juggleParams);
-            const int walkers = std::max(static_cast<int>(doc.choreography.keys.size()),
-                                         static_cast<int>(doc.choreography.links.size()));
-            for (int j = 0; j < walkers; ++j)
-                for (const Keyframe& k : effectiveKeyframes(doc.choreography, j, cycle)) {
-                    float x = 0.0f, z = 0.0f, yaw = 0.0f;
-                    keyframeSpot(doc.choreography, k, &x, &z, &yaw);
-                    include(x * scale, z * scale);
-                }
-            if (!any) return StageBox();
-            box.min = Vec3(box.min.x - 1.5f, 0.0f, box.min.z - 1.5f);
-            box.max = Vec3(box.max.x + 1.5f, 2.5f, box.max.z + 1.5f);
-            return box;
-        };
-        // How far a point (the free camera) is from the nearest thing on stage: a juggler, a
-        // prop or a spike mark. Dollying goes at a speed in proportion, so it's quick from far
-        // away and fine up close.
-        auto nearestToCamera = [&](Vec3 p) {
-            float nearest = 1e9f;
-            for (const JugglerState& js : scene.jugglers) {
-                nearest = std::min(nearest, length(p - js.position));
-                nearest = std::min(nearest, length(p - Vec3(js.position.x, 1.25f, js.position.z)));
-            }
-            for (const BallState& b : scene.balls) nearest = std::min(nearest, length(p - b.center));
-            const float scale = choreographyScale(loop);
-            for (const SpikeMark& m : doc.choreography.marks)
-                nearest = std::min(nearest, length(p - Vec3(m.x * scale, 0.0f, m.z * scale)));
-            if (nearest >= 1e9f) nearest = 3.0f;
-            return std::max(nearest, 0.3f);
-        };
-
         // Choreography mode: the paths the jugglers walk.
         // (While the throws have an error, the paths of the pattern as it last worked: the stage's.)
         const JugglingLoop& pathLoop = loop.empty() ? stageLoop : loop;
@@ -1478,560 +1465,18 @@ int runApp() {
         const int pathLength =
             showPaths ? std::max(1, choreographyCycle(pathLoop, doc.juggleParams)) : 0;    // (written out)
         const int pathCycle = choreographyFullCycle(stage.lastGood.choreography, pathLength);  // (the walking loop too)
-        // With rotated repeats, only the beats written out are edited: the rest are them turned.
-        // Whether `beat` falls in a rotated repeat (and if so, a note saying so).
-        auto inRotatedRepeat = [&](long beat) {
-            if (loop.empty() || doc.choreography.repeats() == 1) return false;
-            const int written = std::max(1, choreographyCycle(loop, doc.juggleParams));
-            const int whole = choreographyFullCycle(doc.choreography, written);
-            const int b = static_cast<int>(((beat % whole) + whole) % whole);
-            if (b < written) return false;
-            gridPane.siteswapBox.note = "Beat " + std::to_string(b + 1) + " is in the walking loop's copies (beats " +
-                                        std::to_string(written + 1) + "-" + std::to_string(whole) +
-                                        " come from beats 1-" + std::to_string(written) +
-                                        " by the C rows' next column): place jugglers on beats 1-" +
-                                        std::to_string(written) + " instead.";
-            gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
-            return true;
-        };
         const ChoreographyPaths paths = showPaths ? choreographyPaths(stage.lastGood.choreography, pathLoop.jugglers,
-                                                                      pathLength, choreographyScale(pathLoop))
+                                                                      pathLength, choreographyScale(doc, pathLoop))
                                                   : ChoreographyPaths();
-        int hoveredPathPoint = -1;
 
-        // Mouse input for the 3D view: an invisible window over the juggler pane (the 3D view
-        // itself is drawn straight to OpenGL, not by ImGui). Right-drag to orbit, wheel to zoom; with
-        // passing patterns, click a juggler to select them (click empty space to deselect) and
-        // double-click to frame them (double-click empty space to frame everyone).
+        // The 3D view (the juggler pane, less the transport bar under it): what the mouse does there.
         const float transportHeightForInput = ImGui::GetFrameHeight() + style.WindowPadding.y * 2.0f;
         const ImVec2 viewMin(leftWidth, top);
         const ImVec2 viewSize(W - leftWidth, bodyBottom - top - transportHeightForInput);
-        ImGui::SetNextWindowPos(viewMin);
-        ImGui::SetNextWindowSize(viewSize);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-        if (ImGui::Begin("Juggler view input", nullptr,
-                         paneFlags | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollWithMouse)) {
-            const ImVec2 avail = ImGui::GetContentRegionAvail();
-            if (avail.x > 1.0f && avail.y > 1.0f) {
-                // The mouse: the left button acts on things (selects a juggler; in choreography,
-                // drags jugglers and spike marks); the right button drags to orbit the camera
-                // (Shift: pan; the middle button pans too), and a right-click without dragging opens
-                // the floor's menu. Alt/Option+left-drag orbits as well, for a trackpad.
-                ImGui::InvisibleButton("##juggler_view", avail,
-                                       ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight |
-                                           ImGuiButtonFlags_MouseButtonMiddle);
-                if (!ImGui::IsItemActive() && !ImGui::IsItemDeactivated()) {
-                    stageView.viewPress = -1;
-                    stageView.pathPress = -1;
-                }
-                if (ImGui::IsItemActivated())
-                    stageView.viewPress = ImGui::IsMouseClicked(ImGuiMouseButton_Left)
-                                              ? 0
-                                              : (ImGui::IsMouseClicked(ImGuiMouseButton_Right) ? 1 : 2);
-                const bool leftPress = stageView.viewPress == 0;
-                const float clickSlop = io.MouseDragThreshold;
-                const bool dragged =
-                    io.MouseDragMaxDistanceSqr[std::max(0, stageView.viewPress)] >= clickSlop * clickSlop;
-                // Choreography: the spike marks can be dragged (moved, or turned by the arrow) and
-                // clicked (a keyframe there for the selected juggler, on the current beat).
-                const bool editingFloor = stageView.choreographyMode && doc.choreography.active();
-                const float markScale = choreographyScale(loop);
-                const bool canSelect = scene.jugglers.size() > 1;
-                if (ImGui::IsItemActivated()) {
-                    stageView.viewPan = stageView.viewPress == 2 || (stageView.viewPress == 1 && io.KeyShift);
-                    stageView.viewOrbitLeft = stageView.viewPress == 0 && io.KeyAlt;
-                }
-                // A path point under the mouse (a click on it goes to its beat, with its juggler
-                // selected).
-                if (showPaths && ImGui::IsItemHovered() && stageView.markDrag < 0 && stageView.jugglerDrag < 0)
-                    hoveredPathPoint = pickPathPoint(paths, stageView.lastViewProj, viewMin, viewSize, io.MousePos,
-                                                     BodyOccluder(scene, stageView.lastCamera.position));
-                if (ImGui::IsItemActivated() && leftPress && !stageView.pressTakenByChoice)
-                    stageView.pathPress = hoveredPathPoint;
-                const int underMouse = canSelect && ImGui::IsItemHovered()
-                                           ? pickJuggler(scene, stageView.lastViewProj, viewMin, viewSize, io.MousePos)
-                                           : -1;
-                // Any part of a mark can be dragged: anywhere inside its ring moves it, and its
-                // arrow turns it. A click on it puts the selected juggler there. Someone standing on
-                // it is picked instead only where the mouse is squarely on their body (no slack),
-                // so the floor showing inside the ring is the mark's. The arrow beats everything.
-                bool onArrow = false;
-                Vec3 floorHere(0.0f, 0.0f, 0.0f);
-                const bool haveFloor = editingFloor && floorUnderMouse(stageView.lastCamera, stageView.lastAspect,
-                                                                       viewMin, viewSize, io.MousePos, &floorHere);
-                // (A mark's name comes first: it picks that mark, even among several on one spot.)
-                const int labelUnderMouse =
-                    editingFloor && ImGui::IsItemHovered() && stageView.markDrag < 0
-                        ? markLabelUnder(doc.choreography, markScale, stageView.lastViewProj, viewMin, viewSize,
-                                         io.MousePos, markGroupView().badgeH())
-                        : -1;
-                const int markUnderMouse =
-                    labelUnderMouse >= 0 ? labelUnderMouse
-                    : editingFloor && ImGui::IsItemHovered() && stageView.markDrag < 0
-                        ? pickSpikeMark(doc.choreography, markScale, stageView.lastViewProj, viewMin, viewSize,
-                                        io.MousePos, haveFloor, floorHere, &onArrow)
-                        : -1;
-                const bool onBody =
-                    labelUnderMouse < 0 && underMouse >= 0 && markUnderMouse >= 0 && !onArrow &&
-                    pickJuggler(scene, stageView.lastViewProj, viewMin, viewSize, io.MousePos, 0.0f) >= 0;
-                const bool markRing = markUnderMouse >= 0 && (onArrow || !onBody);
-                // A mark (or its arrow) comes before the path points drawn on it (a juggler standing
-                // on a mark has a path point in its middle).
-                if (markRing) {
-                    hoveredPathPoint = -1;
-                    if (ImGui::IsItemActivated()) stageView.pathPress = -1;
-                }
-                // Choosing among marks in the same place: a click on an arrow's tip or its number picks
-                // that mark; a click anywhere else keeps the one they're on for now.
-                if (!ImGui::IsItemActive() && !ImGui::IsItemDeactivated()) stageView.pressTakenByChoice = false;
-                if (stageView.markChoice.active && ImGui::IsItemActivated() && leftPress) {
-                    stageView.pressTakenByChoice = true;
-                    std::vector<bool> shown;
-                    const std::vector<ImVec2> bubbles =
-                        markBubbleCenters(doc.choreography, markScale, stageView.lastViewProj, viewMin, viewSize,
-                                          &shown, markGroupView().badgeH());
-                    int best = -1;
-                    float bestD = ImGui::GetFontSize() * 1.4f;
-                    for (const int m : stageView.markChoice.marks) {
-                        if (m < 0 || m >= static_cast<int>(doc.choreography.marks.size())) continue;
-                        Vec3 middle, tip;
-                        markGeometry(doc.choreography.marks[static_cast<size_t>(m)], markScale, &middle, &tip);
-                        ImVec2 t;
-                        if (projectToScreen(stageView.lastViewProj, tip, viewMin, viewSize, &t)) {
-                            const float d = std::hypot(t.x - io.MousePos.x, t.y - io.MousePos.y);
-                            if (d < bestD) {
-                                bestD = d;
-                                best = m;
-                            }
-                        }
-                        if (shown[static_cast<size_t>(m)]) {
-                            const ImVec2 bc = bubbles[static_cast<size_t>(m)];
-                            const float d = std::hypot(bc.x - io.MousePos.x, bc.y - io.MousePos.y);
-                            if (d < bestD) {
-                                bestD = d;
-                                best = m;
-                            }
-                        }
-                    }
-                    if (best >= 0) {
-                        Keyframe k = stageView.markChoice.pending;
-                        k.mark = best;
-                        setKeyframe(&doc.choreography, stageView.markChoice.juggler, k);
-                        openLoiterPopup(stageView.markChoice.juggler, k, stageView.markChoice.at);
-                    }
-                    stageView.markChoice.active = false;
-                }
-                if (editingFloor && ImGui::IsItemActivated() && leftPress && !stageView.pressTakenByChoice) {
-                    if (markUnderMouse >= 0 && (underMouse < 0 || markRing)) {
-                        stageView.markDrag = markUnderMouse;
-                        stageView.markTurning = onArrow;
-                        stageView.markForKeyframe = markRing;
-                        // Pressed: it's in the selection now (on its own, or added with Shift), so
-                        // a drag moves the selection.
-                        stageView.markPressWasSelected =
-                            std::find(stageView.selectedMarks.begin(), stageView.selectedMarks.end(),
-                                      stageView.markDrag) != stageView.selectedMarks.end();
-                        if (!stageView.markPressWasSelected) {
-                            if (!io.KeyShift) stageView.selectedMarks.clear();
-                            stageView.selectedMarks.push_back(stageView.markDrag);
-                        }
-                        stageView.markDragStart.clear();
-                        for (const int m : stageView.selectedMarks)
-                            stageView.markDragStart.push_back({doc.choreography.marks[static_cast<size_t>(m)].x,
-                                                     doc.choreography.marks[static_cast<size_t>(m)].z});
-                    } else if (underMouse >= 0 && !loop.empty() && doc.choreography.link(underMouse).active()) {
-                        // A juggler who walks like another goes where the leader goes.
-                        gridPane.siteswapBox.note = "J" + std::to_string(underMouse + 1) + " " +
-                                                    walkLinkLabel(doc.choreography.link(underMouse)) + ": move J" +
-                                                    std::to_string(doc.choreography.link(underMouse).leader + 1) +
-                                                    ", or unlink J" + std::to_string(underMouse + 1) +
-                                                    " (right-click them: Walk Like...).";
-                        gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 5.0;
-                    } else if (underMouse >= 0 && !loop.empty() && inRotatedRepeat(std::lround(playback.beat))) {
-                        // (Not in a rotated repeat: the note says where to do it.)
-                    } else if (underMouse >= 0 && !loop.empty()) {
-                        // A juggler: dragging them puts them somewhere new (a keyframe).
-                        stageView.jugglerDrag = underMouse;
-                        Vec3 at;
-                        jugglerPlacementAt(loop, doc.juggleParams, underMouse, std::round(playback.beat), &at,
-                                           &stageView.jugglerDragYaw);
-                    }
-                }
-                if (stageView.jugglerDrag >= 0 && !ImGui::IsItemActive()) {
-                    // Dropped: how long do they stay?
-                    if (ImGui::IsItemDeactivated() && dragged && stageView.jugglerDrag < loop.jugglers &&
-                        !loop.empty()) {
-                        const int cycle = std::max(1, choreographyCycle(loop, doc.juggleParams));
-                        const long beat = std::lround(playback.beat);
-                        const int b = static_cast<int>(((beat % cycle) + cycle) % cycle);
-                        Keyframe placed;
-                        bool found = false;
-                        if (stageView.jugglerDrag < static_cast<int>(doc.choreography.keys.size()))
-                            for (const Keyframe& k : doc.choreography.keys[static_cast<size_t>(stageView.jugglerDrag)])
-                                if (k.beat == b) {
-                                    placed = k;
-                                    found = true;
-                                }
-                        // Dropped off every mark: a new mark there, which the keyframe is on (every
-                        // keyframe is on a mark).
-                        if (found && placed.mark < 0) {
-                            placed.mark = markForSpot(&doc.choreography, placed.x, placed.z, placed.yaw);
-                            setKeyframe(&doc.choreography, stageView.jugglerDrag, placed);
-                        }
-                        Vec3 floor;
-                        const std::vector<int> here =
-                            found && placed.mark >= 0 &&
-                                    floorUnderMouse(stageView.lastCamera, stageView.lastAspect, viewMin, viewSize,
-                                                    io.MousePos, &floor)
-                                ? marksAround(floor.x, floor.z, markScale)
-                                : std::vector<int>();
-                        if (here.size() >= 2) {
-                            stageView.markChoice = MarkChoice{true, stageView.jugglerDrag, placed, here, io.MousePos};
-                        } else if (found) {
-                            openLoiterPopup(stageView.jugglerDrag, placed, io.MousePos);
-                        }
-                    }
-                    stageView.jugglerDrag = -1;
-                }
-                if (stageView.jugglerDrag >= 0 && stageView.jugglerDrag < loop.jugglers && dragged) {
-                    // Dragged to the floor under the mouse, on the current beat: onto a spike mark
-                    // if it's dropped on one (facing as the mark says), else a spot (snapped to the
-                    // floor grid; Shift: freely), facing as they were, which gets a mark of its own
-                    // when they're let go.
-                    Vec3 floor;
-                    if (floorUnderMouse(stageView.lastCamera, stageView.lastAspect, viewMin, viewSize, io.MousePos,
-                                        &floor)) {
-                        const int cycle = std::max(1, choreographyCycle(loop, doc.juggleParams));
-                        const long beat = std::lround(playback.beat);
-                        Keyframe k;
-                        k.beat = static_cast<int>(((beat % cycle) + cycle) % cycle);
-                        for (const Keyframe& old :
-                             doc.choreography.keys.size() > static_cast<size_t>(stageView.jugglerDrag)
-                                 ? doc.choreography.keys[static_cast<size_t>(stageView.jugglerDrag)]
-                                 : std::vector<Keyframe>())
-                            if (old.beat == k.beat) k.longTurn = old.longTurn;
-                        for (int m = 0; m < static_cast<int>(doc.choreography.marks.size()); ++m) {
-                            const SpikeMark& sm = doc.choreography.marks[static_cast<size_t>(m)];
-                            if (std::hypot(floor.x - sm.x * markScale, floor.z - sm.z * markScale) <= kMarkRadius * markScale)
-                                k.mark = m;
-                        }
-                        if (k.mark < 0) {
-                            float x = floor.x, z = floor.z;
-                            if (!io.KeyShift) snapToFloorGrid(settings, &x, &z);
-                            k.x = x / markScale;
-                            k.z = z / markScale;
-                            k.yaw = stageView.jugglerDragYaw;
-                        }
-                        setKeyframe(&doc.choreography, stageView.jugglerDrag, k);
-                        playback.playing = false;
-                        playback.beat = static_cast<double>(beat);
-                        stageView.selectedJuggler = stageView.jugglerDrag;
-                    }
-                }
-                if (stageView.markDrag >= 0 && stageView.markDrag < static_cast<int>(doc.choreography.marks.size()) &&
-                    ImGui::IsItemActive() && dragged) {
-                    Vec3 floor;
-                    if (floorUnderMouse(stageView.lastCamera, stageView.lastAspect, viewMin, viewSize, io.MousePos,
-                                        &floor)) {
-                        SpikeMark& m = doc.choreography.marks[static_cast<size_t>(stageView.markDrag)];
-                        if (stageView.markTurning) {
-                            // Turned to point at the mouse: in 15-degree steps (Shift: freely). With
-                            // the radial grid, the steps are counted from facing the middle, so one of
-                            // them is along the mark's spoke, whatever the spokes.
-                            float yaw = std::atan2(floor.x - m.x * markScale, floor.z - m.z * markScale);
-                            if (!io.KeyShift) {
-                                const float step = kPi / 12.0f;
-                                const float from = settings.floorGrid == FloorGridType::Radial && std::hypot(m.x, m.z) > 1e-3f
-                                                       ? std::atan2(-m.x, -m.z)
-                                                       : 0.0f;
-                                yaw = from + std::round((yaw - from) / step) * step;
-                            }
-                            m.yaw = yaw;
-                        } else {
-                            // Moved to the mouse: snapped to the floor grid (Shift: freely); the rest
-                            // of the selection moves with it, keeping their shape.
-                            float x = floor.x, z = floor.z;
-                            if (!io.KeyShift) snapToFloorGrid(settings, &x, &z);
-                            const auto here = std::find(stageView.selectedMarks.begin(), stageView.selectedMarks.end(),
-                                                        stageView.markDrag);
-                            const size_t me = static_cast<size_t>(here - stageView.selectedMarks.begin());
-                            if (here == stageView.selectedMarks.end() ||
-                                stageView.markDragStart.size() != stageView.selectedMarks.size()) {
-                                m.x = x / markScale;
-                                m.z = z / markScale;
-                            } else {
-                                const float dx = x / markScale - stageView.markDragStart[me].first;
-                                const float dz = z / markScale - stageView.markDragStart[me].second;
-                                for (size_t i = 0; i < stageView.selectedMarks.size(); ++i) {
-                                    const int k = stageView.selectedMarks[i];
-                                    if (k < 0 || k >= static_cast<int>(doc.choreography.marks.size())) continue;
-                                    doc.choreography.marks[static_cast<size_t>(k)].x =
-                                        stageView.markDragStart[i].first + dx;
-                                    doc.choreography.marks[static_cast<size_t>(k)].z =
-                                        stageView.markDragStart[i].second + dz;
-                                }
-                            }
-                        }
-                    }
-                }
-                const bool cameraDrag =
-                    ImGui::IsItemActive() && stageView.markDrag < 0 && stageView.jugglerDrag < 0 &&
-                    stageView.viewPress >= 0 && (stageView.viewPress != 0 || stageView.viewOrbitLeft) &&
-                    ImGui::IsMouseDragging(static_cast<ImGuiMouseButton>(stageView.viewPress), 0.0f);
-                const bool orbiting = cameraDrag && !stageView.viewPan;
-                const bool panning = cameraDrag && stageView.viewPan;
-                if (orbiting) {
-                    const ImVec2 d = io.MouseDelta;
-                    // In the top view, orbiting turns the view round the vertical (it stays
-                    // looking straight down).
-                    if (stageView.camera.free) {
-                        if (!stageView.cameraOrbiting)
-                            stageView.orbitCenter =
-                                freeOrbitCenter(stageView.lastCamera, scene, stageView.selectedJuggler, stageBox());
-                        orbitFreeCamera(stageView.camera, stageView.orbitCenter, -d.x * 0.008f, d.y * 0.008f);
-                    } else {
-                        stageView.camera.yaw -= d.x * 0.008f;
-                        if (!stageView.camera.topView)
-                            stageView.camera.pitch = std::clamp(stageView.camera.pitch + d.y * 0.008f, -1.45f, 1.45f);
-                    }
-                }
-                if (panning) {
-                    // Panning drags the floor under the mouse along with it (and frees the camera).
-                    if (!stageView.camera.free) makeCameraFree(stageView.camera, stageView.lastCamera);
-                    if (!stageView.cameraPanning) {
-                        Vec3 floor;
-                        stageView.panDepth = floorUnderMouse(stageView.lastCamera, stageView.lastAspect, viewMin,
-                                                             viewSize, io.MousePos, &floor)
-                                                 ? std::min(length(floor - stageView.lastCamera.position), 40.0f)
-                                                 : length(freeOrbitCenter(stageView.lastCamera, scene,
-                                                                          stageView.selectedJuggler, stageBox()) -
-                                                          stageView.lastCamera.position);
-                    }
-                    const float metersPerPixel =
-                        2.0f * stageView.panDepth * std::tan(kCameraFovY * 0.5f) / std::max(1.0f, viewSize.y);
-                    Vec3 forward, right, up;
-                    freeCameraAxes(stageView.camera, &forward, &right, &up);
-                    stageView.camera.freePos = stageView.camera.freePos - right * (io.MouseDelta.x * metersPerPixel) +
-                                     up * (io.MouseDelta.y * metersPerPixel);
-                }
-                stageView.cameraOrbiting = orbiting;
-                stageView.cameraPanning = panning;
-                // A click is a press and release without dragging (dragging orbits).
-                if (stageView.pathPress >= 0 && stageView.pathPress < static_cast<int>(paths.points.size()) &&
-                    ImGui::IsItemDeactivated() && leftPress && !dragged) {
-                    // A click on a path point: its beat (in the cycle playing now), its juggler selected.
-                    const PathPoint& point = paths.points[static_cast<size_t>(stageView.pathPress)];
-                    if (loop.jugglers > 1) stageView.selectedJuggler = point.juggler;
-                    playback.playing = false;
-                    playback.beat = std::floor(playback.beat / pathCycle) * pathCycle + point.firstBeat;
-                    stageView.markDrag = -1;
-                    stageView.jugglerDrag = -1;
-                    stageView.pathPress = -1;
-                } else if (stageView.markDrag >= 0 && ImGui::IsItemDeactivated() && leftPress && !dragged &&
-                           !stageView.markForKeyframe) {
-                    stageView.selectedJuggler = underMouse;  // a click on someone standing on a mark
-                    stageView.markDrag = -1;
-                } else if (stageView.markDrag >= 0 && ImGui::IsItemDeactivated()) {
-                    if (!dragged) {
-                        // A click on a mark selects it (Shift: adds it, or takes it away if it was
-                        // already in), and no juggler. (A keyframe: drag a juggler onto it.)
-                        if (io.KeyShift) {
-                            if (stageView.markPressWasSelected)
-                                stageView.selectedMarks.erase(
-                                    std::remove(stageView.selectedMarks.begin(), stageView.selectedMarks.end(),
-                                                stageView.markDrag),
-                                    stageView.selectedMarks.end());
-                        } else {
-                            stageView.selectedMarks.assign(1, stageView.markDrag);
-                        }
-                        stageView.selectedJuggler = -1;
-                        stageView.frameSelected = false;
-                    }
-                    stageView.markDrag = -1;
-                } else if (canSelect && ImGui::IsItemDeactivated() && leftPress && !dragged &&
-                           !stageView.pressTakenByChoice) {
-                    stageView.selectedJuggler = underMouse;
-                    stageView.selectedMarks.clear();
-                    if (underMouse < 0) stageView.frameSelected = false;
-                }
-                // Right-click (without dragging) the floor: add a mark there, or (on a mark) its menu.
-                if (editingFloor && ImGui::IsItemDeactivated() && stageView.viewPress == 1 && !dragged) {
-                    stageView.markMenuMark = markRing ? markUnderMouse : -1;
-                    Vec3 floor(0.0f, 0.0f, 0.0f);
-                    if (stageView.markMenuMark >= 0 || underMouse >= 0 ||
-                        floorUnderMouse(stageView.lastCamera, stageView.lastAspect, viewMin, viewSize, io.MousePos,
-                                        &floor)) {
-                        stageView.markMenuPoint = Vec3(floor.x / markScale, 0.0f, floor.z / markScale);
-                        stageView.floorMenuJuggler = underMouse;
-                        ImGui::OpenPopup("##floor_menu");
-                    }
-                }
-                if (ImGui::BeginPopup("##floor_menu")) {
-                    if (stageView.floorMenuJuggler >= 0 && stageView.floorMenuJuggler < loop.jugglers &&
-                        loop.jugglers > 1) {
-                        const std::string how = walkLinkLabel(doc.choreography.link(stageView.floorMenuJuggler));
-                        ImGui::TextDisabled("Juggler %d%s%s", stageView.floorMenuJuggler + 1, how.empty() ? "" : ": ",
-                                            how.c_str());
-                        ImGui::Separator();
-                        if (ImGui::MenuItem("Walk Like...")) openWalkLike(stageView.floorMenuJuggler);
-                        ImGui::Separator();
-                    }
-                    if (stageView.markMenuMark >= 0 &&
-                        stageView.markMenuMark < static_cast<int>(doc.choreography.marks.size())) {
-                        ImGui::TextDisabled(
-                            "Spike mark %s",
-                            doc.choreography.marks[static_cast<size_t>(stageView.markMenuMark)].name.c_str());
-                        ImGui::Separator();
-                        if (ImGui::MenuItem("Face the Middle")) {
-                            SpikeMark& m = doc.choreography.marks[static_cast<size_t>(stageView.markMenuMark)];
-                            if (std::hypot(m.x, m.z) > 1e-3f) m.yaw = std::atan2(-m.x, -m.z);
-                        }
-                        if (ImGui::MenuItem("Rename...")) {
-                            ui.renameMark.mark = stageView.markMenuMark;
-                            ui.renameMark.requested = true;
-                        }
-                        if (ImGui::MenuItem("Delete Spike Mark")) {
-                            std::string why;
-                            if (!removeSpikeMark(&doc.choreography, stageView.markMenuMark,
-                                                 loop.empty() ? 0 : loop.jugglers, &why)) {
-                                gridPane.siteswapBox.note = why;
-                                gridPane.siteswapBox.noteUntil = ImGui::GetTime() + 6.0;
-                            } else {
-                                stageView.selectedMarks.clear();
-                            }
-                        }
-                        if (ImGui::IsItemHovered())
-                            ImGui::SetTooltip("Only a mark nobody stands on (the others keep their names).");
-                        if (ImGui::MenuItem("Add Another Spike Mark Here")) {
-                            // Same place, facing the other way for now (so its arrow and name are
-                            // clear of the first's), and selected, ready to be turned by its arrow.
-                            SpikeMark copy = doc.choreography.marks[static_cast<size_t>(stageView.markMenuMark)];
-                            copy.name.clear();
-                            copy.yaw = std::remainder(copy.yaw + kPi, 2.0f * kPi);
-                            const int added = addSpikeMark(&doc.choreography, copy);
-                            if (added >= 0) {
-                                stageView.selectedMarks.assign(1, added);
-                                stageView.selectedJuggler = -1;
-                            }
-                        }
-                        if (ImGui::IsItemHovered())
-                            ImGui::SetTooltip("A second mark on the same spot, facing the other way and selected: drag its\n"
-                                              "arrow to turn it. Putting a juggler there then asks which mark they stand on.");
-                    } else if (stageView.floorMenuJuggler < 0) {
-                        if (ImGui::MenuItem("Add Spike Mark Here")) {
-                            SpikeMark m;
-                            float x = stageView.markMenuPoint.x * markScale, z = stageView.markMenuPoint.z * markScale;
-                            snapToFloorGrid(settings, &x, &z);
-                            m.x = x / markScale;
-                            m.z = z / markScale;
-                            m.yaw = std::hypot(m.x, m.z) > 1e-3f ? std::atan2(-m.x, -m.z) : 0.0f;  // facing the middle
-                            const int added = addSpikeMark(&doc.choreography, m);
-                            if (added >= 0) {  // (selected, to see which it is and turn it)
-                                stageView.selectedMarks.assign(1, added);
-                                stageView.selectedJuggler = -1;
-                            }
-                        }
-                    }
-                    ImGui::EndPopup();
-                }
-                // Things that can be dragged show it: a hand over a juggler (in choreography).
-                if (editingFloor && stageView.jugglerDrag >= 0) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
-                else if (editingFloor && underMouse >= 0 && stageView.markDrag < 0 && !orbiting)
-                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
-                if (editingFloor && (markUnderMouse >= 0 || stageView.markDrag >= 0))
-                    ImGui::SetMouseCursor(stageView.markTurning && stageView.markDrag >= 0 ? ImGuiMouseCursor_ResizeAll
-                                                                                           : ImGuiMouseCursor_Hand);
-                if (hoveredPathPoint >= 0 && !ImGui::IsItemActive()) {
-                    const PathPoint& point = paths.points[static_cast<size_t>(hoveredPathPoint)];
-                    const std::string beats = pathPointBeats(point, pathCycle);
-                    ImGui::SetTooltip("J%d, beat%s %s\nClick to go to %s, J%d selected", point.juggler + 1,
-                                      point.beats > 1 ? "s" : "", beats.c_str(),
-                                      point.beats > 1 ? "its first beat" : "that beat", point.juggler + 1);
-                } else if (editingFloor && markUnderMouse >= 0 && !ImGui::IsItemActive() && (markRing || onArrow)) {
-                    if (onArrow)
-                        ImGui::SetTooltip("Spike mark %s: drag the arrow to turn it (Shift: freely)",
-                                          doc.choreography.marks[static_cast<size_t>(markUnderMouse)].name.c_str());
-                    else
-                        ImGui::SetTooltip("Spike mark %s: drag to move it (it snaps to the grid; Shift: freely)\n"
-                                          "Click to select it, Shift+click to add it to the selection: dragging one\n"
-                                          "moves them all. To put a juggler here, drag them onto it.\n"
-                                          "Right-click for more",
-                                          doc.choreography.marks[static_cast<size_t>(markUnderMouse)].name.c_str());
-                }
-                if (canSelect && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                    stageView.selectedJuggler = underMouse;
-                    stageView.frameSelected = underMouse >= 0;
-                    stageView.camera.free = false;
-                }
-                if (ImGui::IsItemHovered()) {
-                    if (io.MouseWheel != 0.0f && stageView.camera.free) {
-                        // A free camera moves along its view, more slowly the nearer it is to
-                        // something.
-                        Vec3 forward, right, up;
-                        freeCameraAxes(stageView.camera, &forward, &right, &up);
-                        stageView.camera.freePos =
-                            stageView.camera.freePos +
-                            forward * (io.MouseWheel * 0.15f * nearestToCamera(stageView.camera.freePos));
-                    } else if (io.MouseWheel != 0.0f) {
-                        stageView.camera.zoom =
-                            std::clamp(stageView.camera.zoom * std::pow(0.88f, io.MouseWheel), 0.15f, 6.0f);
-                    }
-                    if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Home)) {
-                        resetCamera(stageView.camera);
-                        stageView.frameSelected = false;
-                    }
-                    // Paused, resting on a club or ring in the air: its throw and spin rate.
-                    bool propTip = false;
-                    if (!playback.playing && scene.prop != PropType::Ball && !ImGui::IsItemActive() && hoveredPathPoint < 0) {
-                        const BallState* nearest = nullptr;
-                        float nearestD = 22.0f;  // pixels
-                        for (const BallState& b : scene.balls) {
-                            ImVec2 at;
-                            if (!b.inFlight || b.flightBeats <= 0.0f ||
-                                !projectToScreen(stageView.lastViewProj, b.center, viewMin, viewSize, &at))
-                                continue;
-                            const float d = std::hypot(at.x - io.MousePos.x, at.y - io.MousePos.y);
-                            if (d < nearestD) {
-                                nearestD = d;
-                                nearest = &b;
-                            }
-                        }
-                        if (nearest) {
-                            static const char* const kNames[] = {"flat (no spin)", "a single", "a double", "a triple", "a quad"};
-                            const std::string spinName = nearest->spins >= 0 && nearest->spins <= 4
-                                                             ? std::string(kNames[nearest->spins])
-                                                             : std::to_string(nearest->spins) + " spins";
-                            const std::string who = nearest->thrower == nearest->catcher
-                                                        ? std::string()
-                                                        : ", J" + std::to_string(nearest->thrower + 1) + " to J" +
-                                                              std::to_string(nearest->catcher + 1);
-                            ImGui::SetTooltip("A %d%s, %s\n%.2f spins a beat (%d in %.2f beats in the air)",
-                                              nearest->throwValue, who.c_str(), spinName.c_str(),
-                                              static_cast<double>(nearest->spins) / static_cast<double>(nearest->flightBeats),
-                                              nearest->spins, static_cast<double>(nearest->flightBeats));
-                            propTip = true;
-                        }
-                    }
-                    // A hint, only after the mouse has rested here a moment.
-                    if (!propTip && hoveredPathPoint < 0 && !ImGui::IsItemActive() && (markUnderMouse < 0 || underMouse >= 0) &&
-                        !(markUnderMouse >= 0 && markRing) && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal)) {
-                        if (underMouse >= 0 && editingFloor)
-                            ImGui::SetTooltip("Juggler %d\nClick to select, double-click to frame\n"
-                                              "Drag to put them somewhere else on this beat (a keyframe; drop on a mark to use it)",
-                                              underMouse + 1);
-                        else if (underMouse >= 0)
-                            ImGui::SetTooltip("Juggler %d\nClick to select, double-click to frame", underMouse + 1);
-                        else if (canSelect)
-                            ImGui::SetTooltip("Right-drag (or Alt+drag) to orbit, middle-drag or Shift+right-drag to pan, wheel to zoom, Home to reset\n"
-                                              "Click a juggler to select them, double-click to frame them");
-                        else
-                            ImGui::SetTooltip("Right-drag (or Alt+drag) to orbit, middle-drag or Shift+right-drag to pan, wheel to zoom, Home to reset");
-                    }
-                }
-            }
-        }
-        ImGui::End();
-        ImGui::PopStyleVar();
+        const StageFrame frame{scene, loop, paths, showPaths, pathCycle, viewMin, viewSize};
+        const StagePaneRequest stageRequest = drawStagePane(stageView, doc, playback, settings, frame, paneFlags);
+        applyStageRequest(stageRequest, loop);
+        const int hoveredPathPoint = stageRequest.hoveredPathPoint;
 
         // The divider between the ladder and juggler panes: drag to resize them, double-click
         // to share the width equally again. (A thin window of its own over the boundary, so it
@@ -2659,7 +2104,7 @@ int runApp() {
                 walkGhost.show = true;
                 walkGhost.pose = posedJuggler(scene.jugglers[static_cast<size_t>(j)], scene.prop);
                 walkGhost.placement = Mat4::translation(at) * Mat4::rotationY(yaw);
-                const ChoreographyPaths trialPaths = choreographyPaths(trial, loop.jugglers, cycle, choreographyScale(loop));
+                const ChoreographyPaths trialPaths = choreographyPaths(trial, loop.jugglers, cycle, choreographyScale(doc, loop));
                 if (j < static_cast<int>(trialPaths.lines.size())) walkGhost.path = trialPaths.lines[static_cast<size_t>(j)];
             }
         }
@@ -2799,7 +2244,13 @@ int runApp() {
                 ImGui::EndPopup();
             }
         }
-        // Help > 3D Mouse Diagnostics: what the cap is sending, live (-1..1 on each axis).
+        // Edit > Preferences: over the ladder pane, so the stage stays in view while the 3D mouse's
+        // curves are tried out.
+        if (ui.showPreferences &&
+            drawPreferencesWindow(&ui.showPreferences, ui.preferences, settings, spaceMouse, ImVec2(0.0f, top),
+                                  ImVec2(leftWidth, bodyBottom - top)))
+            saveSettings(settings);
+        // Help > 3D Mouse Diagnostics: what the cap is sending, live (raw counts on each axis).
         if (ui.showSpaceMouseDiagnostics) {
             ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
             if (ImGui::Begin("3D Mouse Diagnostics", &ui.showSpaceMouseDiagnostics,
@@ -2807,14 +2258,11 @@ int runApp() {
                 if (!spaceMouse.present) {
                     ImGui::TextUnformatted("No 3D mouse found.");
                 } else {
-                    ImGui::TextUnformatted("Move the cap: what JuggleSim reads, -1 to 1 on each axis.");
-                    ImGui::Text("Slide   right %+.2f   away %+.2f   up %+.2f", spaceMouse.move[0], spaceMouse.move[1],
+                    ImGui::TextUnformatted("Move the cap: what JuggleSim reads on each axis (raw counts).");
+                    ImGui::Text("Slide   right %+5.0f   away %+5.0f   up %+5.0f", spaceMouse.move[0], spaceMouse.move[1],
                                 spaceMouse.move[2]);
-                    ImGui::Text("Turn    tilt %+.2f   roll %+.2f   spin %+.2f", spaceMouse.turn[0], spaceMouse.turn[1],
-                                spaceMouse.turn[2]);
-                    const bool idle = std::fabs(spaceMouse.turn[0]) < 0.06f && std::fabs(spaceMouse.move[1]) < 0.06f;
-                    const bool tiltWins = std::fabs(spaceMouse.turn[0]) > 0.8f * std::fabs(spaceMouse.move[1]);
-                    ImGui::Text("Tilt vs push/pull: %s", idle ? "-" : (tiltWins ? "tilt (turns the stage)" : "push/pull (moves)"));
+                    ImGui::Text("Turn    tilt  %+5.0f   roll %+5.0f   spin %+5.0f", spaceMouse.turn[0],
+                                spaceMouse.turn[1], spaceMouse.turn[2]);
                     ImGui::Text(
                         "Mouse-wheel events from the driver: %s",
                         ImGui::GetTime() - stageView.spaceMouseWheelBlocked < 1.0 ? "yes (ignored)" : "none seen");
@@ -2974,147 +2422,14 @@ int runApp() {
 
         pollSettingsChange();
 
-        // The camera (after this frame's orbit and zoom), and the juggler numbers, drawn by ImGui
-        // behind its windows but over the 3D view.
-        const float jugglerAspect = viewSize.y > 0.0f ? viewSize.x / viewSize.y : 1.0f;
-        // The top view frames the whole floor in use: the jugglers and the spike marks. (Not
-        // while a mark is being dragged: the view would shift under the mouse.)
-        // While a juggler or mark is being moved (or the loiter popup is up), it doesn't shrink,
-        // and grows only slowly (pushing something against the edge widens the view gently), so
-        // the floor doesn't shift under the mouse.
-        {
-            float half = 1.5f;
-            for (const JugglerState& js : scene.jugglers) half = std::max(half, std::max(std::fabs(js.position.x), std::fabs(js.position.z)) + 0.8f);
-            const float markScale = choreographyScale(loop);
-            for (const SpikeMark& m : doc.choreography.marks)
-                half = std::max(half, std::max(std::fabs(m.x), std::fabs(m.z)) * markScale + 0.8f);
-            const bool placing = stageView.jugglerDrag >= 0 || stageView.markDrag >= 0 || ui.loiter.open;
-            if (!placing)
-                stageView.camera.floorHalf = half;
-            else if (half > stageView.camera.floorHalf)
-                stageView.camera.floorHalf +=
-                    std::min(half - stageView.camera.floorHalf, 0.5f * io.DeltaTime);  // 0.5 m a second
-        }
-        // The 3D mouse, grabbing the stage: spin and tilt the cap to orbit; push it away to move
-        // back (zoom out), pull it toward you to move in; slide it sideways or up and down and
-        // the stage goes with it (which frees the camera). Each axis has a small dead zone and
-        // rises gently, so small movements are fine.
-        if (spaceMouse.present) {
-            auto shaped = [](float v) {
-                const float deadZone = 0.06f;
-                const float a = std::fabs(v);
-                if (a <= deadZone) return 0.0f;
-                const float t = (a - deadZone) / (1.0f - deadZone);
-                return std::copysign(t * t, v);
-            };
-            const float step = io.DeltaTime * settings.spaceMouseSpeed;
-            float slideX = shaped(spaceMouse.move[0]), slideY = shaped(spaceMouse.move[1]), slideZ = shaped(spaceMouse.move[2]);
-            const float spin = shaped(spaceMouse.turn[2]);
-            float tilt = shaped(spaceMouse.turn[0]);
-            // Tilting the cap toward or away from you pushes or pulls it too (often 60-100% as
-            // far), and a push tilts it a little: the larger of the two (as read) is meant, and
-            // the other is ignored.
-            if (std::fabs(spaceMouse.turn[0]) > 0.8f * std::fabs(spaceMouse.move[1]))
-                slideY = 0.0f;
-            else
-                tilt = 0.0f;
-            // Turning the cap nudges it sideways too: while it's mostly being turned, its slides
-            // are ignored (or a free camera, which moves faster the further away it is, can run
-            // off).
-            const float turnAmount = std::max(std::fabs(spin), std::fabs(tilt));
-            const float slideAmount = std::max(std::fabs(slideX), std::max(std::fabs(slideY), std::fabs(slideZ)));
-            if (turnAmount > 2.0f * slideAmount) slideX = slideY = slideZ = 0.0f;
-            const bool turning = spin != 0.0f || tilt != 0.0f;
-            const bool sliding = slideX != 0.0f || slideY != 0.0f || slideZ != 0.0f;
-            // Anything done with the 3D mouse makes the camera free, from where it is.
-            if (!stageView.camera.free && (turning || sliding)) {
-                makeCameraFree(stageView.camera, stageView.lastCamera);
-                stageView.spaceOrbitUntil = 0.0;
-            }
-            if (stageView.camera.free) {
-                const double now = ImGui::GetTime();
-                if (spin != 0.0f || tilt != 0.0f) {
-                    // Spinning and tilting turn the stage like an object in your hand: the
-                    // camera orbits round a center that stays put while the cap keeps turning
-                    // (and a moment after), round the vertical for a spin and over the top for
-                    // a tilt (never past straight down or up, so it never turns upside down).
-                    if (now >= stageView.spaceOrbitUntil)
-                        stageView.orbitCenter =
-                            freeOrbitCenter(stageView.lastCamera, scene, stageView.selectedJuggler, stageBox());
-                    stageView.spaceOrbitUntil = now + 0.3;
-                    orbitFreeCamera(stageView.camera, stageView.orbitCenter, -spin * 2.5f * step, tilt * 1.5f * step);
-                }
-                if (sliding) {
-                    Vec3 forward, right, up;
-                    freeCameraAxes(stageView.camera, &forward, &right, &up);
-                    const float v = 1.5f * nearestToCamera(stageView.camera.freePos) * step;
-                    stageView.camera.freePos =
-                        stageView.camera.freePos - right * (slideX * v) - up * (slideZ * v) - forward * (slideY * v);
-                }
-            }
-        }
-        const CameraView cameraView = updateCamera(stageView.camera, stage.extents, jugglerAspect, io.DeltaTime);
-        stageView.lastViewProj = cameraViewProj(cameraView, jugglerAspect);
-        stageView.lastCamera = cameraView;
-        stageView.lastAspect = jugglerAspect;
-        // Floor overlays: their lines go in the 3D pass (overlayTriangles, drawn after the scene,
-        // so bodies hide them); their text, here, where no body is in front of it.
-        stageView.overlayTriangles.clear();
-        {
-            OverlayBuilder overlay(&stageView.overlayTriangles, cameraView, viewSize.y);
-            const BodyOccluder bodies(scene, cameraView.position);
-            ImDrawList* bg = ImGui::GetBackgroundDrawList();
-            if (stageView.choreographyMode && doc.choreography.active()) {
-                const StageBox box = stageBox();
-                buildFloorGrid(overlay, settings, box.min.x, box.min.z, box.max.x, box.max.z);
-                std::vector<int> lit = stageView.markChoice.active ? stageView.markChoice.marks : std::vector<int>();
-                lit.insert(lit.end(), stageView.selectedMarks.begin(), stageView.selectedMarks.end());
-                buildSpikeMarks(overlay, doc.choreography, choreographyScale(loop), stageView.markDrag, lit);
-                drawSpikeMarkNumbers(bg, doc.choreography, choreographyScale(loop), stageView.lastViewProj, viewMin,
-                                     viewSize, bodies, lit, markGroupView());
-            }
-            if (showPaths) {
-                const int pathSelected = loop.jugglers == 1 ? 0 : stageView.selectedJuggler;
-                buildChoreographyPaths(overlay, paths, pathSelected, hoveredPathPoint);
-                drawChoreographyPathLabels(bg, paths, pathCycle, stageView.lastViewProj, viewMin, viewSize,
-                                           pathSelected, hoveredPathPoint, settings.pathBeatNumbers, bodies);
-            }
-            // The reticle: what the camera orbits about. Always shown (faintly) for a free
-            // camera, brighter while orbiting; for the automatic framing, only while orbiting.
-            const bool orbitingNow = stageView.cameraOrbiting || ImGui::GetTime() < stageView.spaceOrbitUntil;
-            if (stageView.camera.free || orbitingNow) {
-                const Vec3 center =
-                    !stageView.camera.free
-                        ? cameraView.target
-                        : (orbitingNow ? stageView.orbitCenter
-                                       : freeOrbitCenter(cameraView, scene, stageView.selectedJuggler, stageBox()));
-                buildOrbitReticle(overlay, center, orbitingNow);
-            }
-        }
-        // The pattern has a problem: the stage is as it last was that worked, tinted red round the edge.
-        if (stage.broken) {
-            ImDrawList* bg = ImGui::GetBackgroundDrawList();
-            const ImVec2 b(viewMin.x + viewSize.x, viewMin.y + viewSize.y);
-            bg->AddRectFilled(viewMin, b, IM_COL32(200, 40, 30, 22));
-            for (int i = 0; i < 6; ++i) {
-                const float inset = static_cast<float>(i) * 3.0f;
-                bg->AddRect(ImVec2(viewMin.x + inset, viewMin.y + inset), ImVec2(b.x - inset, b.y - inset),
-                            IM_COL32(220, 50, 40, 150 - i * 24), 0.0f, 0, 3.0f);
-            }
-            const bool throwing = stage.derived.problem(DocumentProblemKind::ThrowingLoop) != nullptr;
-            const bool walking = stage.derived.problem(DocumentProblemKind::WalkingLoop) != nullptr;
-            const char* says =
-                stage.derived.problem(DocumentProblemKind::Throws)
-                    ? "The throws have an error (see the grid): this is the pattern as it last worked"
-                : throwing ? (walking ? "Walking and throwing loops: see the grid" : "Throwing loop: see the grid")
-                           : "Walking loop: see the grid";
-            bg->AddText(ImVec2(viewMin.x + 24.0f, b.y - ImGui::GetTextLineHeight() - 20.0f), IM_COL32(255, 140, 120, 255), says);
-        }
-        drawJugglerLabels(ImGui::GetBackgroundDrawList(), scene, stageView.lastViewProj, viewMin, viewSize,
-                          stageView.selectedJuggler, &stageView.jugglerLabelCenters);
-        if (settings.showThrowValues)
-            drawPropValueLabels(ImGui::GetBackgroundDrawList(), scene, stageView.lastViewProj, viewMin, viewSize,
-                                settings.colorVision, styleOfBall, doc.parsed.form.relative);
+        // The camera (after this frame's orbit and zoom, and the 3D mouse), and what's drawn over
+        // the 3D view: floor overlays, the red tint, the juggler numbers.
+        // (While calibrating, the cap is pushed hard every way: the camera stays put.)
+        const SpaceMouseState cameraMouse =
+            ui.showPreferences && ui.preferences.calibrating ? SpaceMouseState() : spaceMouse;
+        const CameraView cameraView =
+            updateStageCamera(stageView, doc, stage, settings, frame, cameraMouse, ui.loiter.open);
+        drawStageOverlays(stageView, doc, stage, settings, frame, cameraView, hoveredPathPoint, styleOfBall);
         // The pattern's name, if it has one, in the top-left corner of the juggler pane.
         if (doc.patternValid) {
             const std::map<std::string, std::string>::const_iterator named =

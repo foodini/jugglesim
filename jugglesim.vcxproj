@@ -97,14 +97,17 @@
     <ClCompile Include="src\pattern.cpp" />
     <ClCompile Include="src\pattern_library.cpp" />
     <ClCompile Include="src\pattern_library_ui.cpp" />
+    <ClCompile Include="src\preferences_window.cpp" />
     <ClCompile Include="src\prop_figure.cpp" />
     <ClCompile Include="src\renderer.cpp" />
+    <ClCompile Include="src\response_curve.cpp" />
     <ClCompile Include="src\settings.cpp" />
     <ClCompile Include="src\siteswap.cpp" />
     <ClCompile Include="src\siteswap_edit.cpp" />
     <ClCompile Include="src\siteswap_grid.cpp" />
     <ClCompile Include="src\sound.cpp" />
     <ClCompile Include="src\stage_overlays.cpp" />
+    <ClCompile Include="src\stage_pane.cpp" />
     <ClCompile Include="src\stage_render.cpp" />
     <ClCompile Include="third_party\imgui\imgui.cpp" />
     <ClCompile Include="third_party\imgui\imgui_demo.cpp" />
@@ -138,15 +141,18 @@
     <ClInclude Include="src\pattern_library.h" />
     <ClInclude Include="src\pattern_library_ui.h" />
     <ClInclude Include="src\platform.h" />
+    <ClInclude Include="src\preferences_window.h" />
     <ClInclude Include="src\prop_figure.h" />
     <ClInclude Include="src\renderer.h" />
     <ClInclude Include="src\resource.h" />
+    <ClInclude Include="src\response_curve.h" />
     <ClInclude Include="src\settings.h" />
     <ClInclude Include="src\siteswap.h" />
     <ClInclude Include="src\siteswap_edit.h" />
     <ClInclude Include="src\siteswap_grid.h" />
     <ClInclude Include="src\sound.h" />
     <ClInclude Include="src\stage_overlays.h" />
+    <ClInclude Include="src\stage_pane.h" />
     <ClInclude Include="src\stage_render.h" />
     <ClInclude Include="src\timing.h" />
   </ItemGroup>

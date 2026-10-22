@@ -33,6 +33,9 @@
     <ClCompile Include="tests\test_physics.cpp">
       <Filter>tests</Filter>
     </ClCompile>
+    <ClCompile Include="tests\test_response_curve.cpp">
+      <Filter>tests</Filter>
+    </ClCompile>
     <ClCompile Include="tests\test_siteswap.cpp">
       <Filter>tests</Filter>
     </ClCompile>
@@ -61,6 +64,9 @@
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="src\pattern_library.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClCompile Include="src\response_curve.cpp">
       <Filter>src</Filter>
     </ClCompile>
     <ClCompile Include="src\settings.cpp">

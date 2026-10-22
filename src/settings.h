@@ -6,8 +6,10 @@
 
 #include "color_vision.h"
 #include "juggle_sim.h"
+#include "response_curve.h"
 
 #include <filesystem>
+#include <string>
 
 enum class FloorGridType { None, Square, Radial, Triangles };
 
@@ -34,14 +36,26 @@ struct AppSettings {
     bool choreographyPanelCollapsed = false;
     float slowRate = 0.25f;            // slow-motion playback speed, 0.05..0.5 of normal
     float ladderFraction = 0.5f;       // the ladder pane's share of the window width
-    float spaceMouseSpeed = 1.0f;      // how fast a 3D mouse moves the camera, 0.25..4
+    // A 3D mouse's response (see response_curve.h; edited in Edit > Preferences): sliding, in
+    // pixels a second on the screen at the orbit point, and turning, in degrees a second, by how
+    // far each axis is pushed as a percentage of its full push...
+    ResponseCurve spaceSlideCurve = defaultSlideCurve();
+    ResponseCurve spaceTurnCurve = defaultTurnCurve();
+    // ...a hard push, as it's normally pushed, on each axis (raw counts; Preferences' Calibrate):
+    // slides (x, y, z), then turns (tilt, roll, spin), as in SpaceMouseState. (A cap can reach
+    // much further on some axes than others.)
+    float spaceFullPush[6] = {7300.0f, 1600.0f, 9100.0f, 800.0f, 450.0f, 500.0f};
 };
 
 // Returns defaults for anything missing or unreadable.
 AppSettings loadSettings();
+// ...the same, from a settings file's text.
+AppSettings settingsFromText(const std::string& fileText);
 
 // Returns false if the file couldn't be written (the app keeps running either way).
 bool saveSettings(const AppSettings& settings);
+// ...the file's text.
+std::string settingsText(const AppSettings& settings);
 
 // Where per-user files live: %APPDATA%\JuggleSim\<fileName> on Windows,
 // ~/Library/Application Support/JuggleSim/<fileName> on macOS, or the working directory if

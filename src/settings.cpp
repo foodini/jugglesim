@@ -5,8 +5,10 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <system_error>
+#include <vector>
 
 namespace {
 
@@ -44,12 +46,24 @@ std::filesystem::path userDataPath(const wchar_t* fileName) {
 }
 
 AppSettings loadSettings() {
-    AppSettings settings;
     std::ifstream in(settingsPath());
-    if (!in) return settings;
+    if (!in) return AppSettings();
+    std::stringstream text;
+    text << in.rdbuf();
+    return settingsFromText(text.str());
+}
 
-    std::string line;
-    while (std::getline(in, line)) {
+AppSettings settingsFromText(const std::string& fileText) {
+    AppSettings settings;
+    std::vector<std::string> lines;
+    std::istringstream in(fileText);
+    for (std::string line; std::getline(in, line);) lines.push_back(line);
+    // (A file with the 3D mouse's curves in percent ignores any older ones in counts.)
+    bool curvesInPercent = false;
+    for (const std::string& line : lines)
+        curvesInPercent = curvesInPercent || line.find("space_mouse_slide_curve") != std::string::npos ||
+                          line.find("space_mouse_turn_curve") != std::string::npos;
+    for (const std::string& line : lines) {
         const std::string text = trim(line);
         if (text.empty() || text[0] == '#' || text[0] == ';') continue;
         const size_t eq = text.find('=');
@@ -68,10 +82,24 @@ AppSettings loadSettings() {
             char* end = nullptr;
             const double rate = std::strtod(value.c_str(), &end);
             if (end != value.c_str()) settings.slowRate = static_cast<float>(std::clamp(rate, 0.05, 0.5));
-        } else if (key == "space_mouse_speed") {
-            char* end = nullptr;
-            const double speed = std::strtod(value.c_str(), &end);
-            if (end != value.c_str()) settings.spaceMouseSpeed = static_cast<float>(std::clamp(speed, 0.25, 4.0));
+        } else if (key == "space_mouse_slide_curve") {
+            readResponseCurve(value, &settings.spaceSlideCurve);
+        } else if (key == "space_mouse_turn_curve") {
+            readResponseCurve(value, &settings.spaceTurnCurve);
+        } else if ((key == "space_mouse_slide" || key == "space_mouse_turn") && !curvesInPercent) {
+            // (Older: readings in raw counts, when they were taken to run to 350.)
+            ResponseCurve& curve = key == "space_mouse_slide" ? settings.spaceSlideCurve : settings.spaceTurnCurve;
+            ResponseCurve read = curve;
+            if (readResponseCurve(value, &read)) {
+                for (float& x : read.x) x = x * 100.0f / 350.0f;
+                curve = read;
+            }
+        } else if (key == "space_mouse_full_push") {
+            std::istringstream in(value);
+            float full[6];
+            bool ok = true;
+            for (float& f : full) ok = ok && static_cast<bool>(in >> f) && f >= 1.0f;
+            if (ok) std::copy(full, full + 6, settings.spaceFullPush);
         } else if (key == "linked_jugglers") {
             settings.dimLinked = value == "dim";
         } else if (key == "floor_grid") {
@@ -129,6 +157,12 @@ bool saveSettings(const AppSettings& settings) {
 
     std::ofstream out(path, std::ios::trunc);
     if (!out) return false;
+    out << settingsText(settings);
+    return static_cast<bool>(out);
+}
+
+std::string settingsText(const AppSettings& settings) {
+    std::ostringstream out;
     out << "# JuggleSim user settings\n";
     out << "color_vision = " << colorVisionModeKey(settings.colorVision) << "\n";
     out << "props = " << propTypeKey(settings.prop) << "\n";
@@ -155,6 +189,10 @@ bool saveSettings(const AppSettings& settings) {
     out << "linked_jugglers = " << (settings.dimLinked ? "dim" : "normal") << "\n";
     out << "slow_motion = " << settings.slowRate << "\n";
     out << "ladder_width = " << settings.ladderFraction << "\n";
-    out << "space_mouse_speed = " << settings.spaceMouseSpeed << "\n";
-    return static_cast<bool>(out);
+    out << "space_mouse_slide_curve = " << responseCurveText(settings.spaceSlideCurve) << "\n";
+    out << "space_mouse_turn_curve = " << responseCurveText(settings.spaceTurnCurve) << "\n";
+    out << "space_mouse_full_push =";
+    for (float f : settings.spaceFullPush) out << " " << f;
+    out << "\n";
+    return out.str();
 }

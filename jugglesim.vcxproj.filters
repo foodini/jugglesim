@@ -66,6 +66,24 @@
     <ClInclude Include="src\ladder_pane.h">
       <Filter>src</Filter>
     </ClInclude>
+    <ClCompile Include="src\stage_pane.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClInclude Include="src\stage_pane.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClCompile Include="src\preferences_window.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClInclude Include="src\preferences_window.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClCompile Include="src\response_curve.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClInclude Include="src\response_curve.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClCompile Include="src\app.cpp">
       <Filter>src</Filter>
     </ClCompile>

@@ -13,6 +13,7 @@
 #include "pattern.h"
 #include "pattern_library.h"
 #include "pattern_library_ui.h"
+#include "preferences_window.h"
 #include "prop_figure.h"
 #include "renderer.h"
 #include "settings.h"
@@ -334,6 +335,8 @@ struct UiState {
     bool showImGuiDemo = false;
     bool showShortcuts = false;  // the keyboard shortcuts sheet (? or Help > Keyboard Shortcuts)
     bool showSpaceMouseDiagnostics = false;  // Help > 3D Mouse Diagnostics
+    bool showPreferences = false;            // Edit > Preferences (over the ladder pane)
+    PreferencesWindowState preferences;
     bool showColorPreview = false;
     bool done = false;
     bool closePending = false;  // the window's close box was clicked (handled once it's showing)

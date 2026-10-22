@@ -125,6 +125,7 @@ src/
   app_widgets.*       small UI pieces: transport buttons, throw descriptions, the shortcuts sheet
   camera.*            the 3D view's camera: automatic framing, orbit/zoom, free camera, projection
   stage_overlays.*    over and on the 3D view: spike marks, paths, floor grid, labels, picking
+  stage_pane.*        the 3D view's mouse: selecting, camera, dragging jugglers and marks, the floor menu
   stage_render.*      drawing the 3D view: jugglers, props, flames, the walking ghost
   panels.*            the floating Tweakables and Choreography panels
   platform.h          what each platform provides to the app (window, input, OpenGL, files)
@@ -135,6 +136,7 @@ src/
   mesh.h/.cpp         procedural meshes: sphere, cylinder, frustum, cube, lathe, ring sectors
   renderer.h/.cpp     lit solid-color shader (and see-through ghosts), plus additive "glow" ribbons
   juggler_figure.*    stick-figure pose, arm and leg IK, and drawing
+  preferences_window.* Edit > Preferences: the 3D mouse's response curves (over the ladder pane)
   prop_figure.*       ball, club and ring meshes and drawing
   grid_pane.*         the siteswap grid pane: draws it, and says what was done (app.cpp applies it)
   juggle_sim.h/.cpp   where hands, body and props are at any moment (closed-form physics)
@@ -142,6 +144,7 @@ src/
   pattern.h/.cpp      throw events + sections: the source of truth for juggling
   pattern_library.*   pattern library: file format, built-in and user patterns
   pattern_library_ui.* pattern menus (adaptive tree, Find, Recent), Save and Manage dialogs
+  response_curve.*    a 3D mouse axis's reading -> rate: a dead zone, then a curve through 5 points
   resource.h          resource IDs (see jugglesim.rc)
   siteswap.h/.cpp     siteswap parsing/validation (vanilla, and passing for up to 6 jugglers)
   siteswap_edit.*     the siteswap grid's model: text to grid and back, counts, columns, swap, rotate

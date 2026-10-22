@@ -164,8 +164,8 @@ SpaceMouseState platformSpaceMouse() {
     for (int i = 0; i < 3; ++i) {
         // The device's z points down and y toward you: flip them so z is up and y away.
         const float sign = i == 0 ? 1.0f : -1.0f;
-        s.move[i] = fresh ? sign * std::clamp(g_spaceMouse.move[i] / 350.0f, -1.0f, 1.0f) : 0.0f;
-        s.turn[i] = fresh ? sign * std::clamp(g_spaceMouse.turn[i] / 350.0f, -1.0f, 1.0f) : 0.0f;
+        s.move[i] = fresh ? sign * static_cast<float>(g_spaceMouse.move[i]) : 0.0f;
+        s.turn[i] = fresh ? sign * static_cast<float>(g_spaceMouse.turn[i]) : 0.0f;
     }
     s.buttons = g_spaceMouse.buttons;
     return s;
