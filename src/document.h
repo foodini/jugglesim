@@ -34,6 +34,8 @@ struct Document {
     // Whether deriveDocument gives the same for both: the same throws, throwing loop and
     // choreography (the rest is how they're shown).
     bool derivesSameAs(const Document& o) const;
+    // Whether they're the same as far as undo goes: everything but the camera.
+    bool sameForUndo(const Document& o) const;
 };
 
 // What can be wrong with a document. Any of them stops it being played.
@@ -62,3 +64,31 @@ struct DerivedDocument {
 };
 
 DerivedDocument deriveDocument(const Document& doc);
+
+// What changed from one document to another, as an undo step's name: "Tempo 150 to 160",
+// "Move mark 0a", "J2's keyframes", "Throws 531 to 441"; two things at once joined ("4-count,
+// throws..."). (A step can also be given a name of its own, as loading a pattern is.)
+std::string describeChange(const Document& before, const Document& after);
+
+// Undo and redo: steps, each the document before and after one action, with its name.
+struct UndoStep {
+    Document before, after;
+    std::string label;
+};
+struct UndoHistory {
+    std::vector<UndoStep> undo;
+    std::vector<UndoStep> redo;
+    Document recorded;  // the document as of the last step (what the next one starts from)
+    static constexpr size_t kMaxSteps = 1000;
+};
+// Starts the history afresh at `now` (a pattern loaded or started: undo doesn't go back past it).
+void startHistory(UndoHistory& h, const Document& now);
+// Records a step if `now` differs from what was last recorded (camera aside): named `label`, or
+// (if that's empty) by describeChange. A new step ends redo. Returns whether there was one.
+bool recordStep(UndoHistory& h, const Document& now, const std::string& label = std::string());
+// Undoes the last step: sets *show to the document to show (the step's before, with `now`'s
+// camera), and *label to its name. False if there's nothing to undo. (Record any change made
+// since the last step first, so it's what's undone.)
+bool undoStep(UndoHistory& h, const Document& now, Document* show, std::string* label);
+// ...and redoes the last step undone.
+bool redoStep(UndoHistory& h, const Document& now, Document* show, std::string* label);

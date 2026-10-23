@@ -377,8 +377,8 @@ in the top-right corner of the juggler pane ("Tweakables" is a working name):
   automatic distance.
 - The arrow at the top left collapses the panel to a one-line readout ("150 BPM, dwell 1.60");
   click it again to bring the controls back. JuggleSim remembers which way you left it.
-- Changes can be undone (**Ctrl+Z**): each adjustment is one step, recorded once you've stopped
-  changing it for a moment.
+- Changes can be undone (**Ctrl+Z**): each adjustment is one step (a click of + or -, or a
+  slider dragged and let go).
 
 - **Tempo** is in beats per minute: one beat is one throw, alternating hands. It goes from 40 to
   420 (7 throws a second, about the fastest anyone throws accurately). The default is 150,

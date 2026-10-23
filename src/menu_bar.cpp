@@ -62,10 +62,17 @@ MenuBarRequest drawMenuBar(const DocumentState& doc, const StageView& stageView,
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Edit")) {
-        if (ImGui::MenuItem("Undo", "Ctrl+Z", false,
-                            !doc.history.undo.empty() || ladderPane.ladderEdit.chain.active))
+        // (Named by what they'd undo or redo: "Undo Tempo 150 to 160".)
+        const bool chain = ladderPane.ladderEdit.chain.active;  // (undo cancels it)
+        const std::string undoLabel =
+            chain ? std::string("Undo Ladder Edit")
+                  : doc.history.undo.empty() ? std::string("Undo")
+                                             : "Undo " + shortMenuText(doc.history.undo.back().label);
+        if (ImGui::MenuItem((undoLabel + "###undo").c_str(), "Ctrl+Z", false, !doc.history.undo.empty() || chain))
             r.undo = true;
-        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !doc.history.redo.empty())) r.redo = true;
+        const std::string redoLabel =
+            doc.history.redo.empty() ? std::string("Redo") : "Redo " + shortMenuText(doc.history.redo.back().label);
+        if (ImGui::MenuItem((redoLabel + "###redo").c_str(), "Ctrl+Y", false, !doc.history.redo.empty())) r.redo = true;
         ImGui::Separator();
         ImGui::MenuItem("Preferences...", nullptr, &ui.showPreferences);
         ImGui::EndMenu();

@@ -110,7 +110,6 @@ int runApp() {
     doc.parsed = parseSiteswap(doc.siteswapText);
     doc.pattern = patternFromSiteswap(doc.parsed);
     doc.patternValid = doc.parsed.valid;
-    doc.history.current = doc.siteswapText;
 
     doc.juggleParams.prop = settings.prop;
     doc.juggleParams.choreography = &doc.choreography;  // (the stage's evaluation uses stageParams, below)
@@ -353,43 +352,38 @@ int runApp() {
         }
     };
 
-    // Settings changes become undo steps by polling: once the settings differ from the last
-    // recorded ones and nothing has changed (and no control is held) for kSettingsSettleSeconds,
-    // the change is recorded. Anything else that records a step records a pending settings
-    // change first, so the steps stay in order.
-    constexpr double kSettingsSettleSeconds = 0.6;
-    doc.recordedSettings = currentPatternSettings();
-    doc.lastSeenSettings = doc.recordedSettings;
-    auto recordSettingsChange = [&]() {
-        const PatternSettings now = currentPatternSettings();
-        if (now != doc.recordedSettings) doc.history.recordWithSettings(doc.history.current, doc.recordedSettings, now);
-        doc.recordedSettings = doc.lastSeenSettings = now;
-    };
-    auto pollSettingsChange = [&]() {
-        const PatternSettings now = currentPatternSettings();
-        if (now != doc.lastSeenSettings) {
-            doc.lastSeenSettings = now;
-            doc.settingsChangedAt = ImGui::GetTime();
-        }
-        // (Held while the loiter popup is open: the arrival and the loiter are one undo step.)
-        if (ImGui::IsAnyItemActive() || ui.loiter.open || ui.loiter.openRequested)
-            doc.settingsChangedAt = ImGui::GetTime();
-        if (now != doc.recordedSettings && ImGui::GetTime() - doc.settingsChangedAt >= kSettingsSettleSeconds)
-            recordSettingsChange();
-    };
-    // After undo/redo or a library load: what's showing is what's recorded.
-    auto settingsRecorded = [&]() { doc.recordedSettings = doc.lastSeenSettings = currentPatternSettings(); };
-    auto recordPattern = [&](const std::string& text) {
-        recordSettingsChange();
-        doc.history.record(text);
+    // Undo: a step per action, named by what it did (see recordStep and describeChange in
+    // document.h). An action that could follow another still in progress (a throw being typed)
+    // records it first (commitTyping), and those that are one action by their nature record
+    // themselves (a ladder edit, a grid commit). Loading or starting a pattern starts the history
+    // afresh (after asking whether to save the one before: askFirst). Everything else is recorded at the end of the
+    // frame it happened in, once whatever it's part of is over (see changeInProgress).
+    auto recordChange = [&]() { recordStep(doc.history, currentDocument()); };
+    // Something is still being changed, and isn't a step yet: a control held (a slider dragged, a
+    // +/- button held down, a box being typed in), a ladder edit, a juggler or a spike mark being
+    // dragged, or a juggler just put somewhere (the loiter popup, or choosing among marks in the
+    // same place: the arrival and the loiter are one step). (A throw being typed in the grid is
+    // left out of what's recorded meanwhile: see recordFrameChange.)
+    auto changeInProgress = [&]() {
+        return ImGui::IsAnyItemActive() || ladderPane.ladderEdit.chain.active ||
+               stageView.jugglerDrag >= 0 || stageView.markDrag >= 0 || ui.loiter.open || ui.loiter.openRequested ||
+               stageView.markChoice.active;
     };
     // A throw being typed into the siteswap grid is shown as it's typed, and becomes an undo step
     // once it's finished; but a change made some other way (the ladder, undo, the library) can
     // come first. Each of those calls this, so what was typed is a step of its own and undoing the
     // change goes back to it.
     auto commitTyping = [&]() {
-        if (doc.history.current != doc.siteswapText) recordPattern(doc.siteswapText);
         gridPane.siteswapGrid.editing = false;
+        recordChange();
+    };
+    // At the end of a frame: its change, unless it's still in progress. A throw still being typed
+    // isn't part of it (it's shown as it's typed, but is a step of its own once it's finished).
+    auto recordFrameChange = [&]() {
+        if (changeInProgress()) return;
+        Document now = currentDocument();
+        if (gridPane.siteswapGrid.editing) now.siteswap = doc.history.recorded.siteswap;
+        recordStep(doc.history, now);
     };
 
     // Replaces the pattern with the one written in `text` (used by undo/redo).
@@ -437,7 +431,7 @@ int runApp() {
         doc.sketching = check.sketch;
         if (check.valid) doc.pattern = patternFromSiteswap(check);
         if (check.sketch) doc.sketchLoop = check.loop;
-        recordPattern(text);
+        recordChange();
     };
     // Makes juggler j a copy of juggler `to` from to's beat `start` on ("Same as", from the ladder
     // or the grid), or writes a linked juggler's throws out again. One undo step.
@@ -454,7 +448,7 @@ int runApp() {
             commitTyping();
             cancelLadderEdit(ladderPane.ladderEdit);
             showPatternText(text);
-            recordPattern(text);
+            recordChange();
         } else {
             gridPane.siteswapBox.note =
                 "Can't: " + (why.empty() ? std::string("the pattern has to be readable first") : why);
@@ -463,34 +457,50 @@ int runApp() {
     };
     auto linkJugglers = [&](int j, int to, int start) { relink(j, to, start, false); };
     auto unlinkJugglers = [&](int j) { relink(j, 0, 0, true); };
+    // Shows a document from the undo history (the camera stays as it is).
+    auto showDocument = [&](const Document& d) {
+        if (d.siteswap != doc.siteswapText) showPatternText(d.siteswap);
+        doc.patternCount = d.count;
+        doc.throwNext = d.throwNext;
+        if (d.choreography != doc.choreography) {
+            stageView.selectedMarks.clear();
+            stageView.markDrag = -1;
+        }
+        doc.choreography = d.choreography;
+        if (d.prop != settings.prop) {
+            settings.prop = d.prop;  // the Props menu choice is remembered between runs
+            saveSettings(settings);
+        }
+        doc.juggleParams.prop = d.prop;
+        doc.juggleParams.bpm = d.tempo;
+        doc.juggleParams.dwellBeats = d.dwell;
+        doc.juggleParams.distance = d.distance;
+    };
+    // Says what was undone (or redone), under the siteswap grid for a few seconds.
+    auto sayUndone = [&](const char* what, const std::string& label) {
+        gridPane.siteswapBox.info = std::string(what) + ": " + label;
+        gridPane.siteswapBox.infoUntil = ImGui::GetTime() + 4.0;
+    };
     auto undo = [&]() {
         if (ladderPane.ladderEdit.chain.active) {  // an open chain is just cancelled, like Esc
             cancelLadderEdit(ladderPane.ladderEdit);
             return;
         }
-        commitTyping();  // a throw being typed is the step to undo
-        recordSettingsChange();  // a change still settling is the one to undo
-        if (doc.history.undo.empty()) return;
-        const HistoryStep step = doc.history.undo.back();
-        doc.history.undo.pop_back();
-        doc.history.redo.push_back(step);
-        doc.history.current = step.before;
-        if (step.before != step.after) showPatternText(step.before);
-        if (step.settingsChanged) applyPatternSettings(step.settingsBefore);
-        settingsRecorded();
+        commitTyping();  // (a change still being made is the one to undo)
+        Document show;
+        std::string label;
+        if (!undoStep(doc.history, currentDocument(), &show, &label)) return;
+        showDocument(show);
+        sayUndone("Undone", label);
     };
     auto redo = [&]() {
-        commitTyping();
-        recordSettingsChange();  // a change still settling is a new step, which ends redo
-        if (doc.history.redo.empty()) return;
+        commitTyping();  // (a change still being made is a new step, which ends redo)
         cancelLadderEdit(ladderPane.ladderEdit);
-        const HistoryStep step = doc.history.redo.back();
-        doc.history.redo.pop_back();
-        doc.history.undo.push_back(step);
-        doc.history.current = step.after;
-        if (step.before != step.after) showPatternText(step.after);
-        if (step.settingsChanged) applyPatternSettings(step.settingsAfter);
-        settingsRecorded();
+        Document show;
+        std::string label;
+        if (!redoStep(doc.history, currentDocument(), &show, &label)) return;
+        showDocument(show);
+        sayUndone("Redone", label);
     };
     library.builtInPatterns = parsePatternLibrary(platformBuiltInPatternText());
     library.myPatterns = loadUserPatterns();
@@ -510,16 +520,13 @@ int runApp() {
     auto loadLibraryPattern = [&](const LibraryPattern& chosen, bool mine) {
         commitTyping();
         playback.beat = 0.0;  // a new pattern starts at beat 1
-        recordSettingsChange();
-        const PatternSettings before = currentPatternSettings();
         showPatternText(chosen.siteswap);
         doc.choreography = Choreography();  // unless the pattern brings its own
         doc.patternCount = 0;               // ...and no count directive, unless it brings one
         doc.throwNext.clear();              // ...and no throwing loop, unless it brings one
         stageView.camera.free = false;            // ...and the automatic framing, unless it brings a camera
         applyPatternSettings(chosen.settings);
-        doc.history.recordWithSettings(doc.siteswapText, before, currentPatternSettings());
-        settingsRecorded();
+        startHistory(doc.history, currentDocument());  // (undo doesn't go back to the pattern before)
         markSaved();
         addRecentPattern(&library.recentPatterns, chosen, mine);
         saveRecentPatterns(library.recentPatterns);  // not worth bothering the user if this fails
@@ -632,27 +639,36 @@ int runApp() {
         ladderPane.ladderEdit.followPausedUntil = 0.0;
     };
 
-    // Quitting: right away, or first asking whether to save the pattern if it has changed.
-    auto requestQuit = [&]() {
+    // Starting a new pattern, loading one, or quitting: right away, or first asking whether to
+    // save the pattern if it has changed (see SavePrompt; then goOn, once it's answered).
+    auto goOn = [&](SaveBefore what) {
+        if (what == SaveBefore::NewPattern)
+            ui.newPatternDialog.openRequested = true;
+        else if (what == SaveBefore::Load)
+            loadLibraryPattern(ui.pendingLoad, ui.pendingLoadMine);
+        else
+            ui.done = true;
+    };
+    auto askFirst = [&](SaveBefore what) {
         if (hasUnsavedChanges()) {
-            ui.savePrompt.forQuit = true;
+            ui.savePrompt.before = what;
+            ui.savePrompt.loading = what == SaveBefore::Load ? ui.pendingLoad.displayName() : std::string();
             ui.savePrompt.requested = true;
         } else {
-            ui.done = true;
+            goOn(what);
         }
+    };
+    auto requestQuit = [&]() { askFirst(SaveBefore::Quit); };
+    auto requestLoad = [&](const LibraryPattern& chosen, bool mine) {
+        ui.pendingLoad = chosen;
+        ui.pendingLoadMine = mine;
+        askFirst(SaveBefore::Load);
     };
     // Does what was chosen in the menus (see drawMenuBar).
     auto applyMenuRequest = [&](const MenuBarRequest& r) {
         if (r.settingsChanged) saveSettings(settings);
-        if (r.newPattern) {
-            if (hasUnsavedChanges()) {
-                ui.savePrompt.forQuit = false;
-                ui.savePrompt.requested = true;
-            } else {
-                ui.newPatternDialog.openRequested = true;
-            }
-        }
-        if (r.loadPattern) loadLibraryPattern(r.pattern, r.patternIsMine);
+        if (r.newPattern) askFirst(SaveBefore::NewPattern);
+        if (r.loadPattern) requestLoad(r.pattern, r.patternIsMine);
         if (r.save) ui.saveRequested = true;
         if (r.saveAs) ui.saveAsRequested = true;
         if (r.quit) requestQuit();
@@ -795,7 +811,7 @@ int runApp() {
                     doc.sketching = check.sketch;
                     if (check.valid) doc.pattern = patternFromSiteswap(check);
                     if (check.sketch) doc.sketchLoop = check.loop;
-                    recordPattern(text);
+                    recordChange();
                 }
             }
         }
@@ -888,15 +904,9 @@ int runApp() {
             const ThrowLoopPlan plan = throwLoopPlan(doc.throwNext, writtenLoop.jugglers);
             if (!plan.valid || !playedLoop(writtenLoop, plan, stage.derived.paths).ok) sound.plipWanted = true;
         }
-        // The choreography's rows: keyframes typed, walk links, and the beat to show.
-        // (Throws and walking changed together, a selection across both: one undo step.)
-        const bool together = !g.choreoEdits.empty() && g.commit && g.newCount < 0;
-        PatternSettings settingsBeforeBoth;
-        if (together) {
-            commitTyping();
-            recordSettingsChange();
-            settingsBeforeBoth = currentPatternSettings();
-        }
+        // The choreography's rows: keyframes typed, walk links, and the beat to show. (Throws and
+        // walking changed together, a selection across both, are one undo step: recorded with
+        // the throws, below.)
         for (const ChoreoEdit& e : g.choreoEdits) {
             if (e.juggler < 0) continue;
             if (e.kind == ChoreoEdit::Kind::Set) {
@@ -969,21 +979,13 @@ int runApp() {
         if (g.newCount >= 0) {
             // A new count directive (and the throws moved to fit it, if asked): one undo step.
             commitTyping();
-            recordSettingsChange();
-            const PatternSettings before = currentPatternSettings();
             doc.patternCount = g.newCount;
             if (g.changed) showPatternText(g.text);
-            doc.history.recordWithSettings(g.changed ? g.text : doc.history.current, before,
-                                           currentPatternSettings());
-            settingsRecorded();
-        } else if (together) {
-            if (g.commitText != doc.siteswapText) showPatternText(g.commitText);
-            doc.history.recordWithSettings(g.commitText, settingsBeforeBoth, currentPatternSettings());
-            settingsRecorded();
+            recordChange();
         } else {
             if (g.commit) {
                 if (g.commitText != doc.siteswapText) showPatternText(g.commitText);
-                recordPattern(g.commitText);
+                recordChange();
             }
             if (g.changed && g.text != doc.siteswapText) showPatternText(g.text);
         }
@@ -998,6 +1000,8 @@ int runApp() {
     };
 
     markSaved();
+    doc.history.recorded = currentDocument();  // (where undo starts)
+    int undoLookFrames = 0;  // frames left to look for a change to record (see recordChange)
     while (!ui.done) {
         if (!platformPollEvents()) break;
         if (platformTakeCloseRequest()) ui.closePending = true;
@@ -1527,18 +1531,17 @@ int runApp() {
             drawSavePatternDialog(library.saveDialog, doc.siteswapText, settingsForSaving(), library.myPatterns);
         if (saveRequest.save && (doc.patternValid || doc.sketching)) {
             storeMyPattern(saveRequest.name, saveRequest.replace);
-            if (ui.newAfterSave) ui.newPatternDialog.openRequested = true;
-            if (ui.quitAfterSave) ui.done = true;
-            ui.newAfterSave = ui.quitAfterSave = false;
-        } else if ((ui.newAfterSave || ui.quitAfterSave) && !library.saveDialog.openRequested &&
+            if (ui.continueAfterSave) goOn(ui.savePrompt.before);
+            ui.continueAfterSave = false;
+        } else if (ui.continueAfterSave && !library.saveDialog.openRequested &&
                    !ImGui::IsPopupOpen("Save to My Patterns")) {
-            ui.newAfterSave = ui.quitAfterSave = false;  // the save was cancelled: so is the new pattern (or quitting)
+            ui.continueAfterSave = false;  // the save was cancelled: so is what it was for
         }
         const ManagePatternsRequest manageRequest =
             drawManagePatternsWindow(library.manageWindow, library.myPatterns, settings.colorVision);
         if (manageRequest.load >= 0) {
             const LibraryPattern chosen = library.myPatterns[static_cast<size_t>(manageRequest.load)];
-            loadLibraryPattern(chosen, true);
+            requestLoad(chosen, true);
         }
         if (manageRequest.rename >= 0) {
             LibraryPattern& renamed = library.myPatterns[static_cast<size_t>(manageRequest.rename)];
@@ -1681,7 +1684,7 @@ int runApp() {
         if (ui.showSpaceMouseDiagnostics)
             drawSpaceMouseDiagnostics(&ui.showSpaceMouseDiagnostics, spaceMouse, stageView.spaceMouseWheelBlocked);
 
-        // File > New Pattern..., first offering to save the current pattern if it has changed.
+        // Save changes? (before a new pattern, loading one, or quitting: see askFirst).
         {
             std::string name;
             const char* also = "";
@@ -1696,20 +1699,14 @@ int runApp() {
                 if (openPatternIndex() >= 0) {
                     // Over the open pattern, then on.
                     storeMyPattern(doc.openPatternName, true);
-                    if (ui.savePrompt.forQuit)
-                        ui.done = true;
-                    else
-                        ui.newPatternDialog.openRequested = true;
+                    goOn(ui.savePrompt.before);
                 } else {
                     std::snprintf(library.saveDialog.name, sizeof(library.saveDialog.name), "%s", doc.siteswapText);
                     library.saveDialog.openRequested = true;
-                    (ui.savePrompt.forQuit ? ui.quitAfterSave : ui.newAfterSave) = true;
+                    ui.continueAfterSave = true;
                 }
             } else if (choice == SaveChangesChoice::DontSave) {
-                if (ui.savePrompt.forQuit)
-                    ui.done = true;
-                else
-                    ui.newPatternDialog.openRequested = true;
+                goOn(ui.savePrompt.before);
             }
         }
         // ...and the blank pattern it asks for.
@@ -1726,8 +1723,6 @@ int runApp() {
             if (loopToText(blank, &text)) {
                 commitTyping();
                 playback.beat = 0.0;
-                recordSettingsChange();
-                const PatternSettings before = currentPatternSettings();
                 showPatternText(text);
                 doc.choreography = Choreography();  // a new pattern starts in the default formation
                 if (d.walking > 0) {
@@ -1742,8 +1737,7 @@ int runApp() {
                 doc.patternCount = n >= 2 ? n : 0;
                 doc.throwNext.clear();
                 doc.openPatternName.clear();
-                doc.history.recordWithSettings(text, before, currentPatternSettings());
-                settingsRecorded();
+                startHistory(doc.history, currentDocument());  // (undo doesn't go back to the pattern before)
                 markSaved();
                 stageView.selectedJuggler = -1;
                 stageView.frameSelected = false;
@@ -1751,7 +1745,19 @@ int runApp() {
             }
         }
 
-        pollSettingsChange();
+        // This frame's change, once it's over, is an undo step (see recordChange). (Only looked
+        // for just after input: nothing else changes the pattern, and comparing isn't free.)
+        {
+            bool input = io.MouseWheel != 0.0f || io.MouseWheelH != 0.0f || !io.InputQueueCharacters.empty();
+            for (int b = 0; b < ImGuiMouseButton_COUNT; ++b) input = input || io.MouseDown[b] || io.MouseReleased[b];
+            for (int k = ImGuiKey_NamedKey_BEGIN; k < ImGuiKey_NamedKey_END && !input; ++k)
+                input = ImGui::IsKeyDown(static_cast<ImGuiKey>(k)) || ImGui::IsKeyReleased(static_cast<ImGuiKey>(k));
+            if (input) undoLookFrames = 3;  // (and a couple of frames after, for what closes after)
+            if (undoLookFrames > 0) {
+                --undoLookFrames;
+                recordFrameChange();
+            }
+        }
 
         // The camera (after this frame's orbit and zoom, and the 3D mouse), and what's drawn over
         // the 3D view: floor overlays, the red tint, the juggler numbers.

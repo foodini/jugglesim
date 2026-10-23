@@ -21,7 +21,10 @@ SaveChangesChoice drawSaveChangesDialog(SavePrompt& p, const std::string& name, 
     if (p.open) {
         const float em = ImGui::GetFontSize();
         ImGui::PushTextWrapPos(em * 34.0f);
-        ImGui::Text("Save %s%s to My Patterns before %s?", name.c_str(), also, p.forQuit ? "quitting" : "starting a new pattern");
+        const std::string before = p.before == SaveBefore::Quit   ? std::string("quitting")
+                                   : p.before == SaveBefore::Load ? "loading \"" + p.loading + "\""
+                                                                  : std::string("starting a new pattern");
+        ImGui::Text("Save %s%s to My Patterns before %s?", name.c_str(), also, before.c_str());
         ImGui::PopTextWrapPos();
         ImGui::Spacing();
         if (ImGui::Button(patternIsOpen ? "Save" : "Save...", ImVec2(em * 7.0f, 0.0f))) {

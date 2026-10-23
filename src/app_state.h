@@ -30,50 +30,6 @@
 #include <utility>
 #include <vector>
 
-// Undo/redo history of the pattern, kept as siteswap text (which also records the loop
-// period: 531 and 531531 are different entries). One step per closed edit chain, period
-// change, siteswap committed in the text box, or pattern loaded from the library. Steps can
-// also carry the settings (props, tempo, dwell, distance) from before and after: loading from
-// the library changes both, and changing a setting by itself is a step of its own once the
-// user has stopped adjusting it for a moment.
-struct HistoryStep {
-    std::string before, after;
-    bool settingsChanged = false;
-    PatternSettings settingsBefore, settingsAfter;
-};
-struct PatternHistory {
-    std::vector<HistoryStep> undo;
-    std::vector<HistoryStep> redo;
-    std::string current;  // text of the pattern being shown
-
-    // Call when the pattern has changed to `next` by a user action.
-    void record(const std::string& next) {
-        if (next == current) return;
-        HistoryStep step;
-        step.before = current;
-        step.after = next;
-        push(step);
-    }
-    // Call when a library pattern has been loaded (settings: all of them, before and after).
-    void recordWithSettings(const std::string& next, const PatternSettings& before,
-                            const PatternSettings& after) {
-        if (next == current && before == after) return;
-        HistoryStep step;
-        step.before = current;
-        step.after = next;
-        step.settingsChanged = before != after;
-        step.settingsBefore = before;
-        step.settingsAfter = after;
-        push(step);
-    }
-    void push(const HistoryStep& step) {
-        undo.push_back(step);
-        if (undo.size() > 1000) undo.erase(undo.begin());
-        redo.clear();
-        current = step.after;
-    }
-};
-
 // Playback clock. beat is fractional (beat 0 = the right hand's first throw) and may be
 // negative after stepping back; the pattern repeats forever in both directions.
 struct Playback {
@@ -127,7 +83,8 @@ struct DocumentState {
     // while the jugglers carry on with the last complete pattern (`pattern`), dimmed.
     bool sketching = false;
     JugglingLoop sketchLoop;
-    PatternHistory history;
+    // Undo: a step per action (see recordChange in app.cpp); each named by what it did.
+    UndoHistory history;
     JuggleParams juggleParams;
     // Where the jugglers stand and walk: spike marks and keyframes (none: the default formation,
     // standing still). See choreography.h.
@@ -144,9 +101,6 @@ struct DocumentState {
     // The choreography's floor grid last put in the settings: one loaded (a pattern, undo) that
     // differs is put in place.
     std::string choreographyGridShown;
-    PatternSettings recordedSettings;
-    PatternSettings lastSeenSettings;
-    double settingsChangedAt = 0.0;
     // The one of My Patterns that's open (its name as shown), so File > Save can save over it;
     // empty if what's showing isn't one of them (new, typed, or from JuggleSim's patterns).
     std::string openPatternName;
@@ -269,9 +223,14 @@ struct LibraryState {
 // Windows, dialogs, prompts and panels.
 struct UiState {
     std::string windowTitle;  // as last set (it's set only when it changes)
-    SavePrompt savePrompt;  // Save changes? (before a new pattern, or quitting)
-    bool newAfterSave = false;  // Save... was chosen in that prompt: start the new pattern once saved
-    bool quitAfterSave = false;  // ...or quit once saved
+    SavePrompt savePrompt;  // Save changes? (before a new pattern, loading one, or quitting)
+    // Save... was chosen in that prompt (asking for a name): once saved, go on (start the new
+    // pattern, load the one chosen, or quit).
+    bool continueAfterSave = false;
+    // A pattern chosen to load while that prompt asks first (a copy), and whether it's one of
+    // My Patterns.
+    LibraryPattern pendingLoad;
+    bool pendingLoadMine = false;
     LoiterPopup loiter;
     double lastLoiterErrorUntil = 0.0;
     RenameMark renameMark;

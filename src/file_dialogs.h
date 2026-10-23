@@ -8,10 +8,13 @@
 
 #include <string>
 
-// Save changes? Asked before starting a new pattern, or quitting, when the pattern has changed.
+// Save changes? Asked before starting a new pattern, loading one, or quitting, when the pattern
+// has changed.
+enum class SaveBefore { NewPattern, Load, Quit };
 struct SavePrompt {
     bool requested = false;  // open it this frame
-    bool forQuit = false;    // it's for quitting (not for File > New Pattern...)
+    SaveBefore before = SaveBefore::NewPattern;  // what it's asked before
+    std::string loading;     // SaveBefore::Load: the pattern's name
     bool open = false;       // (as of the last frame drawn)
 };
 enum class SaveChangesChoice { None, Save, DontSave };  // (Cancel: None)

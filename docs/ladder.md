@@ -237,13 +237,19 @@ carries. The props in the 3D view follow the same setting. Sketches are always c
 ## Undo and redo
 
 **Ctrl+Z** undoes and **Ctrl+Y** (or **Ctrl+Shift+Z**) redoes, also under the *Edit* menu.
-Each of these is one step: a finished edit chain on the ladder, a change of period, a throw
-typed into a cell of the siteswap grid (or any other edit there: clearing cells, a paste, a
-column inserted), a change of count, a pattern loaded from the library, beats added or deleted,
-a throw drawn or deleted in a sketch, or a change to the props, tempo, dwell or passing distance
-(recorded once you've stopped adjusting it for a moment, so dragging a slider is one step).
+Every change to the pattern is one step: a finished edit chain on the ladder, a change of period,
+a throw typed into a cell of the siteswap grid (or any other edit there: clearing cells, a paste, a
+column inserted), a change of count, a pattern loaded from the library, beats added or deleted, a
+throw drawn or deleted in a sketch, a change to the props, tempo, dwell or passing distance (a
+click of + or -, or a slider dragged and let go), and each change to the choreography (a juggler
+or spike mark dragged, a mark renamed, a walk link, its length...). Putting a juggler somewhere
+and choosing how long they loiter there is one step.
+
+Each step is named by what it did: the *Edit* menu says what Undo and Redo would undo or redo
+("Undo Tempo 150 to 160", "Undo Move mark 0a"), and the line under the grid says what was undone.
 Ctrl+Z works the same while the grid has the keyboard; a throw still being typed is finished
-first, and is the step undone.
+first, and is the step undone. Moving the camera isn't a step. Loading or starting a pattern
+starts the history afresh (after asking whether to save the changes to the one before).
 
 ## When something's refused
 

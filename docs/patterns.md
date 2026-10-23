@@ -49,8 +49,10 @@ that name, you're asked whether to replace it.
 Once a pattern is one of yours (you loaded it from My Patterns, or just saved it), *File > Save
 "name"* (**Ctrl+S**) saves your changes over it without asking for the name again. For any other
 pattern (a new one, one you typed, or one of JuggleSim's), *File > Save...* asks for a name, as
-Save As does. When you start a new pattern or quit with unsaved changes, the prompt's **Save**
-button saves over the open pattern the same way.
+Save As does. When you start a new pattern, load one, or quit with unsaved changes, you're asked
+whether to save them first; the prompt's **Save** button saves over the open pattern the same
+way. (Loading or starting a pattern starts its undo history afresh: Ctrl+Z doesn't go back to
+the pattern before.)
 
 Sketches (patterns with throws not decided yet, `?`) can be saved too. They're grouped under
 *Sketches* instead of a number of props.
