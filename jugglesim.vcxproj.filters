@@ -66,6 +66,24 @@
     <ClInclude Include="src\ladder_pane.h">
       <Filter>src</Filter>
     </ClInclude>
+    <ClCompile Include="src\menu_bar.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClInclude Include="src\menu_bar.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClCompile Include="src\choreography_dialogs.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClInclude Include="src\choreography_dialogs.h">
+      <Filter>src</Filter>
+    </ClInclude>
+    <ClCompile Include="src\file_dialogs.cpp">
+      <Filter>src</Filter>
+    </ClCompile>
+    <ClInclude Include="src\file_dialogs.h">
+      <Filter>src</Filter>
+    </ClInclude>
     <ClCompile Include="src\stage_pane.cpp">
       <Filter>src</Filter>
     </ClCompile>

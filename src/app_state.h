@@ -4,7 +4,9 @@
 
 #include "camera.h"
 #include "choreography.h"
+#include "choreography_dialogs.h"
 #include "document.h"
+#include "file_dialogs.h"
 #include "juggle_sim.h"
 #include "ladder_view.h"
 #include "loop_ops.h"
@@ -90,20 +92,6 @@ struct SiteswapBox {
     double infoUntil = 0.0;      // (shown until then)
 };
 
-// The loiter popup: after a juggler is put somewhere (dropped, or a mark clicked), how many
-// beats they stay there (a second keyframe that many beats later, on the same spot).
-struct LoiterPopup {
-    bool openRequested = false;
-    bool open = false;       // (as of the last frame drawn)
-    int juggler = -1;
-    Keyframe arrival;        // the keyframe just made
-    long onBeat = 0;         // the beat it was made on (as counted, not just in the cycle)
-    ImVec2 at;               // where (screen)
-    char text[8] = "";
-    std::string error;       // a length that doesn't fit, flashed
-    double errorUntil = 0.0;
-};
-
 // Picking one of several spike marks in the same place: after a juggler is put there, their
 // arrows light up and a click on one (or its number) says which.
 struct MarkChoice {
@@ -114,41 +102,6 @@ struct MarkChoice {
     ImVec2 at;               // where (screen), for the loiter popup after
 };
 
-// Renaming a spike mark (its menu's Rename...): two characters, 0-9 and a-z, unique.
-struct RenameMark {
-    int mark = -1;
-    bool requested = false;  // open the dialog this frame
-    char text[3] = {0, 0, 0};
-    std::string error;
-};
-
-// The loop column's builder (right-click a walking row's loop cell): whose part, and the turn.
-struct LoopBuilder {
-    int juggler = -1;
-    bool requested = false;
-    Continuation k;
-};
-
-// The Walk Like... window: one juggler's walk link (see WalkLink), edited live.
-struct WalkLikeWindow {
-    bool open = false;
-    int juggler = -1;
-    int confirmLeader = -1;  // asking whether to link to this leader (deleting their keyframes)
-    bool confirmRequested = false;
-    // The choice under the mouse (a leader, an offset, a turn): the link it would make, shown
-    // on the stage as a ghost of the juggler (see WalkGhost) until the mouse moves off.
-    bool previewing = false;
-    WalkLink preview;
-};
-
-// File > New Pattern...: a blank sketch (every throw "?") for some jugglers and period.
-struct NewPatternDialog {
-    bool openRequested = false;
-    int jugglers = 2;
-    int period = 6;
-    int count = 0;  // a count directive (0: none): blanks only on its beats, 3s between
-    int walking = 0;  // the choreography's length, its own period (0: no choreography yet)
-};
 
 // Graphics: what the 3D view is drawn with (made once the window and OpenGL are up).
 struct Graphics {
@@ -316,8 +269,7 @@ struct LibraryState {
 // Windows, dialogs, prompts and panels.
 struct UiState {
     std::string windowTitle;  // as last set (it's set only when it changes)
-    bool savePromptRequested = false;
-    bool promptForQuit = false;  // that prompt is for quitting (not for File > New Pattern...)
+    SavePrompt savePrompt;  // Save changes? (before a new pattern, or quitting)
     bool newAfterSave = false;  // Save... was chosen in that prompt: start the new pattern once saved
     bool quitAfterSave = false;  // ...or quit once saved
     LoiterPopup loiter;
@@ -329,7 +281,7 @@ struct UiState {
     bool saveRequested = false;
     bool saveAsRequested = false;
     TweakablesPanelState tweakablesPanel;
-    int pendingChoreographyLength = 0;  // asking whether to shorten the choreography to this
+    ShortenDialog shortenChoreography;  // asking whether to shorten the choreography (past keyframes)
     std::set<std::string> dismissedWarnings;  // (keys of) warnings the user has dismissed
     ChoreographyPanelState choreographyPanel;
     bool showImGuiDemo = false;

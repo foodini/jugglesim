@@ -2,7 +2,7 @@
 // response_curve.h). It sits over the ladder pane while it's open, so the stage stays in view:
 // drag a curve's points, try the cap (each axis's reading shows on its curve, live), and drag
 // again. Readings are a percentage of each axis's full push (how hard the user pushes it at most),
-// which Calibrate measures.
+// which Calibrate measures. Also Help > 3D Mouse Diagnostics.
 #pragma once
 
 #include "platform.h"
@@ -26,3 +26,8 @@ struct PreferencesWindowState {
 // can save them.
 bool drawPreferencesWindow(bool* open, PreferencesWindowState& state, AppSettings& settings,
                            const SpaceMouseState& spaceMouse, ImVec2 pos, ImVec2 size);
+
+// Help > 3D Mouse Diagnostics, while *open: what the cap is sending, live (raw counts on each
+// axis), and whether the driver is sending mouse-wheel events too (last ignored at
+// `wheelBlockedAt`, ImGui time).
+void drawSpaceMouseDiagnostics(bool* open, const SpaceMouseState& spaceMouse, double wheelBlockedAt);

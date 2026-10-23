@@ -17,6 +17,7 @@
 #include "document.h"
 #include "grid_pane.h"
 #include "ladder_pane.h"
+#include "menu_bar.h"
 #include "stage_pane.h"
 #include "camera.h"
 #include "panels.h"
@@ -634,10 +635,62 @@ int runApp() {
     // Quitting: right away, or first asking whether to save the pattern if it has changed.
     auto requestQuit = [&]() {
         if (hasUnsavedChanges()) {
-            ui.promptForQuit = true;
-            ui.savePromptRequested = true;
+            ui.savePrompt.forQuit = true;
+            ui.savePrompt.requested = true;
         } else {
             ui.done = true;
+        }
+    };
+    // Does what was chosen in the menus (see drawMenuBar).
+    auto applyMenuRequest = [&](const MenuBarRequest& r) {
+        if (r.settingsChanged) saveSettings(settings);
+        if (r.newPattern) {
+            if (hasUnsavedChanges()) {
+                ui.savePrompt.forQuit = false;
+                ui.savePrompt.requested = true;
+            } else {
+                ui.newPatternDialog.openRequested = true;
+            }
+        }
+        if (r.loadPattern) loadLibraryPattern(r.pattern, r.patternIsMine);
+        if (r.save) ui.saveRequested = true;
+        if (r.saveAs) ui.saveAsRequested = true;
+        if (r.quit) requestQuit();
+        if (r.undo) undo();
+        if (r.redo) redo();
+        if (r.togglePlaying) playback.playing = !playback.playing;
+        if (r.step != 0.0) stepPlayback(r.step);
+        if (r.goToStart) goToStart();
+        if (r.toggleSlow) playback.slow = !playback.slow;
+        if (r.resetTweakables) resetTweakables(doc.juggleParams);
+        if (r.setProp) {
+            settings.prop = r.prop;
+            doc.juggleParams.prop = r.prop;
+            saveSettings(settings);
+        }
+        if (r.resetLadderView) resetLadderView(ladderPane.ladderEdit);
+        if (r.toggleCollapseAll) {
+            const int jugglers =
+                doc.sketching ? doc.sketchLoop.jugglers : (doc.patternValid ? doc.pattern.jugglers : 0);
+            toggleCollapseAll(ladderPane.ladderEdit, jugglers);
+        }
+        if (r.resetCamera) {
+            resetCamera(stageView.camera);
+            stageView.frameSelected = false;
+        }
+        if (r.frameAll) {
+            stageView.frameSelected = false;
+            stageView.camera.free = false;
+        }
+        if (r.frameSelected) {
+            stageView.frameSelected = true;
+            stageView.camera.free = false;
+        }
+        if (r.toggleTopView) toggleTopView();
+        if (r.toggleChoreographyMode) toggleChoreographyMode();
+        if (r.clearChoreography) {
+            doc.choreography = Choreography();
+            stageView.choreographyMode = false;
         }
     };
     // Makes the changes asked for in the 3D view (see drawStagePane). `loop`: the loop shown this
@@ -1084,233 +1137,15 @@ int runApp() {
         }
 
         // --- Main menu bar ---
-        float menuHeight = 0.0f;
-        if (ImGui::BeginMainMenuBar()) {
-            if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem("New Pattern...")) {
-                    if (hasUnsavedChanges()) {
-                        ui.promptForQuit = false;
-                        ui.savePromptRequested = true;
-                    } else {
-                        ui.newPatternDialog.openRequested = true;
-                    }
-                }
-                ImGui::Separator();
-                // (A chosen pattern is copied before loading it: loading changes the Recent list
-                // the choice may point into.)
-                if (ImGui::BeginMenu("JuggleSim Patterns")) {
-                    const PatternChoice choice = drawJuggleSimPatternsMenu(
-                        library.builtInPatterns, library.juggleSimMenuState, settings.colorVision);
-                    if (choice.pattern) {
-                        const LibraryPattern chosen = *choice.pattern;
-                        loadLibraryPattern(chosen, choice.mine);
-                    }
-                    ImGui::EndMenu();
-                }
-                if (ImGui::BeginMenu("My Patterns")) {
-                    const PatternChoice choice = drawMyPatternsMenu(library.myPatterns, library.recentPatterns,
-                                                                    library.myMenuState, settings.colorVision);
-                    if (choice.pattern) {
-                        LibraryPattern chosen = *choice.pattern;
-                        if (choice.mine) {  // from Recent: the saved version, if it's still there
-                            for (const LibraryPattern& saved : library.myPatterns) {
-                                if (saved.displayName() == chosen.displayName()) {
-                                    chosen = saved;
-                                    break;
-                                }
-                            }
-                        }
-                        loadLibraryPattern(chosen, choice.mine);
-                    }
-                    ImGui::EndMenu();
-                }
-                ImGui::Separator();
-                {
-                    const bool open = openPatternIndex() >= 0;
-                    const std::string saveLabel =
-                        open ? "Save \"" + shortMenuText(doc.openPatternName) + "\"" : std::string("Save...");
-                    if (ImGui::MenuItem(saveLabel.c_str(), "Ctrl+S", false, doc.patternValid || doc.sketching))
-                        ui.saveRequested = true;
-                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
-                        ImGui::SetTooltip(open ? "Save the changes to this pattern in My Patterns."
-                                               : "Save to My Patterns (it isn't one of them yet, so this asks for a name).");
-                    if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S", false, doc.patternValid || doc.sketching))
-                        ui.saveAsRequested = true;
-                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
-                        ImGui::SetTooltip("Save to My Patterns under a new name (or over another one).");
-                }
-                ImGui::MenuItem("Manage My Patterns...", nullptr, &library.manageWindow.open);
-                ImGui::Separator();
-                if (ImGui::MenuItem("Exit")) requestQuit();
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Edit")) {
-                if (ImGui::MenuItem("Undo", "Ctrl+Z", false,
-                                    !doc.history.undo.empty() || ladderPane.ladderEdit.chain.active))
-                    undo();
-                if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !doc.history.redo.empty())) redo();
-                ImGui::Separator();
-                ImGui::MenuItem("Preferences...", nullptr, &ui.showPreferences);
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Playback")) {
-                if (ImGui::MenuItem(playback.playing ? "Pause" : "Play", "Space"))
-                    playback.playing = !playback.playing;
-                if (ImGui::MenuItem("Step Forward", "Right")) stepPlayback(kStepBeats);
-                if (ImGui::MenuItem("Step Back", "Left")) stepPlayback(-kStepBeats);
-                if (ImGui::MenuItem("Step Forward One Beat", "Shift+Right")) stepPlayback(1.0);
-                if (ImGui::MenuItem("Step Back One Beat", "Shift+Left")) stepPlayback(-1.0);
-                if (ImGui::MenuItem("Go to Beat 1", "B")) goToStart();
-                if (ImGui::MenuItem("Slow Motion", "S", playback.slow)) playback.slow = !playback.slow;
-                if (ImGui::MenuItem("Metronome", "A", settings.metronome)) {
-                    settings.metronome = !settings.metronome;
-                    saveSettings(settings);
-                }
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-                    ImGui::SetTooltip("A tick on every beat while playing, a stronger one on the first beat of each count.");
-                ImGui::Separator();
-                if (ImGui::MenuItem("Reset Tweakables")) resetTweakables(doc.juggleParams);
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-                    ImGui::SetTooltip("Tempo 150 BPM, dwell 1.60 beats, automatic distance");
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Props")) {
-                for (int i = 0; i < static_cast<int>(PropType::Count); ++i) {
-                    const PropType prop = static_cast<PropType>(i);
-                    if (ImGui::MenuItem(propTypeName(prop), nullptr, settings.prop == prop) &&
-                        settings.prop != prop) {
-                        settings.prop = prop;
-                        doc.juggleParams.prop = prop;
-                        saveSettings(settings);
-                    }
-                }
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("View")) {
-                if (ImGui::MenuItem("Reset Ladder View", "Home over ladder", false,
-                                    !ladderViewIsDefault(ladderPane.ladderEdit)))
-                    resetLadderView(ladderPane.ladderEdit);
-                if (ImGui::MenuItem("Throw Values", "V", settings.showThrowValues)) {
-                    settings.showThrowValues = !settings.showThrowValues;
-                    saveSettings(settings);
-                }
-                if (ImGui::MenuItem("Reset Layout", nullptr, false, settings.ladderFraction != 0.5f)) {
-                    settings.ladderFraction = 0.5f;
-                    saveSettings(settings);
-                }
-                if (ImGui::MenuItem("Reset Camera", "Home over juggler")) {
-                    resetCamera(stageView.camera);
-                    stageView.frameSelected = false;
-                }
-                if (ImGui::MenuItem("Frame All", nullptr, false, stageView.frameSelected || stageView.camera.free)) {
-                    stageView.frameSelected = false;
-                    stageView.camera.free = false;
-                }
-                if (ImGui::MenuItem("Frame Selected", "F", false, stageView.selectedJuggler >= 0)) {
-                    stageView.frameSelected = true;
-                    stageView.camera.free = false;
-                }
-                if (ImGui::MenuItem("Top View", "T", stageView.camera.topView)) toggleTopView();
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-                    ImGui::SetTooltip("Look straight down at the floor (for placing spike marks and jugglers).");
-                ImGui::Separator();
-                if (ImGui::MenuItem("Choreography", "M", stageView.choreographyMode && doc.choreography.active()))
-                    toggleChoreographyMode();
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-                    ImGui::SetTooltip("Shows the spike marks on the floor, to move, turn and put jugglers on.\n"
-                                      "Pause on a beat, then drag a juggler to where they should be then (onto a\n"
-                                      "mark, or anywhere). Click marks to select them (Shift+click: more) and drag one\n"
-                                      "to move them all. T: the top view.");
-                if (ImGui::MenuItem("Keyframe Marks", "K", settings.showKeyframeMarks)) {
-                    settings.showKeyframeMarks = !settings.showKeyframeMarks;
-                    saveSettings(settings);
-                }
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-                    ImGui::SetTooltip("On the ladder: \"M3\" beside each keyframe on a spike mark.");
-                if (ImGui::MenuItem("Path Beat Numbers", nullptr, settings.pathBeatNumbers,
-                                    stageView.choreographyMode)) {
-                    settings.pathBeatNumbers = !settings.pathBeatNumbers;
-                    saveSettings(settings);
-                }
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
-                    ImGui::SetTooltip("Choreography: number every beat along the jugglers' paths.\n"
-                                      "Off: only the point under the mouse is numbered.");
-                if (ImGui::MenuItem("Clear Choreography", nullptr, false, doc.choreography.active())) {
-                    doc.choreography = Choreography();
-                    stageView.choreographyMode = false;
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Color by Orbit", "O", settings.colorByOrbit)) {
-                    settings.colorByOrbit = !settings.colorByOrbit;
-                    saveSettings(settings);
-                }
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-                    ImGui::SetTooltip("One color per orbit (the throws a group of props travel round)\n"
-                                      "instead of one per prop. Sketches are always colored by path.");
-                {
-                    const int jugglers =
-                        doc.sketching ? doc.sketchLoop.jugglers : (doc.patternValid ? doc.pattern.jugglers : 0);
-                    const bool expand = allStripsCollapsed(ladderPane.ladderEdit, jugglers);
-                    if (ImGui::MenuItem(expand ? "Expand All Jugglers" : "Collapse All Jugglers", "C", false, jugglers > 1))
-                        toggleCollapseAll(ladderPane.ladderEdit, jugglers);
-                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
-                        ImGui::SetTooltip("Narrows every juggler's strip on the ladder (their throws still show),\n"
-                                          "or widens them all again if they're all narrow.");
-                }
-                if (ImGui::MenuItem("Dim Linked Jugglers", "L", settings.dimLinked, doc.parsed.form.hasLinks())) {
-                    settings.dimLinked = !settings.dimLinked;
-                    saveSettings(settings);
-                }
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal | ImGuiHoveredFlags_AllowWhenDisabled))
-                    ImGui::SetTooltip("Mutes the throws of jugglers who are links (@2[3]: another juggler's\n"
-                                      "throws) on the ladder, so the parts written out stand out.");
-                if (ImGui::BeginMenu("Color Vision")) {
-                    for (int i = 0; i < static_cast<int>(ColorVisionMode::Count); ++i) {
-                        const ColorVisionMode mode = static_cast<ColorVisionMode>(i);
-                        if (ImGui::MenuItem(colorVisionModeName(mode), nullptr,
-                                            settings.colorVision == mode) &&
-                            settings.colorVision != mode) {
-                            settings.colorVision = mode;
-                            saveSettings(settings);
-                        }
-                    }
-                    ImGui::Separator();
-                    ImGui::MenuItem("Preview all modes...", nullptr, &ui.showColorPreview);
-                    ImGui::EndMenu();
-                }
-                if (ImGui::MenuItem("Sounds", nullptr, settings.sounds)) {
-                    settings.sounds = !settings.sounds;
-                    saveSettings(settings);
-                }
-                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-                    ImGui::SetTooltip("A short plip when something you just did is refused, or breaks the pattern.");
-                ImGui::Separator();
-                ImGui::MenuItem("ImGui demo window", nullptr, &ui.showImGuiDemo);
-                ImGui::EndMenu();
-            }
-            if (spaceMouse.present && ImGui::BeginMenu("3D Mouse")) {
-                if (ImGui::MenuItem("Response Curves...")) ui.showPreferences = true;
-                ImGui::Separator();
-                ImGui::TextDisabled("Grab the stage (it makes the camera free). Spin: orbit.\n"
-                                    "Tilt toward / away: turn it to see it from above / below.\n"
-                                    "Push away / pull toward you: move back / in.\n"
-                                    "Slide sideways or up / down: the stage moves with it.");
-                ImGui::EndMenu();
-            }
-            if (ImGui::BeginMenu("Help")) {
-                ImGui::MenuItem("Keyboard Shortcuts", "?", &ui.showShortcuts);
-                ImGui::MenuItem("3D Mouse Diagnostics", nullptr, &ui.showSpaceMouseDiagnostics, spaceMouse.present);
-                ImGui::EndMenu();
-            }
-            menuHeight = ImGui::GetWindowSize().y;
-            ImGui::EndMainMenuBar();
-        }
+        const MenuBarRequest menu = drawMenuBar(doc, stageView, ladderPane, playback, openPatternIndex() >= 0,
+                                                spaceMouse.present, library, ui, settings);
+        applyMenuRequest(menu);
 
         // --- Pane layout ---
         const ImGuiStyle& style = ImGui::GetStyle();
         const float W = io.DisplaySize.x;
         const float H = io.DisplaySize.y;
-        const float top = menuHeight;
+        const float top = menu.height;
         // The ladder pane's width: the user's share of the window (dragging the divider), but
         // never so narrow that either pane is unusable.
         const float minPaneWidth = std::min(ImGui::GetFontSize() * 16.0f, W * 0.5f);
@@ -1555,42 +1390,20 @@ int runApp() {
                 for (const std::vector<Keyframe>& keys : doc.choreography.keys)
                     for (const Keyframe& k : keys) strands = strands || k.beat >= newLength;
                 if (strands) {
-                    ui.pendingChoreographyLength = newLength;
-                    ImGui::OpenPopup("Shorten the choreography?");
+                    ui.shortenChoreography.length = newLength;
+                    ui.shortenChoreography.requested = true;
                 } else {
                     doc.choreography.cycle = newLength;
                 }
             }
         }
-        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-        if (ImGui::BeginPopupModal("Shorten the choreography?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            const float em = ImGui::GetFontSize();
-            std::string gone;
-            int count = 0;
-            for (size_t j = 0; j < doc.choreography.keys.size(); ++j)
-                for (const Keyframe& k : doc.choreography.keys[j])
-                    if (k.beat >= ui.pendingChoreographyLength) {
-                        gone += (count++ == 0 ? "" : ", ") + std::string("J") + std::to_string(j + 1) + " on beat " +
-                                std::to_string(k.beat + 1);
-                    }
-            ImGui::PushTextWrapPos(em * 30.0f);
-            ImGui::Text("A %d-beat choreography has no room for %s %s. Delete %s?", ui.pendingChoreographyLength,
-                        count == 1 ? "this keyframe:" : "these keyframes:", gone.c_str(), count == 1 ? "it" : "them");
-            ImGui::PopTextWrapPos();
-            ImGui::Spacing();
-            if (ImGui::Button("Shorten", ImVec2(em * 7.0f, 0.0f))) {
-                for (std::vector<Keyframe>& keys : doc.choreography.keys)
-                    keys.erase(
-                        std::remove_if(keys.begin(), keys.end(),
-                                       [&](const Keyframe& k) { return k.beat >= ui.pendingChoreographyLength; }),
-                        keys.end());
-                doc.choreography.cycle = ui.pendingChoreographyLength;
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(em * 7.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape))
-                ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
+        // (Shortening the choreography past keyframes: asking first.)
+        if (drawShortenDialog(ui.shortenChoreography, doc.choreography)) {
+            const int length = ui.shortenChoreography.length;
+            for (std::vector<Keyframe>& keys : doc.choreography.keys)
+                keys.erase(std::remove_if(keys.begin(), keys.end(), [&](const Keyframe& k) { return k.beat >= length; }),
+                           keys.end());
+            doc.choreography.cycle = length;
         }
 
         // Warnings, in the juggler pane under the pattern's name, until dismissed. A dismissed
@@ -1761,18 +1574,7 @@ int runApp() {
             library.saveDialog.openRequested = true;
         }
         ui.saveRequested = ui.saveAsRequested = false;
-        if (!ui.fileError.empty()) ImGui::OpenPopup("Couldn't save");
-        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-        if (ImGui::BeginPopupModal("Couldn't save", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
-            ImGui::TextUnformatted(ui.fileError.c_str());
-            ImGui::PopTextWrapPos();
-            if (ImGui::Button("OK", ImVec2(ImGui::GetFontSize() * 6.0f, 0.0f))) {
-                ui.fileError.clear();
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::EndPopup();
-        }
+        drawFileErrorDialog(ui.fileError);
         if (ui.showImGuiDemo) ImGui::ShowDemoWindow(&ui.showImGuiDemo);
         if (ui.showShortcuts) drawShortcutsWindow(&ui.showShortcuts);
         // Choosing among marks in the same place (see MarkChoice): say so, until done (Esc: keep
@@ -1827,265 +1629,19 @@ int runApp() {
             }
         }
         // The Walk Like... window (see WalkLikeWindow).
-        ui.walkLike.previewing = false;
-        if (ui.walkLike.open) {
-            const JugglingLoop loop = shownLoop();
-            const int j = ui.walkLike.juggler;
-            const int cycle = loop.empty() ? 0 : choreographyCycle(loop, doc.juggleParams);
-            if (loop.empty() || j < 0 || j >= loop.jugglers || cycle <= 0) {
-                ui.walkLike.open = false;
-            } else {
-                const float em = ImGui::GetFontSize();
-                ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-                char title[48];
-                std::snprintf(title, sizeof(title), "J%d Walks Like...###walk_like", j + 1);
-                if (ImGui::Begin(title, &ui.walkLike.open,
-                                 ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
-                    WalkLink link = doc.choreography.link(j);
-                    bool changed = false;
-                    // Hovering a choice: show where it would put them.
-                    auto previewIf = [&](const WalkLink& would) {
-                        if (!ImGui::IsItemHovered() || would.leader < 0) return;
-                        ui.walkLike.previewing = true;
-                        ui.walkLike.preview = would;
-                    };
-                    // Leader: anyone whose walking doesn't already depend on this juggler.
-                    ImGui::TextUnformatted("Leader:");
-                    for (int k = 0; k < loop.jugglers; ++k) {
-                        if (k == j) continue;
-                        ImGui::SameLine();
-                        const bool loops = doc.choreography.dependsOn(k, j);
-                        ImGui::BeginDisabled(loops);
-                        char label[8];
-                        std::snprintf(label, sizeof(label), "J%d", k + 1);
-                        if (ImGui::RadioButton(label, link.leader == k) && link.leader != k) {
-                            if (!link.active() && doc.choreography.hasKeys(j)) {
-                                ui.walkLike.confirmLeader = k;  // ask first: their own keyframes go
-                                ui.walkLike.confirmRequested = true;
-                            } else {
-                                link.leader = k;
-                                changed = true;
-                            }
-                        }
-                        if (!loops) {
-                            WalkLink would = link.active() ? link : WalkLink();
-                            would.leader = k;
-                            previewIf(would);
-                        }
-                        ImGui::EndDisabled();
-                        if (loops && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                            ImGui::SetTooltip("J%d already walks like J%d (perhaps through others).", k + 1, j + 1);
-                    }
-                    ImGui::BeginDisabled(!link.active());
-                    // Time: J(j) on beat b does what the leader does on beat b + offset.
-                    ImGui::AlignTextToFramePadding();
-                    ImGui::TextUnformatted("Offset:");
-                    ImGui::SameLine();
-                    ImGui::SetNextItemWidth(em * 7.0f);
-                    // (Offsets run over the whole choreography, rotated repeats and all.)
-                    const int full = choreographyFullCycle(doc.choreography, cycle);
-                    int offset = link.offset;
-                    if (ImGui::InputInt("##offset", &offset, 0, 0)) {
-                        link.offset = ((offset % full) + full) % full;
-                        changed = true;
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        if (full != cycle)
-                            ImGui::SetTooltip("J%d does on each beat what the leader does this many beats later\n"
-                                              "(like a siteswap link's [k]). The choreography is %d beats written out,\n"
-                                              "%d in all with its walking loop, so the offset can be up to %d.",
-                                              j + 1, cycle, full, full - 1);
-                        else
-                            ImGui::SetTooltip("J%d does on each beat what the leader does this many beats later\n"
-                                              "(like a siteswap link's [k]). The choreography is %d beats long.",
-                                              j + 1, cycle);
-                    }
-                    // - and + (Ctrl: 4 at a time), each previewing where it would put them.
-                    {
-                        const float button = ImGui::GetFrameHeight();
-                        const int step = ImGui::GetIO().KeyCtrl ? 4 : 1;
-                        for (const int sign : {-1, 1}) {
-                            ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-                            ImGui::PushItemFlag(ImGuiItemFlags_ButtonRepeat, true);
-                            const int to = ((link.offset + sign * step) % full + full) % full;
-                            if (ImGui::Button(sign < 0 ? "-##offset" : "+##offset", ImVec2(button, button))) {
-                                link.offset = to;
-                                changed = true;
-                            }
-                            ImGui::PopItemFlag();
-                            WalkLink would = link;
-                            would.offset = to;
-                            previewIf(would);
-                        }
-                        ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
-                        ImGui::TextUnformatted("beats");
-                    }
-                    for (const int part : {2, 3, 4}) {
-                        if (full % part != 0) continue;
-                        ImGui::SameLine();
-                        char label[16];
-                        std::snprintf(label, sizeof(label), "1/%d (%d)", part, full / part);
-                        if (ImGui::SmallButton(label)) {
-                            link.offset = full / part;
-                            changed = true;
-                        }
-                        WalkLink would = link;
-                        would.offset = full / part;
-                        previewIf(would);
-                    }
-                    // Past the beats written out, the leader is walking a part of the loop: say whose,
-                    // and how far turned, as a check ("= J3's part 2 beats in, turned 1/4 CCW").
-                    if (full != cycle && link.offset >= cycle && link.leader >= 0) {
-                        const WalkLoop w = walkLoop(doc.choreography, loop.jugglers);
-                        const int times = link.offset / cycle, rest = link.offset % cycle;
-                        if (w.valid && times < w.phases && link.leader < static_cast<int>(w.role[static_cast<size_t>(times)].size())) {
-                            const int part = w.role[static_cast<size_t>(times)][static_cast<size_t>(link.leader)];
-                            const Turn turned = w.turn[static_cast<size_t>(times)][static_cast<size_t>(link.leader)];
-                            const std::string who =
-                                part == link.leader ? std::string("the leader") : "J" + std::to_string(part + 1) + "'s part";
-                            if (turned.none())
-                                ImGui::TextDisabled("  = %s %d beats later", who.c_str(), rest);
-                            else
-                                ImGui::TextDisabled("  = %s %d beats later, turned %s", who.c_str(), rest, turnText(turned).c_str());
-                        }
-                    }
-                    // Turn about the middle of the floor.
-                    ImGui::AlignTextToFramePadding();
-                    ImGui::TextUnformatted("Turned:");
-                    ImGui::SameLine();
-                    Turn hoveredTurn;
-                    hoveredTurn.den = -1;  // (none hovered)
-                    if (turnEditor("##turned", &link.turn, &hoveredTurn)) changed = true;
-                    if (hoveredTurn.den > 0 && link.active()) {
-                        ui.walkLike.preview = link;
-                        ui.walkLike.preview.turn = hoveredTurn;
-                        ui.walkLike.previewing = true;
-                    }
-                    ImGui::TextDisabled("        about the middle of the floor, seen from above");
-                    ImGui::EndDisabled();
-                    if (changed && link.active()) setWalkLink(&doc.choreography, j, link);
-                    ImGui::Spacing();
-                    ImGui::BeginDisabled(!link.active());
-                    if (ImGui::Button("Unlink", ImVec2(em * 6.0f, 0.0f))) unlinkWalk(j);
-                    ImGui::EndDisabled();
-                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                        ImGui::SetTooltip("Write J%d's walking out as their own keyframes (nothing moves).", j + 1);
-                    ImGui::SameLine();
-                    if (ImGui::Button("Close", ImVec2(em * 6.0f, 0.0f))) ui.walkLike.open = false;
-
-                    // Linking a juggler who has keyframes of their own: ask first.
-                    if (ui.walkLike.confirmRequested) {
-                        ImGui::OpenPopup("Link this juggler?");
-                        ui.walkLike.confirmRequested = false;
-                    }
-                    if (ImGui::BeginPopupModal("Link this juggler?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-                        const size_t count = j < static_cast<int>(doc.choreography.keys.size())
-                                                 ? doc.choreography.keys[static_cast<size_t>(j)].size()
-                                                 : 0;
-                        ImGui::Text("J%d's %d keyframe%s will be deleted: J%d will walk like J%d instead.", j + 1,
-                                    static_cast<int>(count), count == 1 ? "" : "s", j + 1,
-                                    ui.walkLike.confirmLeader + 1);
-                        ImGui::Spacing();
-                        if (ImGui::Button("Link", ImVec2(em * 6.0f, 0.0f))) {
-                            WalkLink l;
-                            l.leader = ui.walkLike.confirmLeader;
-                            setWalkLink(&doc.choreography, j, l);
-                            ImGui::CloseCurrentPopup();
-                        }
-                        ImGui::SameLine();
-                        if (ImGui::Button("Cancel", ImVec2(em * 6.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape))
-                            ImGui::CloseCurrentPopup();
-                        ImGui::EndPopup();
-                    }
-                }
-                ImGui::End();
-            }
+        {
+            const WalkLikeRequest r = drawWalkLikeWindow(ui.walkLike, doc.choreography, shownLoop(), doc.juggleParams);
+            if (r.setLink) setWalkLink(&doc.choreography, r.juggler, r.link);
+            if (r.unlink) unlinkWalk(r.juggler);
         }
         // The loop column's builder (see LoopBuilder).
-        if (stageView.loopBuilder.requested) {
-            stageView.loopBuilder.requested = false;
-            ImGui::OpenPopup("Walking Loop");
-            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-        }
-        if (ImGui::BeginPopupModal("Walking Loop", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            const JugglingLoop loop = shownLoop();
-            const int j = stageView.loopBuilder.juggler;
-            const int n = loop.empty() ? 0 : loop.jugglers;
-            const int written = loop.empty() ? 0 : choreographyCycle(loop, doc.juggleParams);
-            if (j < 0 || j >= n) ImGui::CloseCurrentPopup();
-            const float em = ImGui::GetFontSize();
-            ImGui::Text("After beat %d, whoever's on C%d goes on to:", written, j + 1);
-            for (int r = 0; r < n; ++r) {
-                if (r > 0) ImGui::SameLine();
-                char label[24];
-                std::snprintf(label, sizeof(label), r == j ? "C%d (own)" : "C%d", r + 1);
-                if (ImGui::RadioButton(label, stageView.loopBuilder.k.roleFor(j) == r))
-                    stageView.loopBuilder.k.role = r == j ? -1 : r;
-            }
-            ImGui::TextUnformatted("...from its beat 1, turned:");
-            turnEditor("##loopTurn", &stageView.loopBuilder.k.turn);
-            ImGui::TextDisabled("about the middle of the floor, seen from above");
-            const std::string text = continuationText(stageView.loopBuilder.k, j);
-            ImGui::TextDisabled("In the cell: %s", text.empty() ? (std::to_string(j + 1) + " (its own path, unturned)").c_str()
-                                                               : text.c_str());
-            ImGui::Spacing();
-            if (ImGui::Button("Set", ImVec2(em * 6.0f, 0.0f))) {
-                setContinuation(j, stageView.loopBuilder.k);
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(em * 6.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
-        }
+        if (drawLoopBuilder(stageView.loopBuilder, shownLoop(), doc.juggleParams))
+            setContinuation(stageView.loopBuilder.juggler, stageView.loopBuilder.k);
         // Renaming a spike mark (see RenameMark).
-        if (ui.renameMark.requested) {
-            ui.renameMark.requested = false;
-            if (ui.renameMark.mark >= 0 && ui.renameMark.mark < static_cast<int>(doc.choreography.marks.size())) {
-                std::snprintf(ui.renameMark.text, sizeof(ui.renameMark.text), "%s",
-                              doc.choreography.marks[static_cast<size_t>(ui.renameMark.mark)].name.c_str());
-                ui.renameMark.error.clear();
-                ImGui::OpenPopup("Rename Spike Mark");
-                ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-            }
-        }
-        if (ImGui::BeginPopupModal("Rename Spike Mark", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            const bool exists =
-                ui.renameMark.mark >= 0 && ui.renameMark.mark < static_cast<int>(doc.choreography.marks.size());
-            if (!exists) ImGui::CloseCurrentPopup();
-            ImGui::TextUnformatted("Two characters, each 0-9 or a-z:");
-            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
-            ImGui::SetNextItemWidth(ImGui::GetFontSize() * 4.0f);
-            const bool entered = ImGui::InputText("##markName", ui.renameMark.text, sizeof(ui.renameMark.text),
-                                                  ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CharsNoBlank);
-            // Only 0-9 and a-z (capitals made small).
-            {
-                std::string kept;
-                for (const char* ch = ui.renameMark.text; *ch; ++ch) {
-                    const char lower = static_cast<char>(std::tolower(static_cast<unsigned char>(*ch)));
-                    if ((lower >= '0' && lower <= '9') || (lower >= 'a' && lower <= 'z')) kept += lower;
-                }
-                std::snprintf(ui.renameMark.text, sizeof(ui.renameMark.text), "%s", kept.c_str());
-            }
-            if (!ui.renameMark.error.empty())
-                ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.45f, 1.0f), "%s", ui.renameMark.error.c_str());
-            const float em = ImGui::GetFontSize();
-            if ((ImGui::Button("Rename", ImVec2(em * 6.0f, 0.0f)) || entered) && exists) {
-                const std::string name = ui.renameMark.text;
-                const int other = findMarkNamed(doc.choreography, name);
-                if (!validMarkName(name)) {
-                    ui.renameMark.error = "It needs two characters.";
-                    sound.plipWanted = true;
-                } else if (other >= 0 && other != ui.renameMark.mark) {
-                    ui.renameMark.error = "Another mark is called " + name + ".";
-                    sound.plipWanted = true;
-                } else {
-                    doc.choreography.marks[static_cast<size_t>(ui.renameMark.mark)].name = name;
-                    ImGui::CloseCurrentPopup();
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(em * 6.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
+        {
+            const RenameMarkRequest r = drawRenameMarkDialog(ui.renameMark, doc.choreography);
+            if (r.refused) sound.plipWanted = true;
+            if (r.rename) doc.choreography.marks[static_cast<size_t>(r.mark)].name = r.name;
         }
         // The Walk Like... window's preview: where the choice under the mouse would put them, now.
         WalkGhost walkGhost;
@@ -2112,137 +1668,8 @@ int runApp() {
         {
             const JugglingLoop loop = shownLoop();
             const int cycle = loop.empty() ? 0 : choreographyCycle(loop, doc.juggleParams);
-            if (ui.loiter.openRequested) {
-                ui.loiter.openRequested = false;
-                if (cycle > 0) ImGui::OpenPopup("##loiter");
-            }
-            ImGui::SetNextWindowPos(ImVec2(ui.loiter.at.x + 16.0f, ui.loiter.at.y + 16.0f), ImGuiCond_Appearing);
-            const bool flashing = ImGui::GetTime() < ui.loiter.errorUntil;
-            const ImU32 errorColor = errorTextColor(settings.colorVision);
-            if (flashing) {
-                ImGui::PushStyleColor(ImGuiCol_Border, errorColor);
-                ImGui::PushStyleVar(ImGuiStyleVar_PopupBorderSize, 3.0f);
-            }
-            ui.loiter.open = ImGui::BeginPopup("##loiter");
-            if (flashing) {
-                ImGui::PopStyleVar();
-                ImGui::PopStyleColor();
-            }
-            if (ui.loiter.open) {
-                const int j = ui.loiter.juggler;
-                const int b = ui.loiter.arrival.beat;
-                // Whether a loiter of n beats fits: it mustn't reach (or pass) another of this
-                // juggler's keyframes, and must be shorter than the choreography.
-                auto fits = [&](int n, int* blockingBeat) {
-                    if (n == 0) return true;
-                    if (n >= cycle) {
-                        if (blockingBeat) *blockingBeat = -1;
-                        return false;
-                    }
-                    // With rotated repeats a loiter can't run on past the beats written out: the
-                    // next beats are the first ones turned.
-                    if (doc.choreography.repeats() > 1 && b + n >= cycle) {
-                        if (blockingBeat) *blockingBeat = -2;
-                        return false;
-                    }
-                    if (j >= 0 && j < static_cast<int>(doc.choreography.keys.size()))
-                        for (const Keyframe& k : doc.choreography.keys[static_cast<size_t>(j)]) {
-                            const int d = ((k.beat - b) % cycle + cycle) % cycle;
-                            if (k.beat != b && d >= 1 && d <= n) {
-                                if (blockingBeat) *blockingBeat = d;
-                                return false;
-                            }
-                        }
-                    return true;
-                };
-                auto apply = [&](int n) {
-                    int blocking = 0;
-                    if (!fits(n, &blocking)) {
-                        ui.loiter.error = blocking == -2 ? "Too long: it would run past beat " + std::to_string(cycle) +
-                                                            ", into the walking loop's copies."
-                                       : blocking < 0 ? "Too long: the choreography is only " + std::to_string(cycle) + " beats."
-                                                    : "No room: J" + std::to_string(j + 1) + " has a keyframe " +
-                                                          std::to_string(blocking) + " beats later.";
-                        ui.loiter.errorUntil = ImGui::GetTime() + 1.5;
-                        return;
-                    }
-                    if (n > 0) {
-                        Keyframe stay = ui.loiter.arrival;
-                        stay.beat = (b + n) % cycle;
-                        stay.longTurn = false;
-                        setKeyframe(&doc.choreography, j, stay);
-                    }
-                    ImGui::CloseCurrentPopup();
-                };
-                // Loiter lengths already in the choreography, nearest in time to this beat first
-                // (beyond the 0-4 buttons); up to four, shortest first.
-                std::vector<std::pair<int, int>> used;  // (distance in time, length)
-                for (size_t jj = 0; jj < doc.choreography.keys.size(); ++jj) {
-                    const std::vector<Keyframe>& keys = doc.choreography.keys[jj];
-                    for (size_t i = 0; i < keys.size() && keys.size() > 1; ++i) {
-                        const Keyframe& k = keys[i];
-                        const Keyframe& next = keys[(i + 1) % keys.size()];
-                        const int gap = ((next.beat - k.beat) % cycle + cycle) % cycle;
-                        if (gap <= 4 || !sameKeyframeSpot(doc.choreography, k, next)) continue;
-                        if (static_cast<int>(jj) == j && k.beat == b) continue;  // (this one, if it's already a loiter)
-                        const int d = ((k.beat - b) % cycle + cycle) % cycle;
-                        used.emplace_back(std::min(d, cycle - d), gap);
-                    }
-                }
-                std::sort(used.begin(), used.end());
-                std::vector<int> recent;
-                for (const std::pair<int, int>& u : used)
-                    if (recent.size() < 4 && std::find(recent.begin(), recent.end(), u.second) == recent.end())
-                        recent.push_back(u.second);
-                std::sort(recent.begin(), recent.end());
-
-                const std::string where =
-                    ui.loiter.arrival.mark >= 0 ? "on mark " + markNameOf(ui.loiter.arrival.mark) : "here";
-                ImGui::Text("J%d arrives on beat %ld. Loiter %s for how many beats?", j + 1, ui.loiter.onBeat + 1,
-                            where.c_str());
-                const float em = ImGui::GetFontSize();
-                auto choice = [&](int n) {
-                    ImGui::PushID(n);
-                    const bool ok = fits(n, nullptr);
-                    ImGui::BeginDisabled(!ok);
-                    if (ImGui::Button(std::to_string(n).c_str(), ImVec2(em * 2.2f, 0.0f))) apply(n);
-                    ImGui::EndDisabled();
-                    if (!ok && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                        ImGui::SetTooltip("Doesn't fit: it would reach another of J%d's keyframes.", j + 1);
-                    ImGui::PopID();
-                    ImGui::SameLine();
-                };
-                for (int n = 0; n <= 4; ++n) choice(n);
-                if (!recent.empty()) {
-                    ImGui::TextDisabled("|");
-                    ImGui::SameLine();
-                    for (const int n : recent) choice(n);
-                }
-                ImGui::NewLine();
-                ImGui::SetNextItemWidth(em * 5.0f);
-                const bool entered = ImGui::InputText("beats", ui.loiter.text, sizeof(ui.loiter.text),
-                                                      ImGuiInputTextFlags_CharsDecimal | ImGuiInputTextFlags_EnterReturnsTrue);
-                const bool typing = ImGui::IsItemActive();
-                ImGui::SameLine();
-                if ((ImGui::Button("OK") || entered) && ui.loiter.text[0] != '\0') apply(std::atoi(ui.loiter.text));
-                ImGui::TextDisabled("Or press a key: 0-9, a = 10, b = 11 ... (as in siteswap). Esc: just arrive.");
-                if (ImGui::GetTime() < ui.loiter.errorUntil)
-                    ImGui::TextColored(ImGui::ColorConvertU32ToFloat4(errorColor), "%s", ui.loiter.error.c_str());
-                if (!typing) {
-                    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) ImGui::CloseCurrentPopup();
-                    for (const ImWchar c : io.InputQueueCharacters) {
-                        int n = -1;
-                        if (c >= '0' && c <= '9') n = c - '0';
-                        else if (c >= 'a' && c <= 'z') n = 10 + (c - 'a');
-                        else if (c >= 'A' && c <= 'Z') n = 10 + (c - 'A');
-                        if (n >= 0) {
-                            apply(n);
-                            break;
-                        }
-                    }
-                }
-                ImGui::EndPopup();
-            }
+            const LoiterRequest r = drawLoiterPopup(ui.loiter, doc.choreography, cycle, settings.colorVision);
+            if (r.loiter) setKeyframe(&doc.choreography, r.juggler, r.stay);
         }
         // Edit > Preferences: over the ladder pane, so the stage stays in view while the 3D mouse's
         // curves are tried out.
@@ -2250,174 +1677,78 @@ int runApp() {
             drawPreferencesWindow(&ui.showPreferences, ui.preferences, settings, spaceMouse, ImVec2(0.0f, top),
                                   ImVec2(leftWidth, bodyBottom - top)))
             saveSettings(settings);
-        // Help > 3D Mouse Diagnostics: what the cap is sending, live (raw counts on each axis).
-        if (ui.showSpaceMouseDiagnostics) {
-            ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
-            if (ImGui::Begin("3D Mouse Diagnostics", &ui.showSpaceMouseDiagnostics,
-                             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
-                if (!spaceMouse.present) {
-                    ImGui::TextUnformatted("No 3D mouse found.");
-                } else {
-                    ImGui::TextUnformatted("Move the cap: what JuggleSim reads on each axis (raw counts).");
-                    ImGui::Text("Slide   right %+5.0f   away %+5.0f   up %+5.0f", spaceMouse.move[0], spaceMouse.move[1],
-                                spaceMouse.move[2]);
-                    ImGui::Text("Turn    tilt  %+5.0f   roll %+5.0f   spin %+5.0f", spaceMouse.turn[0],
-                                spaceMouse.turn[1], spaceMouse.turn[2]);
-                    ImGui::Text(
-                        "Mouse-wheel events from the driver: %s",
-                        ImGui::GetTime() - stageView.spaceMouseWheelBlocked < 1.0 ? "yes (ignored)" : "none seen");
-                }
-            }
-            ImGui::End();
-        }
+        // Help > 3D Mouse Diagnostics.
+        if (ui.showSpaceMouseDiagnostics)
+            drawSpaceMouseDiagnostics(&ui.showSpaceMouseDiagnostics, spaceMouse, stageView.spaceMouseWheelBlocked);
 
         // File > New Pattern..., first offering to save the current pattern if it has changed.
-        if (ui.savePromptRequested) {
-            ImGui::OpenPopup("Save changes?");
-            ui.savePromptRequested = false;
-        }
-        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-        if (ImGui::BeginPopupModal("Save changes?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            const float em = ImGui::GetFontSize();
-            ImGui::PushTextWrapPos(em * 34.0f);
-            ImGui::Text("Save %s%s to My Patterns before %s?",
-                        openPatternIndex() >= 0 ? ("\"" + doc.openPatternName + "\"").c_str() : doc.siteswapText,
-                        doc.saved.choreography != currentDocument().choreography ? " (and its choreography)"
-                        : doc.saved.throwNext != doc.throwNext                ? " (and its throwing loop)"
-                                                                              : "",
-                        ui.promptForQuit ? "quitting" : "starting a new pattern");
-            ImGui::PopTextWrapPos();
-            ImGui::Spacing();
-            const bool open = openPatternIndex() >= 0;
-            if (ImGui::Button(open ? "Save" : "Save...", ImVec2(em * 7.0f, 0.0f))) {
-                if (open) {
+        {
+            std::string name;
+            const char* also = "";
+            if (ui.savePrompt.requested || ui.savePrompt.open) {  // (worked out only while it's showing)
+                name = openPatternIndex() >= 0 ? "\"" + doc.openPatternName + "\"" : std::string(doc.siteswapText);
+                also = doc.saved.choreography != currentDocument().choreography ? " (and its choreography)"
+                       : doc.saved.throwNext != doc.throwNext                  ? " (and its throwing loop)"
+                                                                               : "";
+            }
+            const SaveChangesChoice choice = drawSaveChangesDialog(ui.savePrompt, name, also, openPatternIndex() >= 0);
+            if (choice == SaveChangesChoice::Save) {
+                if (openPatternIndex() >= 0) {
                     // Over the open pattern, then on.
                     storeMyPattern(doc.openPatternName, true);
-                    if (ui.promptForQuit)
+                    if (ui.savePrompt.forQuit)
                         ui.done = true;
                     else
                         ui.newPatternDialog.openRequested = true;
                 } else {
                     std::snprintf(library.saveDialog.name, sizeof(library.saveDialog.name), "%s", doc.siteswapText);
                     library.saveDialog.openRequested = true;
-                    (ui.promptForQuit ? ui.quitAfterSave : ui.newAfterSave) = true;
+                    (ui.savePrompt.forQuit ? ui.quitAfterSave : ui.newAfterSave) = true;
                 }
-                ImGui::CloseCurrentPopup();
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Don't Save", ImVec2(em * 7.0f, 0.0f))) {
-                if (ui.promptForQuit)
+            } else if (choice == SaveChangesChoice::DontSave) {
+                if (ui.savePrompt.forQuit)
                     ui.done = true;
                 else
                     ui.newPatternDialog.openRequested = true;
-                ImGui::CloseCurrentPopup();
             }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(em * 7.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape))
-                ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
         }
-        if (ui.newPatternDialog.openRequested) {
-            ImGui::OpenPopup("New Pattern");
-            ui.newPatternDialog.openRequested = false;
-        }
-        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-        if (ImGui::BeginPopupModal("New Pattern", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            const float em = ImGui::GetFontSize();
-            ImGui::PushTextWrapPos(em * 26.0f);
-            ImGui::TextUnformatted("Starts a blank pattern: every throw is blank (not decided yet). Type throws "
-                                   "into the grid, or on the ladder click a ? to draw a throw from it, then where "
-                                   "it's caught, and so on.");
-            ImGui::PopTextWrapPos();
-            ImGui::Spacing();
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted("Jugglers");
-            ImGui::SameLine(em * 5.0f);
-            for (int n = 1; n <= kMaxJugglers; ++n) {
-                if (n > 1) ImGui::SameLine();
-                char label[8];
-                std::snprintf(label, sizeof(label), "%d", n);
-                ImGui::RadioButton(label, &ui.newPatternDialog.jugglers, n);
-            }
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted("Period");
-            ImGui::SameLine(em * 5.0f);
-            ImGui::SetNextItemWidth(em * 8.0f);
-            ImGui::InputInt("##period", &ui.newPatternDialog.period);
-            ui.newPatternDialog.period = std::clamp(ui.newPatternDialog.period, 1, kMaxLoopBeats);
-            ImGui::SameLine();
-            ImGui::TextDisabled("beats");
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted("Count");
-            ImGui::SameLine(em * 5.0f);
-            ImGui::SetNextItemWidth(em * 8.0f);
-            const std::string countName = ui.newPatternDialog.count >= 2
-                                              ? std::to_string(ui.newPatternDialog.count) + "-count"
-                                              : std::string("None");
-            if (ImGui::BeginCombo("##count", countName.c_str())) {
-                if (ImGui::Selectable("None", ui.newPatternDialog.count < 2)) ui.newPatternDialog.count = 0;
-                for (int n = 2; n <= 8; ++n)
-                    if (ImGui::Selectable((std::to_string(n) + "-count").c_str(), ui.newPatternDialog.count == n))
-                        ui.newPatternDialog.count = n;
-                ImGui::EndCombo();
-            }
-            if (ui.newPatternDialog.count >= 2) {
-                ImGui::SameLine();
-                ImGui::TextDisabled("(the period becomes a multiple of %d)", ui.newPatternDialog.count);
-            }
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted("Walking");
-            ImGui::SameLine(em * 5.0f);
-            ImGui::SetNextItemWidth(em * 8.0f);
-            ImGui::InputInt("##walking", &ui.newPatternDialog.walking);
-            ui.newPatternDialog.walking = std::clamp(ui.newPatternDialog.walking, 0, kMaxChoreographyLength);
-            ImGui::SameLine();
-            ImGui::TextDisabled(ui.newPatternDialog.walking == 0 ? "beats (0: no choreography yet)" : "beats");
-            if (ImGui::IsItemHovered() || ImGui::IsItemHovered(ImGuiHoveredFlags_DelayNormal))
-                ImGui::SetTooltip("The choreography's own period: the beats of walking written out before its\n"
-                                  "loop (a short passing pattern can have a long walk, and the other way round).");
-            ImGui::Spacing();
-            if (ImGui::Button("Create", ImVec2(em * 6.0f, 0.0f))) {
-                JugglingLoop blank;
-                const int n = ui.newPatternDialog.count;
-                blank.jugglers = ui.newPatternDialog.jugglers;
-                blank.period = n >= 2 ? (ui.newPatternDialog.period + n - 1) / n * n : ui.newPatternDialog.period;
-                for (int j = 0; j < blank.jugglers; ++j)
-                    for (int b = 0; b < blank.period; ++b)
-                        blank.throws.push_back({n >= 2 && b % n != 0 ? 3 : kOpenThrow, j});
-                std::string text;
-                if (loopToText(blank, &text)) {
-                    commitTyping();
-                    playback.beat = 0.0;
-                    recordSettingsChange();
-                    const PatternSettings before = currentPatternSettings();
-                    showPatternText(text);
-                    doc.choreography = Choreography();  // a new pattern starts in the default formation
-                    if (ui.newPatternDialog.walking > 0) {
-                        // ...with spike marks under everyone, and the walking's own period.
-                        // (A length of its own counts as a change: an untouched choreography follows the
-                        // siteswap's period, which would put this one back to it.)
-                        ensureSpikeMarks();
-                        doc.choreography.cycle = ui.newPatternDialog.walking;
-                        stageView.choreographyMode = true;
-                    }
-                    stageView.camera.free = false;
-                    doc.patternCount = n >= 2 ? n : 0;
-                    doc.throwNext.clear();
-                    doc.openPatternName.clear();
-                    doc.history.recordWithSettings(text, before, currentPatternSettings());
-                    settingsRecorded();
-                    markSaved();
-                    stageView.selectedJuggler = -1;
-                    stageView.frameSelected = false;
-                    resetLadderView(ladderPane.ladderEdit);
+        // ...and the blank pattern it asks for.
+        if (drawNewPatternDialog(ui.newPatternDialog)) {
+            const NewPatternDialog& d = ui.newPatternDialog;
+            JugglingLoop blank;
+            const int n = d.count;
+            blank.jugglers = d.jugglers;
+            blank.period = n >= 2 ? (d.period + n - 1) / n * n : d.period;
+            for (int j = 0; j < blank.jugglers; ++j)
+                for (int b = 0; b < blank.period; ++b)
+                    blank.throws.push_back({n >= 2 && b % n != 0 ? 3 : kOpenThrow, j});
+            std::string text;
+            if (loopToText(blank, &text)) {
+                commitTyping();
+                playback.beat = 0.0;
+                recordSettingsChange();
+                const PatternSettings before = currentPatternSettings();
+                showPatternText(text);
+                doc.choreography = Choreography();  // a new pattern starts in the default formation
+                if (d.walking > 0) {
+                    // ...with spike marks under everyone, and the walking's own period.
+                    // (A length of its own counts as a change: an untouched choreography follows the
+                    // siteswap's period, which would put this one back to it.)
+                    ensureSpikeMarks();
+                    doc.choreography.cycle = d.walking;
+                    stageView.choreographyMode = true;
                 }
-                ImGui::CloseCurrentPopup();
+                stageView.camera.free = false;
+                doc.patternCount = n >= 2 ? n : 0;
+                doc.throwNext.clear();
+                doc.openPatternName.clear();
+                doc.history.recordWithSettings(text, before, currentPatternSettings());
+                settingsRecorded();
+                markSaved();
+                stageView.selectedJuggler = -1;
+                stageView.frameSelected = false;
+                resetLadderView(ladderPane.ladderEdit);
             }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(em * 6.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape))
-                ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
         }
 
         pollSettingsChange();

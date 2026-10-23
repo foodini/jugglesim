@@ -236,3 +236,22 @@ bool drawPreferencesWindow(bool* open, PreferencesWindowState& state, AppSetting
     ImGui::End();
     return finished;
 }
+
+void drawSpaceMouseDiagnostics(bool* open, const SpaceMouseState& spaceMouse, double wheelBlockedAt) {
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+    if (ImGui::Begin("3D Mouse Diagnostics", open,
+                     ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        if (!spaceMouse.present) {
+            ImGui::TextUnformatted("No 3D mouse found.");
+        } else {
+            ImGui::TextUnformatted("Move the cap: what JuggleSim reads on each axis (raw counts).");
+            ImGui::Text("Slide   right %+5.0f   away %+5.0f   up %+5.0f", spaceMouse.move[0], spaceMouse.move[1],
+                        spaceMouse.move[2]);
+            ImGui::Text("Turn    tilt  %+5.0f   roll %+5.0f   spin %+5.0f", spaceMouse.turn[0],
+                        spaceMouse.turn[1], spaceMouse.turn[2]);
+            ImGui::Text("Mouse-wheel events from the driver: %s",
+                        ImGui::GetTime() - wheelBlockedAt < 1.0 ? "yes (ignored)" : "none seen");
+        }
+    }
+    ImGui::End();
+}

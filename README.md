@@ -136,7 +136,7 @@ src/
   mesh.h/.cpp         procedural meshes: sphere, cylinder, frustum, cube, lathe, ring sectors
   renderer.h/.cpp     lit solid-color shader (and see-through ghosts), plus additive "glow" ribbons
   juggler_figure.*    stick-figure pose, arm and leg IK, and drawing
-  preferences_window.* Edit > Preferences: the 3D mouse's response curves (over the ladder pane)
+  preferences_window.* Edit > Preferences: the 3D mouse's response curves (over the ladder pane); its diagnostics
   prop_figure.*       ball, club and ring meshes and drawing
   grid_pane.*         the siteswap grid pane: draws it, and says what was done (app.cpp applies it)
   juggle_sim.h/.cpp   where hands, body and props are at any moment (closed-form physics)
@@ -144,7 +144,7 @@ src/
   pattern.h/.cpp      throw events + sections: the source of truth for juggling
   pattern_library.*   pattern library: file format, built-in and user patterns
   pattern_library_ui.* pattern menus (adaptive tree, Find, Recent), Save and Manage dialogs
-  response_curve.*    a 3D mouse axis's reading -> rate: a dead zone, then a curve through 5 points
+  response_curve.*    a 3D mouse axis's reading (% of its full push) -> rate: a curve through 6 points
   resource.h          resource IDs (see jugglesim.rc)
   siteswap.h/.cpp     siteswap parsing/validation (vanilla, and passing for up to 6 jugglers)
   siteswap_edit.*     the siteswap grid's model: text to grid and back, counts, columns, swap, rotate
@@ -152,6 +152,9 @@ src/
   sound.h/.cpp        the plip (a short sound when something's refused), made as a WAV in memory
   sound_mac.mm        macOS: plays it with AVFoundation (Windows uses PlaySound, in main.cpp)
   ladder_pane.*       the ladder pane: toolbar and diagram; draws, and says what was done (app.cpp applies it)
+  menu_bar.*          the main menu bar: draws, and says what was chosen (app.cpp does it)
+  choreography_dialogs.* the choreography's dialogs: shorten, Walk Like..., walking loop, rename mark, loiter
+  file_dialogs.*      the File menu's dialogs: Save Changes?, New Pattern, a file that couldn't be written
   ladder_view.h/.cpp  ladder diagram + its toolbar + drag editing, drawn with ImGui
   ladder_edit.h/.cpp  the edit chain behind ladder editing (pure logic, no drawing)
   loop_ops.h/.cpp     loop operations: ? sketches, beat insert/delete, paths and orbits, drawing
